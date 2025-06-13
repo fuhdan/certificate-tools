@@ -600,6 +600,7 @@ const CertificateTable = ({ data, showRawData = true, detailedValidation = true 
   return (
     <div>
       {renderValidationSection()}
+      {renderChainValidationSection()}
       <table className="cert-table">
         <thead>
           <tr>

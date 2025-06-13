@@ -429,75 +429,65 @@ function App() {
             )}
           </div>
           
-          {results && results.type === 'Certificate' && (
-            <div className="control-section">
-              <h4>🔄 Convert Certificate</h4>
-              <button 
-                className="control-button conversion-button" 
-                title="Convert to PEM format (Base64 with headers)"
-              >
-                📝 To PEM
-              </button>
-              <button 
-                className="control-button conversion-button" 
-                title="Convert to DER format (Binary)"
-              >
-                🔗 To DER
-              </button>
-              <button 
-                className="control-button conversion-button" 
-                title="Convert to PKCS#7 certificate chain"
-              >
-                📦 To PKCS#7
-              </button>
-              {hasPrivateKey && (
-                <>
+          {results && results.type === 'Certificate' && (() => {
+            // Determine current format from the raw PEM data
+            const rawPem = results.raw?.pem || '';
+            const isPemFormat = rawPem.includes('-----BEGIN CERTIFICATE-----');
+            const isDerFormat = !isPemFormat && rawPem.length > 0;
+            const isBase64Format = !isPemFormat && !isDerFormat;
+            
+            return (
+              <div className="control-section">
+                <h4>🔄 Convert Certificate</h4>
+                {!isPemFormat && (
                   <button 
                     className="control-button conversion-button" 
-                    title="Convert to PKCS#12 password-protected bundle"
+                    title="Convert to PEM format (Base64 with headers)"
                   >
-                    🔐 To PKCS#12
+                    📝 To PEM
                   </button>
+                )}
+                {!isDerFormat && (
                   <button 
                     className="control-button conversion-button" 
-                    title="Convert to Java Keystore format"
+                    title="Convert to DER format (Binary)"
                   >
-                    ☕ To JKS
+                    🔗 To DER
                   </button>
-                </>
-              )}
-              <button 
-                className="control-button conversion-button" 
-                title="Convert to Base64 encoded certificate"
-              >
-                🔤 To Base64
-              </button>
-            </div>
-          )}
-          
-          {results && results.type === 'CSR' && (
-            <div className="control-section">
-              <h4>🔄 Convert CSR</h4>
-              <button 
-                className="control-button conversion-button" 
-                title="Convert to PEM format"
-              >
-                📝 To PEM
-              </button>
-              <button 
-                className="control-button conversion-button" 
-                title="Convert to DER format"
-              >
-                🔗 To DER
-              </button>
-              <button 
-                className="control-button conversion-button" 
-                title="Convert to Base64 encoded CSR"
-              >
-                🔤 To Base64
-              </button>
-            </div>
-          )}
+                )}
+                <button 
+                  className="control-button conversion-button" 
+                  title="Convert to PKCS#7 certificate chain"
+                >
+                  📦 To PKCS#7
+                </button>
+                {hasPrivateKey && (
+                  <>
+                    <button 
+                      className="control-button conversion-button" 
+                      title="Convert to PKCS#12 password-protected bundle"
+                    >
+                      🔐 To PKCS#12
+                    </button>
+                    <button 
+                      className="control-button conversion-button" 
+                      title="Convert to Java Keystore format"
+                    >
+                      ☕ To JKS
+                    </button>
+                  </>
+                )}
+                {!isBase64Format && (
+                  <button 
+                    className="control-button conversion-button" 
+                    title="Convert to Base64 encoded certificate"
+                  >
+                    🔤 To Base64
+                  </button>
+                )}
+              </div>
+            );
+          })()}
           
           {results && (
             <div className="control-section">
@@ -526,6 +516,14 @@ function App() {
                     <span className="info-label">Key Match:</span>
                     <span className={`info-value ${results.privateKeyValidation.keyPairValid ? 'valid' : 'invalid'}`}>
                       {results.privateKeyValidation.keyPairValid ? '✅' : '❌'}
+                    </span>
+                  </div>
+                )}
+                {results.chainValidation && (
+                  <div className="info-item">
+                    <span className="info-label">Chain Valid:</span>
+                    <span className={`info-value ${results.chainValidation.chainValid ? 'valid' : 'invalid'}`}>
+                      {results.chainValidation.chainValid ? '✅' : '❌'}
                     </span>
                   </div>
                 )}

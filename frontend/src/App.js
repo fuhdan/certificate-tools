@@ -187,10 +187,33 @@ function App() {
     }
   };
 
+  // Check if file is likely DER format
+  const isDerFile = (file) => {
+    const lowerName = file.name.toLowerCase();
+    return lowerName.endsWith('.der') || 
+           lowerName.endsWith('.cer') || 
+           lowerName.endsWith('.crt');
+  };
+
   // Process dropped/selected file
   const handleFile = (file) => {
     console.log('Processing file:', file.name, 'Size:', file.size);
     const reader = new FileReader();
+    
+    // Check if this is likely a DER file
+    if (isDerFile(file)) {
+      console.log('DER format suspected based on file extension');
+      reader.onload = (e) => {
+        const arrayBuffer = e.target.result;
+        const uint8Array = new Uint8Array(arrayBuffer);
+        const base64String = btoa(String.fromCharCode.apply(null, uint8Array));
+        console.log('Converting DER to base64 for processing');
+        processContent(base64String, file.name, true); // true indicates DER format
+      };
+      reader.readAsArrayBuffer(file);
+      return;
+    }
+    
     reader.onload = (e) => {
       const content = e.target.result;
       console.log('File content loaded, length:', content.length);
@@ -229,10 +252,8 @@ function App() {
         // Process with the split content
         processCertificate(firstCert, privateKeyContent, chainCerts, privateKeyPassword);
       } else {
-        // Single certificate
-        setCertContent(content);
-        setChainAutoDetected(false); // Not auto-detected
-        processCertificate(content, privateKeyContent, chainContent, privateKeyPassword);
+        // Single certificate or CSR
+        processContent(content, file.name);
       }
     };
     reader.onerror = (e) => {
@@ -253,6 +274,73 @@ function App() {
       };
     } else {
       reader.readAsText(file);
+    }
+  };
+
+  // Process content (either PEM text or base64 DER)
+  const processContent = (content, fileName, isDer = false) => {
+    if (isDer) {
+      console.log('Processing DER format certificate');
+      // Send DER content to backend for parsing
+      processDerCertificate(content, fileName);
+    } else {
+      setCertContent(content);
+      setChainAutoDetected(false);
+      processCertificate(content, privateKeyContent, chainContent, privateKeyPassword);
+    }
+  };
+
+  // Process DER format certificate
+  const processDerCertificate = async (base64Content, fileName) => {
+    setLoading(true);
+    setError('');
+    
+    try {
+      console.log('API Request /api/parse-der:', {
+        fileName: fileName,
+        contentLength: base64Content.length
+      });
+      
+      const requestBody = { 
+        content: base64Content,
+        fileName: fileName,
+        privateKey: privateKeyContent.trim(),
+        chain: chainContent.trim(),
+        privateKeyPassword: privateKeyPassword.trim()
+      };
+      
+      const response = await fetch(`${process.env.REACT_APP_API_URL || ''}/api/parse-der`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestBody)
+      });
+      
+      const data = await response.json();
+      
+      console.log('API Response:', {
+        status: response.status,
+        type: data.type,
+        subject: data.subject ? data.subject.find(attr => attr.shortName === 'CN')?.value || 'Unknown CN' : 'N/A'
+      });
+      
+      if (data.error) {
+        throw new Error(data.error);
+      }
+      
+      // Set the results and convert DER to PEM for display
+      setResults(data);
+      if (data.raw && data.raw.pem) {
+        setCertContent(data.raw.pem);
+      }
+      setError('');
+      
+    } catch (err) {
+      console.error('DER Certificate Error:', err.message);
+      setError('Failed to parse DER certificate: ' + err.message);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -601,7 +689,7 @@ function App() {
                     className="control-button conversion-button" 
                     title="Convert to PEM format (Base64 with headers)"
                   >
-                    📝 To PEM
+                    📝 To Certificate (PEM)
                   </button>
                 )}
                 {!isDerFormat && (
@@ -609,7 +697,7 @@ function App() {
                     className="control-button conversion-button" 
                     title="Convert to DER format (Binary)"
                   >
-                    🔗 To DER
+                    🔗 To Certificate (DER)
                   </button>
                 )}
                 <button 

@@ -317,6 +317,77 @@ code {
   box-shadow: 0 0 0 3px rgba(0, 102, 204, 0.1);
 }
 
+/* Password Input Styles */
+.password-input {
+  width: 100%;
+  padding: 12px 15px;
+  border: 2px solid var(--ypsomed-light-blue);
+  border-radius: 8px;
+  font-size: 14px;
+  transition: all 0.3s ease;
+  background: #fafafa;
+}
+
+.password-input:focus {
+  outline: none;
+  border-color: var(--ypsomed-blue);
+  background: white;
+  box-shadow: 0 0 0 3px rgba(0, 102, 204, 0.1);
+}
+
+.password-hint {
+  display: block;
+  margin-top: 8px;
+  font-size: 0.85rem;
+  color: #666;
+  font-style: italic;
+  padding: 6px 12px;
+  background: #fff3cd;
+  border: 1px solid #ffeaa7;
+  border-radius: 4px;
+}
+
+/* Chain Detection Info Styles */
+.chain-detected-info {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 15px;
+  background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
+  border: 1px solid #c3e6cb;
+  border-radius: 8px;
+  border-left: 4px solid #28a745;
+  margin-top: 10px;
+}
+
+.info-icon {
+  font-size: 1.2rem;
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.info-content {
+  flex: 1;
+}
+
+.info-content strong {
+  color: #155724;
+  font-size: 1rem;
+  display: block;
+  margin-bottom: 6px;
+}
+
+.info-content p {
+  color: #155724;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  margin-bottom: 6px;
+}
+
+.info-content p:last-child {
+  margin-bottom: 0;
+}
+
 .drop-zone {
   border: 3px dashed var(--ypsomed-blue);
   border-radius: 12px;

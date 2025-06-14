@@ -58,16 +58,16 @@ const InputSection = ({
         >
           <div className="drop-icon">📄</div>
           <p><strong>Drop your certificate or certificate chain file here</strong></p>
-          <p>Supports PEM (.pem, .crt), PKCS#7 (.p7b, .p7c), or full certificate chains</p>
+          <p>Supports PEM (.pem, .crt), DER (.der, .cer), PKCS#7 (.p7b, .p7c), or full certificate chains</p>
           <p style={{ fontSize: '0.8em', marginTop: '8px', opacity: 0.7 }}>
-            💡 PKCS#7 and chain files will be automatically split into certificate + chain
+            💡 DER/PKCS#7 and chain files will be automatically processed and converted
           </p>
         </div>
         <input
           type="file"
           id="fileInput"
           className="hidden-input"
-          accept=".crt,.cer,.pem,.csr,.p7b,.p7c,.txt"
+          accept=".crt,.cer,.pem,.csr,.p7b,.p7c,.der,.txt"
           onChange={onFileSelect}
         />
       </div>

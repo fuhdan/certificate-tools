@@ -132,6 +132,34 @@ code {
   transform: translateY(-1px);
 }
 
+/* Original File Info Styling */
+.original-file-info {
+  margin-top: 15px;
+  padding: 10px;
+  background: #f8f9fa;
+  border: 1px solid #e9ecef;
+  border-radius: 6px;
+  border-left: 3px solid #6c757d;
+}
+
+.original-file-info small {
+  color: #6c757d;
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.original-file-info strong {
+  color: #495057;
+  font-weight: 600;
+}
+
+.file-details {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.7rem;
+  opacity: 0.8;
+}
+
 /* Server Status in Control Panel */
 .server-status {
   margin-bottom: 10px;

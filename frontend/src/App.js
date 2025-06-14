@@ -22,6 +22,9 @@ function App() {
   const [privateKeyDragOver, setPrivateKeyDragOver] = useState(false);
   const [chainDragOver, setChainDragOver] = useState(false);
   const [chainAutoDetected, setChainAutoDetected] = useState(false); // Track if chain was auto-detected
+  
+  // NEW: Track original file information
+  const [originalFileInfo, setOriginalFileInfo] = useState(null);
 
   // Control panel options
   const [showRawData, setShowRawData] = useState(false);
@@ -70,6 +73,63 @@ function App() {
     };
   };
 
+  // Helper function to determine file type and format
+  const getFileTypeInfo = (file, detectedFormat = null) => {
+    const fileName = file.name.toLowerCase();
+    const fileSize = file.size;
+    
+    let fileType = 'Unknown';
+    let format = detectedFormat || 'Unknown';
+    let description = '';
+
+    // Determine file type based on extension and detected format
+    if (fileName.endsWith('.p12') || fileName.endsWith('.pfx') || fileName.endsWith('.pkcs12')) {
+      fileType = 'PKCS#12';
+      format = 'Binary';
+      description = 'Password-protected certificate bundle';
+    } else if (fileName.endsWith('.p7b') || fileName.endsWith('.p7c')) {
+      fileType = 'PKCS#7';
+      format = fileName.endsWith('.p7b') ? 'DER' : 'PEM';
+      description = 'Certificate chain bundle';
+    } else if (fileName.endsWith('.der') || fileName.endsWith('.cer')) {
+      fileType = 'Certificate';
+      format = 'DER';
+      description = 'Binary encoded certificate';
+    } else if (fileName.endsWith('.crt') || fileName.endsWith('.pem')) {
+      fileType = 'Certificate';
+      format = 'PEM';
+      description = 'Text encoded certificate';
+    } else if (fileName.endsWith('.csr')) {
+      fileType = 'CSR';
+      format = 'PEM';
+      description = 'Certificate signing request';
+    } else if (fileName.endsWith('.key')) {
+      fileType = 'Private Key';
+      format = 'PEM';
+      description = 'Private key file';
+    } else if (fileName.endsWith('.txt')) {
+      // Try to detect from content if available
+      if (detectedFormat) {
+        fileType = detectedFormat.includes('PKCS') ? detectedFormat : 'Certificate';
+        format = 'PEM';
+        description = 'Text file containing certificate data';
+      } else {
+        fileType = 'Text File';
+        format = 'PEM';
+        description = 'Plain text certificate data';
+      }
+    }
+
+    return {
+      fileName: file.name,
+      fileSize: fileSize,
+      fileType: fileType,
+      format: format,
+      description: description,
+      uploadedAt: new Date().toLocaleString()
+    };
+  };
+
   // Process certificate content with private key and chain
   const processCertificate = async (content, privateKey = '', chain = '', password = '') => {
     if (!content.trim()) {
@@ -101,6 +161,12 @@ function App() {
   const handleTextChange = (e) => {
     const value = e.target.value;
     setCertContent(value);
+    
+    // Clear file info when manually typing
+    if (originalFileInfo && value !== certContent) {
+      setOriginalFileInfo(null);
+    }
+    
     debouncedProcess(value, privateKeyContent, chainContent, privateKeyPassword);
   };
 
@@ -221,9 +287,15 @@ function App() {
   const handleFile = (file) => {
     console.log('Processing file:', file.name, 'Size:', file.size);
     
+    // Set original file info
+    setOriginalFileInfo(getFileTypeInfo(file));
+    
     // Check if this is a PKCS#12 file first
     if (isPkcs12File(file)) {
       console.log('PKCS#12 format detected based on file extension');
+      // Update file info with detected format
+      setOriginalFileInfo(getFileTypeInfo(file, 'PKCS#12'));
+      
       const reader = new FileReader();
       reader.onload = (e) => {
         const arrayBuffer = e.target.result;
@@ -241,6 +313,9 @@ function App() {
     // Check if this is likely a DER file
     if (isDerFile(file)) {
       console.log('DER format suspected based on file extension');
+      // Update file info with detected format
+      setOriginalFileInfo(getFileTypeInfo(file, 'Certificate'));
+      
       reader.onload = (e) => {
         const arrayBuffer = e.target.result;
         const uint8Array = new Uint8Array(arrayBuffer);
@@ -262,6 +337,8 @@ function App() {
       
       if (isPkcs7Pem || isPkcs7Der) {
         console.log('PKCS#7 format detected, sending to backend for parsing');
+        // Update file info with detected format
+        setOriginalFileInfo(getFileTypeInfo(file, 'PKCS#7'));
         // Send PKCS#7 content to backend for parsing
         processPkcs7Content(content, file.name);
         return;
@@ -276,6 +353,9 @@ function App() {
       if (certCount > 1) {
         // This is a certificate chain - split it
         console.log('Certificate chain detected, splitting...');
+        // Update file info with detected format
+        setOriginalFileInfo(getFileTypeInfo(file, 'Certificate Chain'));
+        
         const firstCert = certMatches[0];
         const chainCerts = certMatches.slice(1).join('\n');
         
@@ -290,6 +370,12 @@ function App() {
         processCertificate(firstCert, privateKeyContent, chainCerts, privateKeyPassword);
       } else {
         // Single certificate or CSR
+        // Detect if it's a CSR or Certificate
+        let detectedType = 'Certificate';
+        if (content.includes('-----BEGIN CERTIFICATE REQUEST-----')) {
+          detectedType = 'CSR';
+        }
+        setOriginalFileInfo(getFileTypeInfo(file, detectedType));
         processContent(content, file.name);
       }
     };
@@ -307,6 +393,7 @@ function App() {
         const uint8Array = new Uint8Array(arrayBuffer);
         const base64String = btoa(String.fromCharCode.apply(null, uint8Array));
         console.log('PKCS#7 DER format detected, converting to base64');
+        setOriginalFileInfo(getFileTypeInfo(file, 'PKCS#7'));
         processPkcs7Content(base64String, file.name, true); // true indicates DER format
       };
     } else {
@@ -519,6 +606,7 @@ function App() {
     setShowPkcs12PasswordInput(false);
     setPendingPkcs12Data(null);
     setChainAutoDetected(false);
+    setOriginalFileInfo(null); // Clear file info
     setResults(null);
     setError('');
   };
@@ -540,6 +628,7 @@ function App() {
       ...(results.subjectAlternativeNames && { sans: results.subjectAlternativeNames }),
       ...(results.extensions && { extensions: results.extensions }),
       ...(results.privateKeyValidation && { validation: results.privateKeyValidation }),
+      ...(originalFileInfo && { originalFile: originalFileInfo }),
       ...(showRawData && results.raw && { raw: results.raw })
     };
 
@@ -861,6 +950,19 @@ function App() {
                   >
                     🔤 To Base64
                   </button>
+                )}
+                
+                {/* Original File Info */}
+                {originalFileInfo && (
+                  <div className="original-file-info">
+                    <small>
+                      <strong>Original:</strong> {originalFileInfo.fileType} ({originalFileInfo.format})
+                      <br />
+                      <span className="file-details">
+                        {originalFileInfo.fileName} • {(originalFileInfo.fileSize / 1024).toFixed(1)}KB
+                      </span>
+                    </small>
+                  </div>
                 )}
               </div>
             );

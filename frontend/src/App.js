@@ -11,6 +11,9 @@ function App() {
   const [privateKeyContent, setPrivateKeyContent] = useState('');
   const [chainContent, setChainContent] = useState('');
   const [privateKeyPassword, setPrivateKeyPassword] = useState('');
+  const [pkcs12Password, setPkcs12Password] = useState('');
+  const [showPkcs12PasswordInput, setShowPkcs12PasswordInput] = useState(false);
+  const [pendingPkcs12Data, setPendingPkcs12Data] = useState(null);
   const [serverStatus, setServerStatus] = useState('checking');
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -122,6 +125,17 @@ function App() {
     }
   };
 
+  // Handle PKCS#12 password input change
+  const handlePkcs12PasswordChange = (e) => {
+    const value = e.target.value;
+    setPkcs12Password(value);
+    
+    // If we have pending PKCS#12 data, try to process it with the new password
+    if (pendingPkcs12Data) {
+      processPkcs12Content(pendingPkcs12Data.content, pendingPkcs12Data.fileName, value);
+    }
+  };
+
   // Handle chain text input change
   const handleChainTextChange = (e) => {
     const value = e.target.value;
@@ -195,9 +209,33 @@ function App() {
            lowerName.endsWith('.crt');
   };
 
+  // Check if file is PKCS#12 format
+  const isPkcs12File = (file) => {
+    const lowerName = file.name.toLowerCase();
+    return lowerName.endsWith('.p12') || 
+           lowerName.endsWith('.pfx') || 
+           lowerName.endsWith('.pkcs12');
+  };
+
   // Process dropped/selected file
   const handleFile = (file) => {
     console.log('Processing file:', file.name, 'Size:', file.size);
+    
+    // Check if this is a PKCS#12 file first
+    if (isPkcs12File(file)) {
+      console.log('PKCS#12 format detected based on file extension');
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const arrayBuffer = e.target.result;
+        const uint8Array = new Uint8Array(arrayBuffer);
+        const base64String = btoa(String.fromCharCode.apply(null, uint8Array));
+        console.log('Converting PKCS#12 to base64 for processing');
+        processPkcs12Content(base64String, file.name);
+      };
+      reader.readAsArrayBuffer(file);
+      return;
+    }
+    
     const reader = new FileReader();
     
     // Check if this is likely a DER file
@@ -213,7 +251,6 @@ function App() {
       reader.readAsArrayBuffer(file);
       return;
     }
-    
     reader.onload = (e) => {
       const content = e.target.result;
       console.log('File content loaded, length:', content.length);
@@ -274,6 +311,94 @@ function App() {
       };
     } else {
       reader.readAsText(file);
+    }
+  };
+
+  // Process PKCS#12 content
+  const processPkcs12Content = async (base64Content, fileName, password = '') => {
+    setLoading(true);
+    setError('');
+    
+    try {
+      console.log('API Request /api/parse-pkcs12:', {
+        fileName: fileName,
+        contentLength: base64Content.length,
+        hasPassword: password.length > 0
+      });
+      
+      const requestBody = { 
+        content: base64Content,
+        fileName: fileName,
+        password: password
+      };
+      
+      const response = await fetch(`${process.env.REACT_APP_API_URL || ''}/api/parse-pkcs12`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestBody)
+      });
+      
+      const data = await response.json();
+      
+      console.log('API Response:', {
+        status: response.status,
+        needsPassword: data.needsPassword,
+        type: data.type,
+        hasCertificate: !!data.certificate,
+        hasPrivateKey: !!data.privateKey,
+        hasChain: data.certificateChain ? data.certificateChain.length : 0
+      });
+      
+      if (data.needsPassword && !password) {
+        // Store the content and show password input
+        setPendingPkcs12Data({ content: base64Content, fileName: fileName });
+        setShowPkcs12PasswordInput(true);
+        setLoading(false);
+        return;
+      }
+      
+      if (data.error) {
+        throw new Error(data.error);
+      }
+      
+      // Hide password input and clear pending data
+      setShowPkcs12PasswordInput(false);
+      setPendingPkcs12Data(null);
+      setPkcs12Password('');
+      
+      // Set the certificate content
+      if (data.certificate && data.certificate.pem) {
+        setCertContent(data.certificate.pem);
+        setResults(data.certificate);
+      }
+      
+      // Set the private key content if available
+      if (data.privateKey && data.privateKey.pem) {
+        setPrivateKeyContent(data.privateKey.pem);
+      }
+      
+      // Set the certificate chain if available
+      if (data.certificateChain && data.certificateChain.length > 0) {
+        const chainPems = data.certificateChain.map(cert => cert.pem).join('\n');
+        setChainContent(chainPems);
+        setChainAutoDetected(true);
+      }
+      
+      setError('');
+      
+    } catch (err) {
+      console.error('PKCS#12 Error:', err.message);
+      setError('Failed to parse PKCS#12 file: ' + err.message);
+      
+      // If it's a password error, show password input
+      if (err.message.includes('password') || err.message.includes('decrypt')) {
+        setPendingPkcs12Data({ content: base64Content, fileName: fileName });
+        setShowPkcs12PasswordInput(true);
+      }
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -390,6 +515,9 @@ function App() {
     setPrivateKeyContent('');
     setChainContent('');
     setPrivateKeyPassword('');
+    setPkcs12Password('');
+    setShowPkcs12PasswordInput(false);
+    setPendingPkcs12Data(null);
     setChainAutoDetected(false);
     setResults(null);
     setError('');
@@ -583,6 +711,10 @@ function App() {
             onChainDrop={handleChainFileDrop}
             onChainFileSelect={handleChainFileInput}
             showChainInput={showChainInput}
+            pkcs12Password={pkcs12Password}
+            onPkcs12PasswordChange={handlePkcs12PasswordChange}
+            showPkcs12PasswordInput={showPkcs12PasswordInput}
+            results={results}
           />
 
           {(results || loading || error) && (

@@ -360,6 +360,40 @@ code {
   margin-top: 10px;
 }
 
+/* PKCS#12 Detection Info Styles */
+.pkcs12-detected-info {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 15px;
+  background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
+  border: 1px solid #bbdefb;
+  border-radius: 8px;
+  border-left: 4px solid #2196f3;
+  margin-top: 10px;
+}
+
+.pkcs12-detected-info .info-content strong {
+  color: #0d47a1;
+  font-size: 1rem;
+  display: block;
+  margin-bottom: 6px;
+}
+
+.pkcs12-detected-info .info-content p {
+  color: #1565c0;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  margin-bottom: 6px;
+}
+
+.pkcs12-detected-info .info-content div {
+  color: #1976d2;
+  font-size: 0.85rem;
+  line-height: 1.3;
+  margin-bottom: 2px;
+}
+
 .info-icon {
   font-size: 1.2rem;
   margin-top: 2px;

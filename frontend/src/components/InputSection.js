@@ -29,7 +29,13 @@ const InputSection = ({
   onChainDragLeave,
   onChainDrop,
   onChainFileSelect,
-  showChainInput
+  showChainInput,
+  // PKCS#12 props
+  pkcs12Password,
+  onPkcs12PasswordChange,
+  showPkcs12PasswordInput,
+  // Results for showing PKCS#12 info
+  results
 }) => {
   // Check if chain content was auto-populated
   const hasAutoDetectedChain = chainContent.trim().length > 0 && showChainInput;
@@ -58,19 +64,38 @@ const InputSection = ({
         >
           <div className="drop-icon">📄</div>
           <p><strong>Drop your certificate or certificate chain file here</strong></p>
-          <p>Supports PEM (.pem, .crt), DER (.der, .cer), PKCS#7 (.p7b, .p7c), or full certificate chains</p>
+          <p>Supports PEM (.pem, .crt), DER (.der, .cer), PKCS#7 (.p7b, .p7c), PKCS#12 (.p12, .pfx), or full certificate chains</p>
           <p style={{ fontSize: '0.8em', marginTop: '8px', opacity: 0.7 }}>
-            💡 DER/PKCS#7 and chain files will be automatically processed and converted
+            💡 DER/PKCS#7/PKCS#12 and chain files will be automatically processed and converted
           </p>
         </div>
         <input
           type="file"
           id="fileInput"
           className="hidden-input"
-          accept=".crt,.cer,.pem,.csr,.p7b,.p7c,.der,.txt"
+          accept=".crt,.cer,.pem,.csr,.p7b,.p7c,.der,.p12,.pfx,.pkcs12,.txt"
           onChange={onFileSelect}
         />
       </div>
+
+      {/* PKCS#12 Password Input - Show when PKCS#12 file needs password */}
+      {showPkcs12PasswordInput && (
+        <div className="input-group">
+          <label htmlFor="pkcs12Password">🔐 PKCS#12 Password:</label>
+          <input
+            type="password"
+            id="pkcs12Password"
+            className="password-input"
+            value={pkcs12Password}
+            onChange={onPkcs12PasswordChange}
+            placeholder="Enter password for PKCS#12 file..."
+            autoFocus
+          />
+          <small className="password-hint">
+            This PKCS#12 file is encrypted and requires a password to extract the certificate and private key.
+          </small>
+        </div>
+      )}
 
       {/* Private Key Input - Only show for certificates */}
       {showPrivateKeyInput && (
@@ -177,6 +202,26 @@ const InputSection = ({
               <p style={{ marginTop: '8px', fontSize: '0.9em', opacity: 0.8 }}>
                 Optionally upload a private key above for complete validation.
               </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Show info when PKCS#12 was processed */}
+      {results && results.summary && results.summary.hasCertificate && (
+        <div className="input-group">
+          <div className="pkcs12-detected-info">
+            <div className="info-icon">📦</div>
+            <div className="info-content">
+              <strong>PKCS#12 Bundle Processed!</strong>
+              <p>Successfully extracted certificate{results.summary.hasPrivateKey ? ' and private key' : ''} from PKCS#12 file.</p>
+              <div style={{ marginTop: '8px', fontSize: '0.9em' }}>
+                <div>✅ Certificate: Extracted and loaded</div>
+                {results.summary.hasPrivateKey && <div>✅ Private Key: Extracted and validated</div>}
+                {results.summary.chainLength > 0 && <div>✅ Certificate Chain: {results.summary.chainLength} additional certificate(s)</div>}
+                {results.summary.keyPairValid && <div>✅ Key Pair: Valid match between certificate and private key</div>}
+                {results.summary.chainValid && <div>✅ Chain: Valid certificate chain</div>}
+              </div>
             </div>
           </div>
         </div>

@@ -17,6 +17,10 @@ const InputSection = ({
   onPrivateKeyDrop,
   onPrivateKeyFileSelect,
   showPrivateKeyInput,
+  // Password props
+  privateKeyPassword,
+  onPrivateKeyPasswordChange,
+  showPasswordInput,
   // Chain props
   chainContent,
   onChainTextChange,
@@ -29,13 +33,13 @@ const InputSection = ({
 }) => (
   <div className="input-section">
     <div className="input-group">
-      <label htmlFor="certInput">Paste Base64 Certificate or CSR:</label>
+      <label htmlFor="certInput">Paste Certificate/CSR or upload file below:</label>
       <textarea
         id="certInput"
         className="textarea"
         value={certContent}
         onChange={onTextChange}
-        placeholder="Paste your base64 encoded certificate or CSR here..."
+        placeholder="Paste your certificate or CSR here, or upload a file using the drop zone below..."
       />
     </div>
 
@@ -96,6 +100,24 @@ const InputSection = ({
             onChange={onPrivateKeyFileSelect}
           />
         </div>
+
+        {/* Password Input - Only show for encrypted private keys */}
+        {showPasswordInput && (
+          <div className="input-group">
+            <label htmlFor="privateKeyPassword">🔐 Private Key Password:</label>
+            <input
+              type="password"
+              id="privateKeyPassword"
+              className="password-input"
+              value={privateKeyPassword}
+              onChange={onPrivateKeyPasswordChange}
+              placeholder="Enter password for encrypted private key..."
+            />
+            <small className="password-hint">
+              This private key is encrypted and requires a password to decrypt.
+            </small>
+          </div>
+        )}
       </>
     )}
 

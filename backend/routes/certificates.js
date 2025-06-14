@@ -7,6 +7,54 @@ const router = express.Router();
 // Configure multer for file uploads
 const upload = multer({ storage: multer.memoryStorage() });
 
+// New endpoint to check if private key is encrypted
+router.post('/check-key-encryption', (req, res) => {
+  try {
+    const { privateKey } = req.body;
+    
+    if (!privateKey || !privateKey.trim()) {
+      return res.json({ encrypted: false });
+    }
+
+    let keyContent = privateKey.trim();
+    
+    // Try to decode from base64 if needed
+    if (!keyContent.includes('-----BEGIN')) {
+      try {
+        keyContent = Buffer.from(keyContent, 'base64').toString('utf8');
+      } catch (e) {
+        return res.json({ encrypted: false, error: 'Invalid key format' });
+      }
+    }
+
+    // Check for obvious encryption indicators
+    const hasEncryptionHeader = keyContent.includes('Proc-Type: 4,ENCRYPTED') || 
+                               keyContent.includes('-----BEGIN ENCRYPTED PRIVATE KEY-----');
+    
+    if (hasEncryptionHeader) {
+      return res.json({ encrypted: true });
+    }
+
+    // Try to parse the key without password
+    try {
+      forge.pki.privateKeyFromPem(keyContent);
+      // If we get here, the key is not encrypted
+      return res.json({ encrypted: false });
+    } catch (error) {
+      // If parsing fails, it might be encrypted or invalid
+      if (error.message.includes('decrypt') || error.message.includes('password') || error.message.includes('encrypted')) {
+        return res.json({ encrypted: true });
+      }
+      
+      // Otherwise it's probably just an invalid key
+      return res.json({ encrypted: false, error: 'Invalid private key format' });
+    }
+  } catch (error) {
+    console.error('Key encryption check error:', error);
+    return res.json({ encrypted: false, error: 'Failed to check key encryption' });
+  }
+});
+
 // Helper function to validate certificate with private key
 const validateCertificateWithPrivateKey = (cert, privateKey) => {
   console.log('=== VALIDATION DEBUG START ===');
@@ -539,6 +587,7 @@ router.post('/parse', upload.single('file'), (req, res) => {
     let content = '';
     let privateKeyContent = '';
     let chainContent = '';
+    let privateKeyPassword = '';
     
     if (req.file) {
       content = req.file.buffer.toString('utf8');
@@ -554,6 +603,10 @@ router.post('/parse', upload.single('file'), (req, res) => {
 
     if (req.body.chain) {
       chainContent = req.body.chain.trim();
+    }
+
+    if (req.body.privateKeyPassword) {
+      privateKeyPassword = req.body.privateKeyPassword.trim();
     }
 
     content = content.trim();
@@ -671,7 +724,25 @@ router.post('/parse', upload.single('file'), (req, res) => {
             privateKeyContent = Buffer.from(privateKeyContent, 'base64').toString('utf8');
           }
           
-          const privateKey = forge.pki.privateKeyFromPem(privateKeyContent);
+          let privateKey;
+          
+          // Try to parse private key with password if provided
+          if (privateKeyPassword) {
+            try {
+              privateKey = forge.pki.decryptRsaPrivateKey(privateKeyContent, privateKeyPassword);
+            } catch (decryptError) {
+              // If decryption fails, try as PKCS#8
+              try {
+                privateKey = forge.pki.privateKeyFromPem(privateKeyContent, privateKeyPassword);
+              } catch (pkcs8Error) {
+                throw new Error('Failed to decrypt private key with provided password');
+              }
+            }
+          } else {
+            // Try to parse without password
+            privateKey = forge.pki.privateKeyFromPem(privateKeyContent);
+          }
+          
           result.privateKeyValidation = validateCertificateWithPrivateKey(cert, privateKey);
         } catch (error) {
           result.privateKeyValidation = {

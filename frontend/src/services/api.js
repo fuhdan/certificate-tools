@@ -9,12 +9,17 @@ export const checkServerStatus = async () => {
   }
 };
 
-export const parseCertificate = async (content, privateKey = '', chain = '') => {
+export const parseCertificate = async (content, privateKey = '', chain = '', password = '') => {
   const requestBody = { content };
   
   // Add private key if provided
   if (privateKey.trim()) {
     requestBody.privateKey = privateKey;
+    
+    // Add password if provided
+    if (password.trim()) {
+      requestBody.privateKeyPassword = password;
+    }
   }
 
   // Add certificate chain if provided

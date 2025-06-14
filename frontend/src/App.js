@@ -6,9 +6,11 @@ import ResultsSection from './components/ResultsSection';
 import { checkServerStatus, parseCertificate } from './services/api';
 
 function App() {
+  // State variables
   const [certContent, setCertContent] = useState('');
   const [privateKeyContent, setPrivateKeyContent] = useState('');
   const [chainContent, setChainContent] = useState('');
+  const [privateKeyPassword, setPrivateKeyPassword] = useState('');
   const [serverStatus, setServerStatus] = useState('checking');
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -20,11 +22,16 @@ function App() {
   // Control panel options
   const [showRawData, setShowRawData] = useState(false);
   const [exportResults, setExportResults] = useState(false);
-  const [detailedValidation, setDetailedValidation] = useState(false); // Disabled by default
+  const [detailedValidation, setDetailedValidation] = useState(false);
 
-  // Check if we should show inputs
-  const showPrivateKeyInput = results && results.type === 'Certificate';
+  // Computed values - moved to the bottom to avoid initialization issues
   const hasPrivateKey = privateKeyContent.trim().length > 0;
+  const isPrivateKeyEncrypted = hasPrivateKey && (
+    privateKeyContent.includes('Proc-Type: 4,ENCRYPTED') || 
+    privateKeyContent.includes('-----BEGIN ENCRYPTED PRIVATE KEY-----')
+  );
+  const showPrivateKeyInput = results && results.type === 'Certificate';
+  const showPasswordInput = showPrivateKeyInput && hasPrivateKey && isPrivateKeyEncrypted;
   const showChainInput = showPrivateKeyInput && hasPrivateKey;
   const hasCertificateWithKey = results && results.type === 'Certificate' && hasPrivateKey;
 
@@ -59,7 +66,7 @@ function App() {
   };
 
   // Process certificate content with private key and chain
-  const processCertificate = async (content, privateKey = '', chain = '') => {
+  const processCertificate = async (content, privateKey = '', chain = '', password = '') => {
     if (!content.trim()) {
       setResults(null);
       return;
@@ -69,7 +76,7 @@ function App() {
     setError('');
 
     try {
-      const data = await parseCertificate(content.trim(), privateKey.trim(), chain.trim());
+      const data = await parseCertificate(content.trim(), privateKey.trim(), chain.trim(), password.trim());
       setResults(data);
       setError('');
     } catch (err) {
@@ -81,24 +88,35 @@ function App() {
   };
 
   // Debounced version of processCertificate
-  const debouncedProcess = useCallback(debounce((content, privateKey, chain) => {
-    processCertificate(content, privateKey, chain);
+  const debouncedProcess = useCallback(debounce((content, privateKey, chain, password) => {
+    processCertificate(content, privateKey, chain, password);
   }, 500), []);
 
   // Handle text input change
   const handleTextChange = (e) => {
     const value = e.target.value;
     setCertContent(value);
-    debouncedProcess(value, privateKeyContent, chainContent);
+    debouncedProcess(value, privateKeyContent, chainContent, privateKeyPassword);
   };
 
   // Handle private key text input change
   const handlePrivateKeyTextChange = (e) => {
     const value = e.target.value;
     setPrivateKeyContent(value);
+    
     // Re-process certificate with new private key
     if (certContent.trim()) {
-      debouncedProcess(certContent, value, chainContent);
+      debouncedProcess(certContent, value, chainContent, privateKeyPassword);
+    }
+  };
+
+  // Handle private key password input change
+  const handlePrivateKeyPasswordChange = (e) => {
+    const value = e.target.value;
+    setPrivateKeyPassword(value);
+    // Re-process certificate with new password
+    if (certContent.trim() && privateKeyContent.trim()) {
+      debouncedProcess(certContent, privateKeyContent, chainContent, value);
     }
   };
 
@@ -108,7 +126,7 @@ function App() {
     setChainContent(value);
     // Re-process certificate with new chain
     if (certContent.trim()) {
-      debouncedProcess(certContent, privateKeyContent, value);
+      debouncedProcess(certContent, privateKeyContent, value, privateKeyPassword);
     }
   };
 
@@ -168,11 +186,18 @@ function App() {
 
   // Process dropped/selected file
   const handleFile = (file) => {
+    console.log('Processing file:', file.name, 'Size:', file.size);
     const reader = new FileReader();
     reader.onload = (e) => {
       const content = e.target.result;
+      console.log('File content loaded, length:', content.length);
+      console.log('Content preview:', content.substring(0, 100));
       setCertContent(content);
-      processCertificate(content, privateKeyContent, chainContent);
+      processCertificate(content, privateKeyContent, chainContent, privateKeyPassword);
+    };
+    reader.onerror = (e) => {
+      console.error('File reading error:', e);
+      setError('Failed to read file');
     };
     reader.readAsText(file);
   };
@@ -183,9 +208,10 @@ function App() {
     reader.onload = (e) => {
       const content = e.target.result;
       setPrivateKeyContent(content);
+      
       // Re-process certificate with new private key
       if (certContent.trim()) {
-        processCertificate(certContent, content, chainContent);
+        processCertificate(certContent, content, chainContent, privateKeyPassword);
       }
     };
     reader.readAsText(file);
@@ -199,7 +225,7 @@ function App() {
       setChainContent(content);
       // Re-process certificate with new chain
       if (certContent.trim()) {
-        processCertificate(certContent, privateKeyContent, content);
+        processCertificate(certContent, privateKeyContent, content, privateKeyPassword);
       }
     };
     reader.readAsText(file);
@@ -220,6 +246,7 @@ function App() {
     setCertContent('');
     setPrivateKeyContent('');
     setChainContent('');
+    setPrivateKeyPassword('');
     setResults(null);
     setError('');
   };
@@ -330,6 +357,9 @@ function App() {
             onPrivateKeyDrop={handlePrivateKeyFileDrop}
             onPrivateKeyFileSelect={handlePrivateKeyFileInput}
             showPrivateKeyInput={showPrivateKeyInput}
+            privateKeyPassword={privateKeyPassword}
+            onPrivateKeyPasswordChange={handlePrivateKeyPasswordChange}
+            showPasswordInput={showPasswordInput}
             chainContent={chainContent}
             onChainTextChange={handleChainTextChange}
             chainDragOver={chainDragOver}

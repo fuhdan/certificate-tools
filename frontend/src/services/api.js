@@ -27,6 +27,13 @@ export const parseCertificate = async (content, privateKey = '', chain = '', pas
     requestBody.chain = chain;
   }
 
+  console.log('API Request /api/parse:', {
+    content: content ? `${content.length} chars` : 'empty',
+    privateKey: privateKey ? `${privateKey.length} chars` : 'none',
+    password: password ? 'provided' : 'none',
+    chain: chain ? `${chain.length} chars` : 'none'
+  });
+
   const response = await fetch(`${API_BASE_URL}/api/parse`, {
     method: 'POST',
     headers: {
@@ -36,6 +43,15 @@ export const parseCertificate = async (content, privateKey = '', chain = '', pas
   });
 
   const data = await response.json();
+  
+  console.log('API Response:', {
+    status: response.status,
+    type: data.type,
+    keyValidation: data.privateKeyValidation ? 
+      `${data.privateKeyValidation.keyPairValid ? '✅' : '❌'} ${data.privateKeyValidation.details?.error || 'OK'}` : 'none',
+    chainValidation: data.chainValidation ? 
+      `${data.chainValidation.chainValid ? '✅' : '❌'} (${data.chainValidation.chainLength} certs)` : 'none'
+  });
   
   if (data.error) {
     throw new Error(data.error);

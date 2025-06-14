@@ -7,439 +7,53 @@ const router = express.Router();
 // Configure multer for file uploads
 const upload = multer({ storage: multer.memoryStorage() });
 
-// New endpoint to check if private key is encrypted
-router.post('/check-key-encryption', (req, res) => {
-  try {
-    const { privateKey } = req.body;
-    
-    if (!privateKey || !privateKey.trim()) {
-      return res.json({ encrypted: false });
-    }
+// Helper function to parse signature algorithm
+const parseSignatureAlgorithm = (oid) => {
+  const algorithms = {
+    '1.2.840.113549.1.1.1': 'RSA',
+    '1.2.840.113549.1.1.5': 'SHA-1 with RSA',
+    '1.2.840.113549.1.1.11': 'SHA-256 with RSA',
+    '1.2.840.113549.1.1.12': 'SHA-384 with RSA',
+    '1.2.840.113549.1.1.13': 'SHA-512 with RSA',
+    '1.2.840.10045.4.1': 'SHA-1 with ECDSA',
+    '1.2.840.10045.4.3.2': 'SHA-256 with ECDSA',
+    '1.2.840.10045.4.3.3': 'SHA-384 with ECDSA',
+    '1.2.840.10045.4.3.4': 'SHA-512 with ECDSA'
+  };
+  return algorithms[oid] || `Unknown (${oid})`;
+};
 
-    let keyContent = privateKey.trim();
-    
-    // Try to decode from base64 if needed
-    if (!keyContent.includes('-----BEGIN')) {
-      try {
-        keyContent = Buffer.from(keyContent, 'base64').toString('utf8');
-      } catch (e) {
-        return res.json({ encrypted: false, error: 'Invalid key format' });
-      }
-    }
-
-    // Check for obvious encryption indicators
-    const hasEncryptionHeader = keyContent.includes('Proc-Type: 4,ENCRYPTED') || 
-                               keyContent.includes('-----BEGIN ENCRYPTED PRIVATE KEY-----');
-    
-    if (hasEncryptionHeader) {
-      return res.json({ encrypted: true });
-    }
-
-    // Try to parse the key without password
-    try {
-      forge.pki.privateKeyFromPem(keyContent);
-      // If we get here, the key is not encrypted
-      return res.json({ encrypted: false });
-    } catch (error) {
-      // If parsing fails, it might be encrypted or invalid
-      if (error.message.includes('decrypt') || error.message.includes('password') || error.message.includes('encrypted')) {
-        return res.json({ encrypted: true });
-      }
-      
-      // Otherwise it's probably just an invalid key
-      return res.json({ encrypted: false, error: 'Invalid private key format' });
-    }
-  } catch (error) {
-    console.error('Key encryption check error:', error);
-    return res.json({ encrypted: false, error: 'Failed to check key encryption' });
-  }
-});
-
-// Helper function to validate certificate with private key
-const validateCertificateWithPrivateKey = (cert, privateKey) => {
-  console.log('=== VALIDATION DEBUG START ===');
-  const validation = {
-    publicKeyMatch: false,
-    signatureValid: false,
-    keyPairValid: false,
-    details: {}
+// Helper function to get public key details
+const getPublicKeyDetails = (publicKey) => {
+  const details = {
+    algorithm: 'Unknown',
+    bitLength: 'Unknown',
+    exponent: 'Unknown',
+    curve: null,
+    keyData: null
   };
 
-  try {
-    const certPublicKey = cert.publicKey;
-    console.log('Certificate public key n exists:', !!certPublicKey.n);
-    console.log('Private key n exists:', !!privateKey.n);
-    
-    if (certPublicKey.n && privateKey.n && certPublicKey.e && privateKey.e) {
-      validation.publicKeyMatch = 
-        certPublicKey.n.equals(privateKey.n) && 
-        certPublicKey.e.equals(privateKey.e);
-      
-      console.log('Public key match result:', validation.publicKeyMatch);
-      
-      validation.details.keyType = 'RSA';
-      validation.details.keySize = certPublicKey.n.bitLength();
-      validation.details.publicExponent = certPublicKey.e.toString();
-      
-      // Get modulus hex with fallback methods
-      let certModHex, privModHex;
-      
-      try {
-        certModHex = certPublicKey.n.toString(16).toUpperCase();
-        privModHex = privateKey.n.toString(16).toUpperCase();
-        
-        if (certModHex.length === 0) {
-          certModHex = forge.util.bytesToHex(certPublicKey.n.toByteArray()).toUpperCase();
-        }
-        
-        if (privModHex.length === 0) {
-          privModHex = forge.util.bytesToHex(privateKey.n.toByteArray()).toUpperCase();
-        }
-      } catch (e) {
-        console.log('Error getting modulus hex:', e.message);
-        certModHex = 'ERROR_GETTING_MODULUS';
-        privModHex = 'ERROR_GETTING_MODULUS';
-      }
-      
-      console.log('Certificate modulus length:', certModHex.length);
-      console.log('Private key modulus length:', privModHex.length);
-      
-      validation.details.modulusMatch = {
-        certificate: certModHex.length > 64 ? `${certModHex.substring(0, 32)}...${certModHex.substring(certModHex.length - 32)}` : certModHex,
-        privateKey: privModHex.length > 64 ? `${privModHex.substring(0, 32)}...${privModHex.substring(privModHex.length - 32)}` : privModHex,
-        identical: certModHex === privModHex,
-        lengthMatch: certModHex.length === privModHex.length,
-        totalLength: certModHex.length
+  if (publicKey.n && publicKey.e) {
+    details.algorithm = 'RSA';
+    details.bitLength = publicKey.n.bitLength();
+    details.exponent = publicKey.e.toString();
+    details.modulus = forge.util.bytesToHex(publicKey.n.toByteArray()).toUpperCase();
+  } else if (publicKey.point) {
+    details.algorithm = 'Elliptic Curve (EC)';
+    if (publicKey.point.curve && publicKey.point.curve.oid) {
+      const curveOid = publicKey.point.curve.oid;
+      const curveNames = {
+        '1.2.840.10045.3.1.7': 'secp256r1 (P-256)',
+        '1.3.132.0.34': 'secp384r1 (P-384)',
+        '1.3.132.0.35': 'secp521r1 (P-521)',
+        '1.2.840.10045.3.1.1': 'secp192r1 (P-192)'
       };
-      
-    } else if (certPublicKey.point && privateKey.d) {
-      validation.details.keyType = 'Elliptic Curve';
-      validation.details.keySize = privateKey.d.bitLength();
-      validation.publicKeyMatch = true;
+      details.curve = curveNames[curveOid] || `Unknown curve (${curveOid})`;
     }
-
-    // Test signature validation
-    if (validation.publicKeyMatch) {
-      try {
-        const testMessage = 'Certificate-PrivateKey-Validation-Test-' + Date.now();
-        const md = forge.md.sha256.create();
-        md.update(testMessage, 'utf8');
-        
-        const signature = privateKey.sign(md);
-        const verified = certPublicKey.verify(md.digest().getBytes(), signature);
-        
-        validation.signatureValid = verified;
-        validation.keyPairValid = verified;
-        
-        if (verified) {
-          validation.details.testMessage = testMessage;
-          validation.details.signatureLength = signature.length;
-          validation.details.hashAlgorithm = 'SHA-256';
-        }
-      } catch (e) {
-        console.log('Signature validation error:', e.message);
-        validation.signatureValid = false;
-        validation.keyPairValid = false;
-        validation.details.signatureError = e.message;
-      }
-    }
-
-    // Add key format validation
-    validation.details.keyFormat = {
-      certificate: 'X.509 Certificate',
-      privateKey: 'PKCS#1 Private Key'
-    };
-    
-    // Add usage compatibility check
-    const keyUsageExt = cert.extensions?.find(ext => ext.name === 'keyUsage');
-    if (keyUsageExt) {
-      validation.details.keyUsageCompatibility = {
-        canSign: keyUsageExt.digitalSignature || keyUsageExt.nonRepudiation,
-        canEncrypt: keyUsageExt.keyEncipherment || keyUsageExt.dataEncipherment,
-        canKeyExchange: keyUsageExt.keyAgreement,
-        restrictions: []
-      };
-      
-      if (!keyUsageExt.digitalSignature) {
-        validation.details.keyUsageCompatibility.restrictions.push('Digital signature not allowed');
-      }
-      if (!keyUsageExt.keyEncipherment) {
-        validation.details.keyUsageCompatibility.restrictions.push('Key encipherment not allowed');
-      }
-    }
-
-  } catch (error) {
-    console.log('Validation error:', error.message);
-    validation.details.error = error.message;
+    details.bitLength = publicKey.point.curve ? publicKey.point.curve.p.bitLength() : 'Unknown';
   }
 
-  console.log('=== VALIDATION DEBUG END ===');
-  return validation;
-};
-
-// Helper function to parse certificate chain
-const parseCertificateChain = (chainContent) => {
-  console.log('=== PARSING CERTIFICATE CHAIN ===');
-  const chainCerts = [];
-  
-  if (!chainContent || !chainContent.trim()) {
-    console.log('No chain content provided');
-    return chainCerts;
-  }
-
-  try {
-    let content = chainContent.trim();
-    if (!content.includes('-----BEGIN')) {
-      try {
-        content = Buffer.from(content, 'base64').toString('utf8');
-      } catch (e) {
-        console.log('Failed to decode base64 chain:', e.message);
-        return chainCerts;
-      }
-    }
-
-    const certRegex = /-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g;
-    const matches = content.match(certRegex);
-    
-    if (matches) {
-      console.log(`Found ${matches.length} certificates in chain`);
-      matches.forEach((certPem, index) => {
-        try {
-          const cert = forge.pki.certificateFromPem(certPem);
-          chainCerts.push({
-            index: index,
-            certificate: cert,
-            pem: certPem,
-            subject: cert.subject.attributes.map(attr => ({
-              name: attr.name,
-              shortName: attr.shortName,
-              value: attr.value
-            })),
-            issuer: cert.issuer.attributes.map(attr => ({
-              name: attr.name,
-              shortName: attr.shortName,
-              value: attr.value
-            })),
-            validity: {
-              notBefore: cert.validity.notBefore,
-              notAfter: cert.validity.notAfter,
-              isValid: new Date() >= cert.validity.notBefore && new Date() <= cert.validity.notAfter
-            },
-            serialNumber: cert.serialNumber,
-            fingerprint: forge.md.sha256.create().update(forge.asn1.toDer(forge.pki.certificateToAsn1(cert)).getBytes()).digest().toHex().toUpperCase()
-          });
-          console.log(`Chain cert ${index}: ${cert.subject.getField('CN')?.value || 'Unknown CN'}`);
-        } catch (e) {
-          console.log(`Failed to parse certificate ${index} in chain:`, e.message);
-        }
-      });
-    }
-  } catch (error) {
-    console.log('Error parsing certificate chain:', error.message);
-  }
-
-  console.log(`Successfully parsed ${chainCerts.length} certificates from chain`);
-  return chainCerts;
-};
-
-// Helper function to validate certificate chain
-const validateCertificateChain = (cert, chainCerts) => {
-  console.log('=== VALIDATING CERTIFICATE CHAIN ===');
-  const validation = {
-    chainValid: false,
-    chainLength: chainCerts.length,
-    validationPath: [],
-    issues: [],
-    details: {}
-  };
-
-  if (chainCerts.length === 0) {
-    validation.issues.push('No chain certificates provided');
-    return validation;
-  }
-
-  try {
-    let currentCert = cert;
-    const validationPath = [{
-      subject: currentCert.subject.getField('CN')?.value || 'Unknown',
-      issuer: currentCert.issuer.getField('CN')?.value || 'Unknown',
-      type: 'end-entity',
-      valid: true,
-      signatureValid: true,
-      timeValid: new Date() >= currentCert.validity.notBefore && new Date() <= currentCert.validity.notAfter
-    }];
-
-    console.log('Starting chain validation from:', currentCert.subject.getField('CN')?.value);
-
-    // Try to find each issuer in the chain
-    let foundIssuer = true;
-    while (foundIssuer && validationPath.length <= chainCerts.length + 1) {
-      foundIssuer = false;
-      
-      for (let i = 0; i < chainCerts.length; i++) {
-        const chainCert = chainCerts[i].certificate;
-        
-        // Check if this chain cert is the issuer of current cert by comparing issuer/subject
-        const currentIssuerCN = currentCert.issuer.getField('CN')?.value;
-        const chainSubjectCN = chainCert.subject.getField('CN')?.value;
-        
-        console.log(`Checking if "${chainSubjectCN}" issued "${currentCert.subject.getField('CN')?.value}"`);
-        console.log(`Looking for issuer: "${currentIssuerCN}"`);
-        
-        if (currentIssuerCN === chainSubjectCN) {
-          console.log('✓ Found issuer in chain:', chainSubjectCN);
-          foundIssuer = true;
-          
-          // Verify signature (simplified check)
-          let signatureValid = true; // Assume valid for now due to forge complexity
-          
-          validationPath.push({
-            subject: chainCert.subject.getField('CN')?.value || 'Unknown',
-            issuer: chainCert.issuer.getField('CN')?.value || 'Unknown',
-            type: chainCert.subject.getField('CN')?.value === chainCert.issuer.getField('CN')?.value ? 'root' : 'intermediate',
-            valid: signatureValid && chainCerts[i].validity.isValid,
-            signatureValid: signatureValid,
-            timeValid: chainCerts[i].validity.isValid
-          });
-
-          currentCert = chainCert;
-          
-          // If this is a self-signed certificate (root), we're done
-          if (chainCert.subject.getField('CN')?.value === chainCert.issuer.getField('CN')?.value) {
-            console.log('✓ Found root certificate:', chainCert.subject.getField('CN')?.value);
-            validation.chainValid = true;
-            foundIssuer = false; // Stop the loop
-            break;
-          }
-          break; // Found this level, continue to next
-        }
-      }
-      
-      if (!foundIssuer && validationPath[validationPath.length - 1].type !== 'root') {
-        console.log('✗ Could not find issuer for:', currentCert.subject.getField('CN')?.value);
-        validation.issues.push(`Could not find issuer for: ${currentCert.subject.getField('CN')?.value}`);
-      }
-    }
-
-    validation.validationPath = validationPath;
-    
-    // Check for issues
-    if (validationPath.length === 1) {
-      validation.issues.push('Certificate issuer not found in provided chain');
-    }
-    
-    const hasExpiredCerts = validationPath.some(cert => !cert.timeValid);
-    if (hasExpiredCerts) {
-      validation.issues.push('One or more certificates in chain are expired or not yet valid');
-    }
-    
-    // Mark as valid if we found a root and no critical issues
-    if (validationPath.some(cert => cert.type === 'root') && validation.issues.length === 0) {
-      validation.chainValid = true;
-    }
-
-    validation.details = {
-      totalCerts: chainCerts.length + 1,
-      pathLength: validationPath.length,
-      hasRoot: validationPath.some(cert => cert.type === 'root'),
-      hasIntermediate: validationPath.some(cert => cert.type === 'intermediate')
-    };
-
-    console.log('Chain validation result:', validation.chainValid);
-    console.log('Validation path:');
-    validationPath.forEach((cert, i) => {
-      console.log(`  ${i}: ${cert.subject} (${cert.type}) - ${cert.valid ? 'Valid' : 'Invalid'}`);
-    });
-
-  } catch (error) {
-    console.log('Chain validation error:', error.message);
-    validation.issues.push('Chain validation error: ' + error.message);
-  }
-
-  console.log('=== CHAIN VALIDATION COMPLETE ===');
-  return validation;
-};
-
-// Helper function to manually parse CSR extensions
-const parseCSRExtensions = (csr) => {
-  const extensions = [];
-  const sans = [];
-  
-  if (!csr.attributes) return { extensions, sans };
-  
-  const extReqAttr = csr.attributes.find(attr => 
-    attr.name === 'extensionRequest' || 
-    attr.type === '1.2.840.113549.1.9.14'
-  );
-  
-  if (extReqAttr && extReqAttr.extensions) {
-    extReqAttr.extensions.forEach(ext => {
-      const extension = {
-        name: ext.name,
-        id: ext.id,
-        critical: ext.critical || false
-      };
-      
-      if (ext.name === 'subjectAltName' || ext.id === '2.5.29.17') {
-        if (ext.altNames && ext.altNames.length > 0) {
-          ext.altNames.forEach(altName => {
-            const san = { type: altName.type };
-            if (altName.type === 1) {
-              san.value = altName.value;
-              san.typeName = 'Email';
-            } else if (altName.type === 2) {
-              san.value = altName.value;
-              san.typeName = 'DNS Name';
-            } else if (altName.type === 6) {
-              san.value = altName.value;
-              san.typeName = 'URI';
-            } else if (altName.type === 7) {
-              san.value = altName.ip || altName.value;
-              san.typeName = 'IP Address';
-            } else {
-              san.value = altName.value || altName.ip || 'Unknown';
-              san.typeName = `Type ${altName.type}`;
-            }
-            sans.push(san);
-          });
-          extension.altNames = ext.altNames;
-        }
-      }
-      
-      if (ext.name === 'keyUsage') {
-        extension.usage = [];
-        if (ext.digitalSignature) extension.usage.push('Digital Signature');
-        if (ext.nonRepudiation) extension.usage.push('Non Repudiation');
-        if (ext.keyEncipherment) extension.usage.push('Key Encipherment');
-        if (ext.dataEncipherment) extension.usage.push('Data Encipherment');
-        if (ext.keyAgreement) extension.usage.push('Key Agreement');
-        if (ext.keyCertSign) extension.usage.push('Key Cert Sign');
-        if (ext.cRLSign) extension.usage.push('CRL Sign');
-        if (ext.encipherOnly) extension.usage.push('Encipher Only');
-        if (ext.decipherOnly) extension.usage.push('Decipher Only');
-      }
-      
-      if (ext.name === 'extKeyUsage') {
-        extension.usage = [];
-        if (ext.serverAuth) extension.usage.push('Server Authentication');
-        if (ext.clientAuth) extension.usage.push('Client Authentication');
-        if (ext.codeSigning) extension.usage.push('Code Signing');
-        if (ext.emailProtection) extension.usage.push('Email Protection');
-        if (ext.timeStamping) extension.usage.push('Time Stamping');
-      }
-      
-      if (ext.name === 'basicConstraints') {
-        extension.isCA = ext.cA || false;
-        if (ext.pathLenConstraint !== undefined) {
-          extension.pathLength = ext.pathLenConstraint;
-        }
-      }
-      
-      extensions.push(extension);
-    });
-  }
-  
-  return { extensions, sans };
+  return details;
 };
 
 // Helper function to extract extensions from Certificate
@@ -532,54 +146,515 @@ const extractCertExtensions = (extensions) => {
   });
 };
 
-// Helper function to get public key details
-const getPublicKeyDetails = (publicKey) => {
-  const details = {
-    algorithm: 'Unknown',
-    bitLength: 'Unknown',
-    exponent: 'Unknown',
-    curve: null,
-    keyData: null
+// Helper function to manually parse CSR extensions
+const parseCSRExtensions = (csr) => {
+  const extensions = [];
+  const sans = [];
+  
+  if (!csr.attributes) return { extensions, sans };
+  
+  const extReqAttr = csr.attributes.find(attr => 
+    attr.name === 'extensionRequest' || 
+    attr.type === '1.2.840.113549.1.9.14'
+  );
+  
+  if (extReqAttr && extReqAttr.extensions) {
+    extReqAttr.extensions.forEach(ext => {
+      const extension = {
+        name: ext.name,
+        id: ext.id,
+        critical: ext.critical || false
+      };
+      
+      if (ext.name === 'subjectAltName' || ext.id === '2.5.29.17') {
+        if (ext.altNames && ext.altNames.length > 0) {
+          ext.altNames.forEach(altName => {
+            const san = { type: altName.type };
+            if (altName.type === 1) {
+              san.value = altName.value;
+              san.typeName = 'Email';
+            } else if (altName.type === 2) {
+              san.value = altName.value;
+              san.typeName = 'DNS Name';
+            } else if (altName.type === 6) {
+              san.value = altName.value;
+              san.typeName = 'URI';
+            } else if (altName.type === 7) {
+              san.value = altName.ip || altName.value;
+              san.typeName = 'IP Address';
+            } else {
+              san.value = altName.value || altName.ip || 'Unknown';
+              san.typeName = `Type ${altName.type}`;
+            }
+            sans.push(san);
+          });
+          extension.altNames = ext.altNames;
+        }
+      }
+      
+      if (ext.name === 'keyUsage') {
+        extension.usage = [];
+        if (ext.digitalSignature) extension.usage.push('Digital Signature');
+        if (ext.nonRepudiation) extension.usage.push('Non Repudiation');
+        if (ext.keyEncipherment) extension.usage.push('Key Encipherment');
+        if (ext.dataEncipherment) extension.usage.push('Data Encipherment');
+        if (ext.keyAgreement) extension.usage.push('Key Agreement');
+        if (ext.keyCertSign) extension.usage.push('Key Cert Sign');
+        if (ext.cRLSign) extension.usage.push('CRL Sign');
+        if (ext.encipherOnly) extension.usage.push('Encipher Only');
+        if (ext.decipherOnly) extension.usage.push('Decipher Only');
+      }
+      
+      if (ext.name === 'extKeyUsage') {
+        extension.usage = [];
+        if (ext.serverAuth) extension.usage.push('Server Authentication');
+        if (ext.clientAuth) extension.usage.push('Client Authentication');
+        if (ext.codeSigning) extension.usage.push('Code Signing');
+        if (ext.emailProtection) extension.usage.push('Email Protection');
+        if (ext.timeStamping) extension.usage.push('Time Stamping');
+      }
+      
+      if (ext.name === 'basicConstraints') {
+        extension.isCA = ext.cA || false;
+        if (ext.pathLenConstraint !== undefined) {
+          extension.pathLength = ext.pathLenConstraint;
+        }
+      }
+      
+      extensions.push(extension);
+    });
+  }
+  
+  return { extensions, sans };
+};
+
+// Helper function to validate certificate with private key
+const validateCertificateWithPrivateKey = (cert, privateKey) => {
+  const validation = {
+    publicKeyMatch: false,
+    signatureValid: false,
+    keyPairValid: false,
+    details: {}
   };
 
-  if (publicKey.n && publicKey.e) {
-    details.algorithm = 'RSA';
-    details.bitLength = publicKey.n.bitLength();
-    details.exponent = publicKey.e.toString();
-    details.modulus = forge.util.bytesToHex(publicKey.n.toByteArray()).toUpperCase();
-  } else if (publicKey.point) {
-    details.algorithm = 'Elliptic Curve (EC)';
-    if (publicKey.point.curve && publicKey.point.curve.oid) {
-      const curveOid = publicKey.point.curve.oid;
-      const curveNames = {
-        '1.2.840.10045.3.1.7': 'secp256r1 (P-256)',
-        '1.3.132.0.34': 'secp384r1 (P-384)',
-        '1.3.132.0.35': 'secp521r1 (P-521)',
-        '1.2.840.10045.3.1.1': 'secp192r1 (P-192)'
+  try {
+    const certPublicKey = cert.publicKey;
+    
+    if (certPublicKey.n && privateKey.n && certPublicKey.e && privateKey.e) {
+      validation.publicKeyMatch = 
+        certPublicKey.n.equals(privateKey.n) && 
+        certPublicKey.e.equals(privateKey.e);
+      
+      validation.details.keyType = 'RSA';
+      validation.details.keySize = certPublicKey.n.bitLength();
+      validation.details.publicExponent = certPublicKey.e.toString();
+      
+      let certModHex, privModHex;
+      
+      try {
+        certModHex = certPublicKey.n.toString(16).toUpperCase();
+        privModHex = privateKey.n.toString(16).toUpperCase();
+        
+        if (certModHex.length === 0) {
+          certModHex = forge.util.bytesToHex(certPublicKey.n.toByteArray()).toUpperCase();
+        }
+        
+        if (privModHex.length === 0) {
+          privModHex = forge.util.bytesToHex(privateKey.n.toByteArray()).toUpperCase();
+        }
+      } catch (e) {
+        console.log('Error getting modulus hex:', e.message);
+        certModHex = 'ERROR_GETTING_MODULUS';
+        privModHex = 'ERROR_GETTING_MODULUS';
+      }
+      
+      validation.details.modulusMatch = {
+        certificate: certModHex.length > 64 ? `${certModHex.substring(0, 32)}...${certModHex.substring(certModHex.length - 32)}` : certModHex,
+        privateKey: privModHex.length > 64 ? `${privModHex.substring(0, 32)}...${privModHex.substring(privModHex.length - 32)}` : privModHex,
+        identical: certModHex === privModHex,
+        lengthMatch: certModHex.length === privModHex.length,
+        totalLength: certModHex.length
       };
-      details.curve = curveNames[curveOid] || `Unknown curve (${curveOid})`;
+      
+    } else if (certPublicKey.point && privateKey.d) {
+      validation.details.keyType = 'Elliptic Curve';
+      validation.details.keySize = privateKey.d.bitLength();
+      validation.publicKeyMatch = true;
     }
-    details.bitLength = publicKey.point.curve ? publicKey.point.curve.p.bitLength() : 'Unknown';
+
+    if (validation.publicKeyMatch) {
+      try {
+        const testMessage = 'Certificate-PrivateKey-Validation-Test-' + Date.now();
+        const md = forge.md.sha256.create();
+        md.update(testMessage, 'utf8');
+        
+        const signature = privateKey.sign(md);
+        const verified = certPublicKey.verify(md.digest().getBytes(), signature);
+        
+        validation.signatureValid = verified;
+        validation.keyPairValid = verified;
+        
+        if (verified) {
+          validation.details.testMessage = testMessage;
+          validation.details.signatureLength = signature.length;
+          validation.details.hashAlgorithm = 'SHA-256';
+        }
+      } catch (e) {
+        console.log('Signature validation error:', e.message);
+        validation.signatureValid = false;
+        validation.keyPairValid = false;
+        validation.details.signatureError = e.message;
+      }
+    }
+
+    validation.details.keyFormat = {
+      certificate: 'X.509 Certificate',
+      privateKey: 'PKCS#1 Private Key'
+    };
+    
+    const keyUsageExt = cert.extensions?.find(ext => ext.name === 'keyUsage');
+    if (keyUsageExt) {
+      validation.details.keyUsageCompatibility = {
+        canSign: keyUsageExt.digitalSignature || keyUsageExt.nonRepudiation,
+        canEncrypt: keyUsageExt.keyEncipherment || keyUsageExt.dataEncipherment,
+        canKeyExchange: keyUsageExt.keyAgreement,
+        restrictions: []
+      };
+      
+      if (!keyUsageExt.digitalSignature) {
+        validation.details.keyUsageCompatibility.restrictions.push('Digital signature not allowed');
+      }
+      if (!keyUsageExt.keyEncipherment) {
+        validation.details.keyUsageCompatibility.restrictions.push('Key encipherment not allowed');
+      }
+    }
+
+  } catch (error) {
+    console.log('Validation error:', error.message);
+    validation.details.error = error.message;
   }
 
-  return details;
+  return validation;
 };
 
-// Helper function to parse signature algorithm
-const parseSignatureAlgorithm = (oid) => {
-  const algorithms = {
-    '1.2.840.113549.1.1.1': 'RSA',
-    '1.2.840.113549.1.1.5': 'SHA-1 with RSA',
-    '1.2.840.113549.1.1.11': 'SHA-256 with RSA',
-    '1.2.840.113549.1.1.12': 'SHA-384 with RSA',
-    '1.2.840.113549.1.1.13': 'SHA-512 with RSA',
-    '1.2.840.10045.4.1': 'SHA-1 with ECDSA',
-    '1.2.840.10045.4.3.2': 'SHA-256 with ECDSA',
-    '1.2.840.10045.4.3.3': 'SHA-384 with ECDSA',
-    '1.2.840.10045.4.3.4': 'SHA-512 with ECDSA'
-  };
-  return algorithms[oid] || `Unknown (${oid})`;
+// Helper function to parse certificate chain
+const parseCertificateChain = (chainContent) => {
+  const chainCerts = [];
+  
+  if (!chainContent || !chainContent.trim()) {
+    return chainCerts;
+  }
+
+  try {
+    let content = chainContent.trim();
+    if (!content.includes('-----BEGIN')) {
+      try {
+        content = Buffer.from(content, 'base64').toString('utf8');
+      } catch (e) {
+        return chainCerts;
+      }
+    }
+
+    const certRegex = /-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g;
+    const matches = content.match(certRegex);
+    
+    if (matches) {
+      matches.forEach((certPem, index) => {
+        try {
+          const cert = forge.pki.certificateFromPem(certPem);
+          chainCerts.push({
+            index: index,
+            certificate: cert,
+            pem: certPem,
+            subject: cert.subject.attributes.map(attr => ({
+              name: attr.name,
+              shortName: attr.shortName,
+              value: attr.value
+            })),
+            issuer: cert.issuer.attributes.map(attr => ({
+              name: attr.name,
+              shortName: attr.shortName,
+              value: attr.value
+            })),
+            validity: {
+              notBefore: cert.validity.notBefore,
+              notAfter: cert.validity.notAfter,
+              isValid: new Date() >= cert.validity.notBefore && new Date() <= cert.validity.notAfter
+            },
+            serialNumber: cert.serialNumber,
+            fingerprint: forge.md.sha256.create().update(forge.asn1.toDer(forge.pki.certificateToAsn1(cert)).getBytes()).digest().toHex().toUpperCase()
+          });
+        } catch (e) {
+          console.log(`Failed to parse certificate ${index} in chain:`, e.message);
+        }
+      });
+    }
+  } catch (error) {
+    console.log('Error parsing certificate chain:', error.message);
+  }
+
+  return chainCerts;
 };
+
+// Helper function to validate certificate chain
+const validateCertificateChain = (cert, chainCerts) => {
+  const validation = {
+    chainValid: false,
+    chainLength: chainCerts.length,
+    validationPath: [],
+    issues: [],
+    details: {}
+  };
+
+  if (chainCerts.length === 0) {
+    validation.issues.push('No chain certificates provided');
+    return validation;
+  }
+
+  try {
+    let currentCert = cert;
+    const validationPath = [{
+      subject: currentCert.subject.getField('CN')?.value || 'Unknown',
+      issuer: currentCert.issuer.getField('CN')?.value || 'Unknown',
+      type: 'end-entity',
+      valid: true,
+      signatureValid: true,
+      timeValid: new Date() >= currentCert.validity.notBefore && new Date() <= currentCert.validity.notAfter
+    }];
+
+    let foundIssuer = true;
+    while (foundIssuer && validationPath.length <= chainCerts.length + 1) {
+      foundIssuer = false;
+      
+      for (let i = 0; i < chainCerts.length; i++) {
+        const chainCert = chainCerts[i].certificate;
+        
+        const currentIssuerCN = currentCert.issuer.getField('CN')?.value;
+        const chainSubjectCN = chainCert.subject.getField('CN')?.value;
+        
+        if (currentIssuerCN === chainSubjectCN) {
+          foundIssuer = true;
+          
+          let signatureValid = true;
+          
+          validationPath.push({
+            subject: chainCert.subject.getField('CN')?.value || 'Unknown',
+            issuer: chainCert.issuer.getField('CN')?.value || 'Unknown',
+            type: chainCert.subject.getField('CN')?.value === chainCert.issuer.getField('CN')?.value ? 'root' : 'intermediate',
+            valid: signatureValid && chainCerts[i].validity.isValid,
+            signatureValid: signatureValid,
+            timeValid: chainCerts[i].validity.isValid
+          });
+
+          currentCert = chainCert;
+          
+          if (chainCert.subject.getField('CN')?.value === chainCert.issuer.getField('CN')?.value) {
+            validation.chainValid = true;
+            foundIssuer = false;
+            break;
+          }
+          break;
+        }
+      }
+      
+      if (!foundIssuer && validationPath[validationPath.length - 1].type !== 'root') {
+        validation.issues.push(`Could not find issuer for: ${currentCert.subject.getField('CN')?.value}`);
+      }
+    }
+
+    validation.validationPath = validationPath;
+    
+    if (validationPath.length === 1) {
+      validation.issues.push('Certificate issuer not found in provided chain');
+    }
+    
+    const hasExpiredCerts = validationPath.some(cert => !cert.timeValid);
+    if (hasExpiredCerts) {
+      validation.issues.push('One or more certificates in chain are expired or not yet valid');
+    }
+    
+    if (validationPath.some(cert => cert.type === 'root') && validation.issues.length === 0) {
+      validation.chainValid = true;
+    }
+
+    validation.details = {
+      totalCerts: chainCerts.length + 1,
+      pathLength: validationPath.length,
+      hasRoot: validationPath.some(cert => cert.type === 'root'),
+      hasIntermediate: validationPath.some(cert => cert.type === 'intermediate')
+    };
+
+  } catch (error) {
+    validation.issues.push('Chain validation error: ' + error.message);
+  }
+
+  return validation;
+};
+
+// New endpoint to parse PKCS#7 certificate bundles
+router.post('/parse-pkcs7', (req, res) => {
+  try {
+    const { content, isDer = false, fileName = 'unknown' } = req.body;
+    
+    if (!content || !content.trim()) {
+      return res.status(400).json({ error: 'No PKCS#7 content provided' });
+    }
+
+    console.log(`Processing PKCS#7 file: ${fileName}, DER format: ${isDer}`);
+
+    let pkcs7Content = content.trim();
+    let p7 = null;
+
+    try {
+      if (isDer) {
+        console.log('Processing DER format PKCS#7');
+        const binaryData = forge.util.decode64(pkcs7Content);
+        const asn1 = forge.asn1.fromDer(binaryData);
+        p7 = forge.pkcs7.messageFromAsn1(asn1);
+      } else {
+        if (pkcs7Content.includes('-----BEGIN PKCS7-----')) {
+          console.log('Processing PEM format PKCS#7');
+          p7 = forge.pkcs7.messageFromPem(pkcs7Content);
+        } else if (pkcs7Content.includes('-----BEGIN CERTIFICATE-----')) {
+          console.log('Processing PEM file with multiple certificates');
+          const certMatches = pkcs7Content.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g);
+          if (certMatches && certMatches.length > 0) {
+            const certificates = certMatches.map((certPem, index) => {
+              try {
+                const cert = forge.pki.certificateFromPem(certPem);
+                return {
+                  index: index,
+                  pem: certPem,
+                  subject: cert.subject.attributes.map(attr => ({
+                    name: attr.name,
+                    shortName: attr.shortName,
+                    value: attr.value
+                  })),
+                  issuer: cert.issuer.attributes.map(attr => ({
+                    name: attr.name,
+                    shortName: attr.shortName,
+                    value: attr.value
+                  })),
+                  validity: {
+                    notBefore: cert.validity.notBefore,
+                    notAfter: cert.validity.notAfter,
+                    isValid: new Date() >= cert.validity.notBefore && new Date() <= cert.validity.notAfter
+                  },
+                  serialNumber: cert.serialNumber,
+                  fingerprint: forge.md.sha256.create().update(forge.asn1.toDer(forge.pki.certificateToAsn1(cert)).getBytes()).digest().toHex().toUpperCase()
+                };
+              } catch (e) {
+                console.log(`Failed to parse certificate ${index}:`, e.message);
+                return null;
+              }
+            }).filter(cert => cert !== null);
+
+            return res.json({
+              type: 'PKCS#7 (Multi-PEM)',
+              certificates: certificates,
+              certificateCount: certificates.length
+            });
+          }
+        } else {
+          try {
+            const binaryData = forge.util.decode64(pkcs7Content);
+            const asn1 = forge.asn1.fromDer(binaryData);
+            p7 = forge.pkcs7.messageFromAsn1(asn1);
+          } catch (e) {
+            return res.status(400).json({ error: 'Invalid PKCS#7 format - could not parse as PEM or DER' });
+          }
+        }
+      }
+
+      if (p7 && p7.certificates) {
+        console.log(`Found ${p7.certificates.length} certificates in PKCS#7`);
+        
+        const certificates = p7.certificates.map((cert, index) => {
+          const certPem = forge.pki.certificateToPem(cert);
+          return {
+            index: index,
+            pem: certPem,
+            subject: cert.subject.attributes.map(attr => ({
+              name: attr.name,
+              shortName: attr.shortName,
+              value: attr.value
+            })),
+            issuer: cert.issuer.attributes.map(attr => ({
+              name: attr.name,
+              shortName: attr.shortName,
+              value: attr.value
+            })),
+            validity: {
+              notBefore: cert.validity.notBefore,
+              notAfter: cert.validity.notAfter,
+              isValid: new Date() >= cert.validity.notBefore && new Date() <= cert.validity.notAfter
+            },
+            serialNumber: cert.serialNumber,
+            fingerprint: forge.md.sha256.create().update(forge.asn1.toDer(forge.pki.certificateToAsn1(cert)).getBytes()).digest().toHex().toUpperCase()
+          };
+        });
+
+        return res.json({
+          type: 'PKCS#7',
+          certificates: certificates,
+          certificateCount: certificates.length
+        });
+      } else {
+        return res.status(400).json({ error: 'No certificates found in PKCS#7 structure' });
+      }
+
+    } catch (parseError) {
+      console.error('PKCS#7 parsing error:', parseError.message);
+      return res.status(400).json({ error: 'Failed to parse PKCS#7: ' + parseError.message });
+    }
+
+  } catch (error) {
+    console.error('PKCS#7 processing error:', error);
+    return res.status(500).json({ error: 'Server error processing PKCS#7: ' + error.message });
+  }
+});
+
+// New endpoint to check if private key is encrypted
+router.post('/check-key-encryption', (req, res) => {
+  try {
+    const { privateKey } = req.body;
+    
+    if (!privateKey || !privateKey.trim()) {
+      return res.json({ encrypted: false });
+    }
+
+    let keyContent = privateKey.trim();
+    
+    if (!keyContent.includes('-----BEGIN')) {
+      try {
+        keyContent = Buffer.from(keyContent, 'base64').toString('utf8');
+      } catch (e) {
+        return res.json({ encrypted: false, error: 'Invalid key format' });
+      }
+    }
+
+    const hasEncryptionHeader = keyContent.includes('Proc-Type: 4,ENCRYPTED') || 
+                               keyContent.includes('-----BEGIN ENCRYPTED PRIVATE KEY-----');
+    
+    if (hasEncryptionHeader) {
+      return res.json({ encrypted: true });
+    }
+
+    try {
+      forge.pki.privateKeyFromPem(keyContent);
+      return res.json({ encrypted: false });
+    } catch (error) {
+      if (error.message.includes('decrypt') || error.message.includes('password') || error.message.includes('encrypted')) {
+        return res.json({ encrypted: true });
+      }
+      
+      return res.json({ encrypted: false, error: 'Invalid private key format' });
+    }
+  } catch (error) {
+    console.error('Key encryption check error:', error);
+    return res.json({ encrypted: false, error: 'Failed to check key encryption' });
+  }
+});
 
 // Certificate/CSR parsing endpoint with private key and chain validation
 router.post('/parse', upload.single('file'), (req, res) => {
@@ -726,25 +801,44 @@ router.post('/parse', upload.single('file'), (req, res) => {
           
           let privateKey;
           
-          // Try to parse private key with password if provided
           if (privateKeyPassword) {
+            console.log('Attempting to decrypt private key with password');
             try {
-              privateKey = forge.pki.decryptRsaPrivateKey(privateKeyContent, privateKeyPassword);
-            } catch (decryptError) {
-              // If decryption fails, try as PKCS#8
-              try {
+              if (privateKeyContent.includes('Proc-Type: 4,ENCRYPTED')) {
+                console.log('Detected traditional encrypted PEM format');
+                privateKey = forge.pki.decryptRsaPrivateKey(privateKeyContent, privateKeyPassword);
+              } 
+              else if (privateKeyContent.includes('-----BEGIN ENCRYPTED PRIVATE KEY-----')) {
+                console.log('Detected PKCS#8 encrypted format');
                 privateKey = forge.pki.privateKeyFromPem(privateKeyContent, privateKeyPassword);
-              } catch (pkcs8Error) {
-                throw new Error('Failed to decrypt private key with provided password');
               }
+              else {
+                console.log('Trying generic password decryption');
+                try {
+                  privateKey = forge.pki.privateKeyFromPem(privateKeyContent, privateKeyPassword);
+                } catch (e1) {
+                  console.log('Generic decryption failed, trying RSA decryption');
+                  privateKey = forge.pki.decryptRsaPrivateKey(privateKeyContent, privateKeyPassword);
+                }
+              }
+              console.log('Private key decrypted successfully');
+            } catch (decryptError) {
+              console.error('Decryption error:', decryptError.message);
+              throw new Error('Failed to decrypt private key with provided password: ' + decryptError.message);
             }
           } else {
-            // Try to parse without password
+            console.log('Parsing unencrypted private key');
             privateKey = forge.pki.privateKeyFromPem(privateKeyContent);
           }
           
+          if (!privateKey) {
+            throw new Error('Failed to parse private key');
+          }
+          
+          console.log('Private key parsed successfully, proceeding with validation');
           result.privateKeyValidation = validateCertificateWithPrivateKey(cert, privateKey);
         } catch (error) {
+          console.error('Private key processing error:', error.message);
           result.privateKeyValidation = {
             publicKeyMatch: false,
             signatureValid: false,

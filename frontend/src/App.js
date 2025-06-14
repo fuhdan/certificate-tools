@@ -18,6 +18,7 @@ function App() {
   const [dragOver, setDragOver] = useState(false);
   const [privateKeyDragOver, setPrivateKeyDragOver] = useState(false);
   const [chainDragOver, setChainDragOver] = useState(false);
+  const [chainAutoDetected, setChainAutoDetected] = useState(false); // Track if chain was auto-detected
 
   // Control panel options
   const [showRawData, setShowRawData] = useState(false);
@@ -32,8 +33,9 @@ function App() {
   );
   const showPrivateKeyInput = results && results.type === 'Certificate';
   const showPasswordInput = showPrivateKeyInput && hasPrivateKey && isPrivateKeyEncrypted;
-  const showChainInput = showPrivateKeyInput && hasPrivateKey;
+  const showChainInput = results && results.type === 'Certificate'; // Always show for certificates
   const hasCertificateWithKey = results && results.type === 'Certificate' && hasPrivateKey;
+  const hasAutoDetectedChain = chainAutoDetected && chainContent.trim().length > 0;
 
   // Check server status
   const updateServerStatus = useCallback(async () => {
@@ -124,6 +126,7 @@ function App() {
   const handleChainTextChange = (e) => {
     const value = e.target.value;
     setChainContent(value);
+    setChainAutoDetected(false); // Manual input, not auto-detected
     // Re-process certificate with new chain
     if (certContent.trim()) {
       debouncedProcess(certContent, privateKeyContent, value, privateKeyPassword);
@@ -192,14 +195,65 @@ function App() {
       const content = e.target.result;
       console.log('File content loaded, length:', content.length);
       console.log('Content preview:', content.substring(0, 100));
-      setCertContent(content);
-      processCertificate(content, privateKeyContent, chainContent, privateKeyPassword);
+      
+      // Check if this is PKCS#7 format
+      const isPkcs7Pem = content.includes('-----BEGIN PKCS7-----') || content.includes('-----BEGIN CERTIFICATE-----');
+      const isPkcs7Der = !content.includes('-----BEGIN') && file.name.toLowerCase().endsWith('.p7b');
+      
+      if (isPkcs7Pem || isPkcs7Der) {
+        console.log('PKCS#7 format detected, sending to backend for parsing');
+        // Send PKCS#7 content to backend for parsing
+        processPkcs7Content(content, file.name);
+        return;
+      }
+      
+      // Check if this is a regular certificate chain (multiple certificates)
+      const certMatches = content.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g);
+      const certCount = certMatches ? certMatches.length : 0;
+      
+      console.log('Detected certificates in file:', certCount);
+      
+      if (certCount > 1) {
+        // This is a certificate chain - split it
+        console.log('Certificate chain detected, splitting...');
+        const firstCert = certMatches[0];
+        const chainCerts = certMatches.slice(1).join('\n');
+        
+        console.log('Setting first certificate as main cert');
+        console.log('Setting remaining certificates as chain');
+        
+        setCertContent(firstCert);
+        setChainContent(chainCerts);
+        setChainAutoDetected(true); // Mark as auto-detected
+        
+        // Process with the split content
+        processCertificate(firstCert, privateKeyContent, chainCerts, privateKeyPassword);
+      } else {
+        // Single certificate
+        setCertContent(content);
+        setChainAutoDetected(false); // Not auto-detected
+        processCertificate(content, privateKeyContent, chainContent, privateKeyPassword);
+      }
     };
     reader.onerror = (e) => {
       console.error('File reading error:', e);
       setError('Failed to read file');
     };
-    reader.readAsText(file);
+    
+    // Read as text for PEM format, or as array buffer for potential DER format
+    if (file.name.toLowerCase().endsWith('.p7b') || file.name.toLowerCase().endsWith('.p7c')) {
+      reader.readAsArrayBuffer(file);
+      reader.onload = (e) => {
+        // Convert ArrayBuffer to base64 for backend processing
+        const arrayBuffer = e.target.result;
+        const uint8Array = new Uint8Array(arrayBuffer);
+        const base64String = btoa(String.fromCharCode.apply(null, uint8Array));
+        console.log('PKCS#7 DER format detected, converting to base64');
+        processPkcs7Content(base64String, file.name, true); // true indicates DER format
+      };
+    } else {
+      reader.readAsText(file);
+    }
   };
 
   // Process dropped/selected private key file
@@ -223,6 +277,7 @@ function App() {
     reader.onload = (e) => {
       const content = e.target.result;
       setChainContent(content);
+      setChainAutoDetected(false); // This is manually uploaded, not auto-detected
       // Re-process certificate with new chain
       if (certContent.trim()) {
         processCertificate(certContent, privateKeyContent, content, privateKeyPassword);
@@ -247,6 +302,7 @@ function App() {
     setPrivateKeyContent('');
     setChainContent('');
     setPrivateKeyPassword('');
+    setChainAutoDetected(false);
     setResults(null);
     setError('');
   };
@@ -333,6 +389,77 @@ function App() {
 
   const handleChainDragLeave = () => {
     setChainDragOver(false);
+  };
+
+  // Process PKCS#7 content
+  const processPkcs7Content = async (content, fileName, isDer = false) => {
+    setLoading(true);
+    setError('');
+    
+    try {
+      console.log('API Request /api/parse-pkcs7:', {
+        fileName: fileName,
+        isDer: isDer,
+        contentLength: content.length
+      });
+      
+      const requestBody = { 
+        content: content,
+        isDer: isDer,
+        fileName: fileName
+      };
+      
+      const response = await fetch(`${process.env.REACT_APP_API_URL || ''}/api/parse-pkcs7`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestBody)
+      });
+      
+      const data = await response.json();
+      
+      console.log('API Response:', {
+        status: response.status,
+        type: data.type,
+        certificateCount: data.certificateCount,
+        certificates: data.certificates ? data.certificates.map(cert => 
+          cert.subject.find(attr => attr.shortName === 'CN')?.value || 'Unknown CN'
+        ) : []
+      });
+      
+      if (data.error) {
+        throw new Error(data.error);
+      }
+      
+      if (data.certificates && data.certificates.length > 0) {
+        // Set the first certificate as the main certificate
+        const firstCert = data.certificates[0].pem;
+        setCertContent(firstCert);
+        
+        if (data.certificates.length > 1) {
+          // Set remaining certificates as chain
+          const chainCerts = data.certificates.slice(1).map(cert => cert.pem).join('\n');
+          setChainContent(chainCerts);
+          setChainAutoDetected(true);
+          
+          // Process with split content
+          processCertificate(firstCert, privateKeyContent, chainCerts, privateKeyPassword);
+        } else {
+          // Single certificate in PKCS#7
+          setChainAutoDetected(false);
+          processCertificate(firstCert, privateKeyContent, chainContent, privateKeyPassword);
+        }
+      } else {
+        throw new Error('No certificates found in PKCS#7 file');
+      }
+      
+    } catch (err) {
+      console.error('PKCS#7 Error:', err.message);
+      setError('Failed to parse PKCS#7 file: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (

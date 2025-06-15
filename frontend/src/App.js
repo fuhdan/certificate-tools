@@ -22,6 +22,7 @@ function App() {
   const [privateKeyDragOver, setPrivateKeyDragOver] = useState(false);
   const [chainDragOver, setChainDragOver] = useState(false);
   const [chainAutoDetected, setChainAutoDetected] = useState(false); // Track if chain was auto-detected
+  const [privateKeyAutoDetected, setPrivateKeyAutoDetected] = useState(false); // Track if private key was auto-detected
   
   // NEW: Track original file information
   const [originalFileInfo, setOriginalFileInfo] = useState(null);
@@ -38,7 +39,7 @@ function App() {
     privateKeyContent.includes('-----BEGIN ENCRYPTED PRIVATE KEY-----')
   );
   const showPrivateKeyInput = results && results.type === 'Certificate';
-  const showPasswordInput = showPrivateKeyInput && hasPrivateKey && isPrivateKeyEncrypted;
+  const showPasswordInput = showPrivateKeyInput && hasPrivateKey && isPrivateKeyEncrypted && !privateKeyAutoDetected;
   const showChainInput = results && results.type === 'Certificate'; // Always show for certificates
   const hasCertificateWithKey = results && results.type === 'Certificate' && hasPrivateKey;
   const hasAutoDetectedChain = chainAutoDetected && chainContent.trim().length > 0;
@@ -174,6 +175,7 @@ function App() {
   const handlePrivateKeyTextChange = (e) => {
     const value = e.target.value;
     setPrivateKeyContent(value);
+    setPrivateKeyAutoDetected(false); // Manual input, not auto-detected
     
     // Re-process certificate with new private key
     if (certContent.trim()) {
@@ -464,6 +466,7 @@ function App() {
       // Set the private key content if available
       if (data.privateKey && data.privateKey.pem) {
         setPrivateKeyContent(data.privateKey.pem);
+        setPrivateKeyAutoDetected(true); // Mark as auto-detected
       }
       
       // Set the certificate chain if available
@@ -606,6 +609,7 @@ function App() {
     setShowPkcs12PasswordInput(false);
     setPendingPkcs12Data(null);
     setChainAutoDetected(false);
+    setPrivateKeyAutoDetected(false); // Reset private key auto-detection
     setOriginalFileInfo(null); // Clear file info
     setResults(null);
     setError('');
@@ -789,6 +793,7 @@ function App() {
             onPrivateKeyDrop={handlePrivateKeyFileDrop}
             onPrivateKeyFileSelect={handlePrivateKeyFileInput}
             showPrivateKeyInput={showPrivateKeyInput}
+            privateKeyAutoDetected={privateKeyAutoDetected} // Pass the auto-detection flag
             privateKeyPassword={privateKeyPassword}
             onPrivateKeyPasswordChange={handlePrivateKeyPasswordChange}
             showPasswordInput={showPasswordInput}

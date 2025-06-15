@@ -17,6 +17,7 @@ const InputSection = ({
   onPrivateKeyDrop,
   onPrivateKeyFileSelect,
   showPrivateKeyInput,
+  privateKeyAutoDetected,
   // Password props
   privateKeyPassword,
   onPrivateKeyPasswordChange,
@@ -39,6 +40,9 @@ const InputSection = ({
 }) => {
   // Check if chain content was auto-populated
   const hasAutoDetectedChain = chainContent.trim().length > 0 && showChainInput;
+  
+  // Check if private key was auto-detected
+  const hasAutoDetectedPrivateKey = privateKeyAutoDetected && privateKeyContent.trim().length > 0;
   
   return (
     <div className="input-section">
@@ -97,8 +101,26 @@ const InputSection = ({
         </div>
       )}
 
-      {/* Private Key Input - Only show for certificates */}
-      {showPrivateKeyInput && (
+      {/* Show info when private key was auto-detected */}
+      {hasAutoDetectedPrivateKey && (
+        <div className="input-group">
+          <div className="private-key-detected-info">
+            <div className="info-icon">✅</div>
+            <div className="info-content">
+              <strong>Private Key Detected!</strong>
+              <p>Successfully extracted and loaded private key from the uploaded file. The private key has been automatically validated with the certificate.</p>
+              {results && results.summary && results.summary.chainLength > 0 && (
+                <p style={{ marginTop: '8px', fontSize: '0.9em', opacity: 0.8 }}>
+                  Also found {results.summary.chainLength} certificate(s) in the chain.
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Private Key Input - Only show for certificates that don't have auto-detected private key */}
+      {showPrivateKeyInput && !hasAutoDetectedPrivateKey && (
         <>
           <div className="input-group">
             <label htmlFor="privateKeyInput">Private Key (Optional - for validation):</label>
@@ -199,29 +221,11 @@ const InputSection = ({
             <div className="info-content">
               <strong>Certificate Chain Detected!</strong>
               <p>Found multiple certificates in the uploaded file. The first certificate is being used as the end-entity certificate, and the remaining certificates are being validated as the certificate chain.</p>
-              <p style={{ marginTop: '8px', fontSize: '0.9em', opacity: 0.8 }}>
-                Optionally upload a private key above for complete validation.
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Show info when PKCS#12 was processed */}
-      {results && results.summary && results.summary.hasCertificate && (
-        <div className="input-group">
-          <div className="pkcs12-detected-info">
-            <div className="info-icon">📦</div>
-            <div className="info-content">
-              <strong>PKCS#12 Bundle Processed!</strong>
-              <p>Successfully extracted certificate{results.summary.hasPrivateKey ? ' and private key' : ''} from PKCS#12 file.</p>
-              <div style={{ marginTop: '8px', fontSize: '0.9em' }}>
-                <div>✅ Certificate: Extracted and loaded</div>
-                {results.summary.hasPrivateKey && <div>✅ Private Key: Extracted and validated</div>}
-                {results.summary.chainLength > 0 && <div>✅ Certificate Chain: {results.summary.chainLength} additional certificate(s)</div>}
-                {results.summary.keyPairValid && <div>✅ Key Pair: Valid match between certificate and private key</div>}
-                {results.summary.chainValid && <div>✅ Chain: Valid certificate chain</div>}
-              </div>
+              {!hasAutoDetectedPrivateKey && privateKeyContent.trim().length === 0 && (
+                <p style={{ marginTop: '8px', fontSize: '0.9em', opacity: 0.8 }}>
+                  Optionally upload a private key above for complete validation.
+                </p>
+              )}
             </div>
           </div>
         </div>

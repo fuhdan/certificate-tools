@@ -132,7 +132,7 @@ redraw_progress_bar() {
 }
 
 update_progress() {
-    ((CURRENT_STEP++))
+    CURRENT_STEP=$((CURRENT_STEP + 1))
     
     # Check if tput is available, fallback to old method if not
     if ! command -v tput >/dev/null 2>&1; then
@@ -358,8 +358,8 @@ check_java_tools() {
     local warnings=()
     
     if ! command -v keytool >/dev/null 2>&1; then
-        log_warning "Java keytool not found - JKS and BKS generation will be skipped"
-        warnings+=("Java keytool not available")
+        # Only add ONE warning message, don't call log_warning here
+        warnings+=("Java keytool not available - JKS/BKS formats skipped")
     else
         local java_version
         java_version=$(java -version 2>&1 | head -n1)
@@ -367,12 +367,12 @@ check_java_tools() {
         
         # Check for Bouncy Castle provider (for BKS)
         if ! keytool -storetype BKS -help >/dev/null 2>&1; then
-            log_warning "Bouncy Castle provider not available - BKS generation may fail"
             warnings+=("BKS support requires Bouncy Castle provider")
         fi
     fi
     
-    echo "${warnings[@]}"
+    # Return warnings as properly quoted array elements
+    printf '%s\n' "${warnings[@]}"
 }
 
 # =============================================================================

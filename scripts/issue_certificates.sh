@@ -1,6 +1,6 @@
 #!/bin/bash
 
-set -euo pipefail
+set -eo pipefail
 
 # =============================================================================
 # Enhanced Certificate Issuance Script
@@ -114,13 +114,13 @@ validate_prerequisites() {
     
     validate_openssl || return 1
     
-    # Check Java tools (optional)
-    local warnings
-    warnings=($(check_java_tools))
-    for warning in "${warnings[@]}"; do
-        WARNING_MESSAGES+=("$warning")
-        ((STATS_WARNINGS++))
-    done
+    # Check Java tools (optional) - FIXED to avoid duplicates
+    while IFS= read -r warning; do
+        if [[ -n "$warning" ]]; then
+            WARNING_MESSAGES+=("$warning")
+            ((STATS_WARNINGS++))
+        fi
+    done < <(check_java_tools)
     
     log_success "Prerequisites validation completed"
     return 0
@@ -546,9 +546,8 @@ generate_java_keystores() {
     local password="$3"
     
     if ! command -v keytool >/dev/null 2>&1; then
-        log_warning "JKS/BKS creation skipped - Java keytool not available"
-        WARNING_MESSAGES+=("JKS/BKS creation skipped")
-        ((STATS_WARNINGS++))
+        # Don't add warning here - already handled in validate_prerequisites
+        log_debug "JKS/BKS creation skipped - Java keytool not available"
         return 0
     fi
     
@@ -566,8 +565,6 @@ generate_java_keystores() {
         update_progress
     else
         log_warning "JKS KeyStore creation failed"
-        WARNING_MESSAGES+=("JKS KeyStore creation failed")
-        ((STATS_WARNINGS++))
         ((STATS_FAILED_FILES++))
     fi
     
@@ -583,8 +580,6 @@ generate_java_keystores() {
         update_progress
     else
         log_warning "BKS KeyStore creation failed - Bouncy Castle provider may not be available"
-        WARNING_MESSAGES+=("BKS KeyStore creation failed")
-        ((STATS_WARNINGS++))
         ((STATS_FAILED_FILES++))
     fi
     
@@ -600,8 +595,6 @@ generate_java_keystores() {
         update_progress
     else
         log_warning "BKS KeyStore (no password) creation failed"
-        WARNING_MESSAGES+=("BKS KeyStore (no password) creation failed")
-        ((STATS_WARNINGS++))
         ((STATS_FAILED_FILES++))
     fi
 }
@@ -613,6 +606,10 @@ generate_java_keystores() {
 get_password_input() {
     local default_password="$1"
     
+    # Temporarily disable progress bar
+    local temp_progress_state="$PROGRESS_RESERVED"
+    PROGRESS_RESERVED=false
+    
     echo ""
     echo -e "${CYAN}🔐 Password Configuration${NC}"
     echo "========================"
@@ -621,6 +618,9 @@ get_password_input() {
     read -s user_password
     echo ""
     
+    # Restore progress bar state
+    PROGRESS_RESERVED="$temp_progress_state"
+
     if [[ -z "$user_password" ]]; then
         echo "$default_password"
         log_info "Using default password"
@@ -744,9 +744,17 @@ display_file_inventory() {
     check_and_display_file "$cert_dir/$cn.pkcs12.p12" "PKCS#12 (with password)"
     check_and_display_file "$cert_dir/$cn.nopass.pkcs12.p12" "PKCS#12 (no password)"
     check_and_display_file "$cert_dir/$cn.pfx" "PFX (Windows)"
-    check_and_display_file "$cert_dir/$cn.keystore.jks" "Java KeyStore (JKS)"
-    check_and_display_file "$cert_dir/$cn.keystore.bks" "BKS KeyStore (with pass)"
-    check_and_display_file "$cert_dir/$cn.nopass.keystore.bks" "BKS KeyStore (no pass)"
+    
+    # Only show Java keystores if Java is available
+    if command -v keytool >/dev/null 2>&1; then
+        check_and_display_file "$cert_dir/$cn.keystore.jks" "Java KeyStore (JKS)"
+        check_and_display_file "$cert_dir/$cn.keystore.bks" "BKS KeyStore (with pass)"
+        check_and_display_file "$cert_dir/$cn.nopass.keystore.bks" "BKS KeyStore (no pass)"
+    else
+        echo "   ⚠️  Java KeyStore (JKS):     Skipped (Java not available)"
+        echo "   ⚠️  BKS KeyStore formats:    Skipped (Java not available)"
+    fi
+    
     echo ""
     
     # Other Files
@@ -989,7 +997,7 @@ main() {
     
     # Display certificate details
     display_certificate_details "$cert_dir/$cn.cert.pem"
-    
+
     # Generate and display summary report
     generate_summary_report "$cn" "$cert_dir" "$password" "$duration"
     

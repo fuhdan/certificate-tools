@@ -32,6 +32,7 @@ declare -g LOG_LEVEL="INFO"
 declare -g TEMP_FILES=()
 declare -g CURRENT_STEP=0
 declare -g TOTAL_STEPS=0
+declare -g PROGRESS_RESERVED=false
 
 # =============================================================================
 # LOGGING SYSTEM
@@ -65,7 +66,18 @@ log_with_level() {
     local timestamp="$(date '+%H:%M:%S')"
     local log_entry="[$timestamp] [$level] $message"
     
-    echo -e "${color}${symbol} ${level}:${NC} $message"
+    # Handle progress bar positioning if active
+    if [[ "$PROGRESS_RESERVED" == "true" ]] && command -v tput >/dev/null 2>&1; then
+        # Move cursor up to insert log message above progress bar
+        tput cuu1
+        tput el  # Clear line
+        echo -e "${color}${symbol} ${level}:${NC} $message"
+        # Redraw the progress bar immediately after the log message
+        redraw_progress_bar
+    else
+        echo -e "${color}${symbol} ${level}:${NC} $message"
+    fi
+    
     [[ -n "${LOG_FILE:-}" ]] && echo "$log_entry" >> "$LOG_FILE"
 }
 
@@ -76,17 +88,80 @@ log_warning() { log_with_level "WARNING" "$1" "$YELLOW" "⚠️ "; }
 log_error() { log_with_level "ERROR" "$1" "$RED" "❌"; }
 
 # =============================================================================
-# PROGRESS TRACKING
+# PROGRESS TRACKING (Updated with bottom positioning)
 # =============================================================================
 
 init_progress() {
     TOTAL_STEPS="$1"
     CURRENT_STEP=0
+    PROGRESS_RESERVED=false
     log_info "Starting operation with $TOTAL_STEPS steps"
+}
+
+reserve_progress_line() {
+    if [[ "$PROGRESS_RESERVED" == "false" ]]; then
+        echo ""  # Reserve a line for progress bar
+        draw_progress_bar  # Draw initial progress bar
+        PROGRESS_RESERVED=true
+    fi
+}
+
+draw_progress_bar() {
+    local percentage=$((CURRENT_STEP * 100 / TOTAL_STEPS))
+    local bar_length=40
+    local filled_length=$((percentage * bar_length / 100))
+    
+    # Ensure we don't exceed 100%
+    if [[ $percentage -gt 100 ]]; then
+        percentage=100
+        filled_length=$bar_length
+    fi
+    
+    printf "${BLUE}Progress: ${NC}["
+    printf "%*s" $filled_length | tr ' ' '#'
+    printf "%*s" $((bar_length - filled_length)) | tr ' ' '-'
+    printf "] %d%% (%d/%d)" $percentage $CURRENT_STEP $TOTAL_STEPS
+}
+
+redraw_progress_bar() {
+    # Only redraw if tput is available and progress is reserved
+    if [[ "$PROGRESS_RESERVED" == "true" ]] && command -v tput >/dev/null 2>&1; then
+        draw_progress_bar
+        echo ""  # Move to next line for future log messages
+    fi
 }
 
 update_progress() {
     ((CURRENT_STEP++))
+    
+    # Check if tput is available, fallback to old method if not
+    if ! command -v tput >/dev/null 2>&1; then
+        update_progress_fallback
+        return
+    fi
+    
+    # Ensure we have reserved a line
+    reserve_progress_line
+    
+    # Move to progress bar line and update it
+    tput cuu1  # Move cursor up 1 line
+    tput el    # Clear to end of line
+    
+    draw_progress_bar
+    echo ""  # Move to next line
+    
+    # If we're done, show completion message
+    if [[ $CURRENT_STEP -ge $TOTAL_STEPS ]]; then
+        tput cuu1
+        tput el
+        printf "${GREEN}✅ Progress: [########################################] 100%% Complete!${NC}\n"
+        log_success "All steps completed successfully"
+        PROGRESS_RESERVED=false
+    fi
+}
+
+# Fallback progress function for systems without tput
+update_progress_fallback() {
     local percentage=$((CURRENT_STEP * 100 / TOTAL_STEPS))
     local bar_length=40
     local filled_length=$((percentage * bar_length / 100))
@@ -106,6 +181,14 @@ update_progress() {
         echo ""
         log_success "All steps completed successfully"
     fi
+}
+
+# Enhanced progress for testing phases
+init_testing_progress() {
+    local total_tests="$1"
+    log_info "Starting comprehensive testing ($total_tests tests)"
+    # Note: Testing is now integrated into main progress, so this function
+    # is kept for backward compatibility but doesn't reinitialize progress
 }
 
 # =============================================================================
@@ -679,7 +762,7 @@ umask 077
 
 # Export functions that should be available to sourcing scripts
 export -f setup_logging log_debug log_info log_success log_warning log_error
-export -f init_progress update_progress
+export -f init_progress update_progress init_testing_progress
 export -f load_config_file validate_config_value
 export -f add_temp_file cleanup_temp_files atomic_file_operation backup_directory
 export -f check_disk_space validate_openssl check_java_tools

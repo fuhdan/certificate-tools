@@ -308,7 +308,6 @@ comprehensive_testing() {
             parent_dir="$BASE_DIR/$parent"
         fi
 
-        echo ""
         log_info "Testing CA: $ca_name"
 
         # Certificate validation test
@@ -319,6 +318,7 @@ comprehensive_testing() {
         else
             test_results+=("$ca_name Certificate: ❌ FAIL")
         fi
+        update_progress
 
         # Functionality test (only for issuing CAs)
         if [[ "$ca_name" == "IssuingCA"* ]]; then
@@ -329,6 +329,7 @@ comprehensive_testing() {
             else
                 test_results+=("$ca_name Functionality: ❌ FAIL")
             fi
+            update_progress
         fi
     done
 
@@ -359,6 +360,7 @@ comprehensive_testing() {
     else
         test_results+=("Hierarchy Integrity: ❌ FAIL")
     fi
+    update_progress
 
     # Print test summary
     echo ""
@@ -706,13 +708,14 @@ main() {
         fi
     fi
     
-    # Initialize progress tracking (15 steps total)
+    # Initialize progress tracking (22 steps total)
     # 1. Prerequisites, 2. Clean/skip, 3. Create base dir
     # 4-6. RootCA (dir, key, cert)
     # 7-9. IntermediateCA1 (dir, key, cert) 
     # 10-12. IssuingCA1 (dir, key, cert)
     # 13-15. IssuingCA2 (dir, key, cert)
-    init_progress 15
+    # 16-22. Testing (7 test steps)
+    init_progress 22
     
     # Validate prerequisites
     validate_prerequisites || exit 1
@@ -747,15 +750,33 @@ main() {
     local end_time=$(date +%s)
     local duration=$((end_time - OPERATION_START_TIME))
     
-    echo ""
-    echo -e "${GREEN}${BOLD}🎉 CA Hierarchy Created Successfully!${NC}"
-    echo "==========================================="
+    if [[ "$PROGRESS_RESERVED" == "true" ]] && command -v tput >/dev/null 2>&1; then
+        # Move cursor up to insert log message above progress bar
+        tput cuu1
+        tput el  # Clear line
+        echo ""
+        echo -e "${GREEN}${BOLD}🎉 CA Hierarchy Created Successfully!${NC}"
+        echo "==========================================="
+        # Redraw the progress bar immediately after the log message
+        redraw_progress_bar
+    else
+        echo ""
+        echo -e "${GREEN}${BOLD}🎉 CA Hierarchy Created Successfully!${NC}"
+        echo "==========================================="
+    fi
     log_success "Created ${#CREATED_CAS[@]} Certificate Authorities in $(format_duration $duration)"
     log_info "Location: $BASE_DIR"
     
     # Run comprehensive testing if requested
     if $run_tests; then
-        echo ""
+        if [[ "$PROGRESS_RESERVED" == "true" ]] && command -v tput >/dev/null 2>&1; then
+            # Move cursor up to insert log message above progress bar
+            tput cuu1
+            tput el  # Clear line
+            echo ""
+        else
+            echo ""
+        fi
         log_info "Running comprehensive tests..."
         if comprehensive_testing; then
             log_success "All tests passed - CA hierarchy is ready for use!"
@@ -772,11 +793,9 @@ main() {
     echo "  📋 IssuingCA2 (2-tier: Root → Issuing)"
     echo ""
     echo -e "${BLUE}${BOLD}Next Steps:${NC}"
-    echo "  🔧 Use: ./enhanced_issue_certificates.sh <CA_NAME> <COMMON_NAME> [SANs...]"
-    echo "  📖 Example: ./enhanced_issue_certificates.sh IssuingCA1 server1.local www.server1.local"
+    echo "  🔧 Use: ./issue_certificates.sh <CA_NAME> <COMMON_NAME> [SANs...]"
+    echo "  📖 Example: ./issue_certificates.sh IssuingCA1 server1.local www.server1.local"
     echo ""
-    
-    log_success "Script completed successfully"
 }
 
 # Execute main function

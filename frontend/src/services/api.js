@@ -59,3 +59,65 @@ export const parseCertificate = async (content, privateKey = '', chain = '', pas
 
   return data;
 };
+
+export const parsePrivateKeyDer = async (content, fileName = '', password = '') => {
+  const requestBody = { 
+    content,
+    fileName,
+    password 
+  };
+
+  console.log('API Request /api/parse-private-key-der:', {
+    fileName: fileName,
+    contentLength: content.length,
+    hasPassword: password.length > 0
+  });
+
+  const response = await fetch(`${API_BASE_URL}/api/parse-private-key-der`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(requestBody)
+  });
+
+  const data = await response.json();
+  
+  console.log('API Response:', {
+    status: response.status,
+    needsPassword: data.needsPassword,
+    type: data.type,
+    success: data.success
+  });
+  
+  if (data.error && !data.needsPassword) {
+    throw new Error(data.error);
+  }
+
+  return data;
+};
+
+export const checkPrivateKeyEncryption = async (privateKey, isDer = false) => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/check-private-key-encryption`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ privateKey, isDer })
+    });
+
+    const data = await response.json();
+    
+    console.log('Private key encryption check:', {
+      encrypted: data.encrypted,
+      format: data.format,
+      error: data.error
+    });
+    
+    return data;
+  } catch (error) {
+    console.error('Failed to check private key encryption:', error);
+    return { encrypted: false, error: 'Failed to check encryption' };
+  }
+};

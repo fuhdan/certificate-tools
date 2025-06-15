@@ -3,7 +3,7 @@ import StatusIndicator from './components/StatusIndicator';
 import Header from './components/Header';
 import InputSection from './components/InputSection';
 import ResultsSection from './components/ResultsSection';
-import { checkServerStatus, parseCertificate } from './services/api';
+import { checkServerStatus, parseCertificate, parsePrivateKeyDer, checkPrivateKeyEncryption } from './services/api';
 
 function App() {
   // State variables
@@ -21,79 +21,81 @@ function App() {
   const [dragOver, setDragOver] = useState(false);
   const [privateKeyDragOver, setPrivateKeyDragOver] = useState(false);
   const [chainDragOver, setChainDragOver] = useState(false);
-  const [chainAutoDetected, setChainAutoDetected] = useState(false); // Track if chain was auto-detected
-  const [privateKeyAutoDetected, setPrivateKeyAutoDetected] = useState(false); // Track if private key was auto-detected
-  
-  // NEW: Track original file information
+  const [chainAutoDetected, setChainAutoDetected] = useState(false);
+  const [privateKeyAutoDetected, setPrivateKeyAutoDetected] = useState(false);
   const [originalFileInfo, setOriginalFileInfo] = useState(null);
-
-  // NEW: Enhanced file tracking state
   const [certificateInfo, setCertificateInfo] = useState({
-    type: 'none', // 'certificate', 'csr', 'pkcs12', 'pkcs7', 'none'
-    format: 'none', // 'pem', 'der', 'binary', 'none'
-    source: 'none', // 'manual', 'file', 'auto', 'none'
+    type: 'none',
+    format: 'none',
+    source: 'none',
     fileName: null,
     fileSize: null,
     uploadedAt: null
   });
-  
   const [privateKeyInfo, setPrivateKeyInfo] = useState({
-    type: 'none', // 'rsa', 'ec', 'dsa', 'encrypted', 'auto', 'none'
-    format: 'none', // 'pem', 'der', 'pkcs8', 'traditional', 'none'
-    source: 'none', // 'manual', 'file', 'auto', 'none'
+    type: 'none',
+    format: 'none',
+    source: 'none',
     fileName: null,
     fileSize: null,
     uploadedAt: null,
     encrypted: false
   });
-  
   const [chainInfo, setChainInfo] = useState({
-    type: 'none', // 'chain', 'bundle', 'pkcs7', 'auto', 'none'
-    format: 'none', // 'pem', 'der', 'p7b', 'p7c', 'none'
-    source: 'none', // 'manual', 'file', 'auto', 'none'
+    type: 'none',
+    format: 'none',
+    source: 'none',
     fileName: null,
     fileSize: null,
     uploadedAt: null,
     certificateCount: 0
   });
-
-  // Control panel options
   const [showRawData, setShowRawData] = useState(false);
   const [exportResults, setExportResults] = useState(false);
   const [detailedValidation, setDetailedValidation] = useState(false);
-
-  // NEW: Track copy success state
   const [copySuccess, setCopySuccess] = useState(false);
+  const [passwordAccepted, setPasswordAccepted] = useState(false);
+  const [pkcs12PasswordAccepted, setPkcs12PasswordAccepted] = useState(false);
+  const [pendingPrivateKeyData, setPendingPrivateKeyData] = useState(null);
 
   // Computed values
   const hasPrivateKey = privateKeyContent.trim().length > 0;
-  const isPrivateKeyEncrypted = hasPrivateKey && (
-    privateKeyContent.includes('Proc-Type: 4,ENCRYPTED') || 
-    privateKeyContent.includes('-----BEGIN ENCRYPTED PRIVATE KEY-----')
-  );
+  const isCurrentPrivateKeyEncrypted = hasPrivateKey && (
+                                                          privateKeyContent.includes('Proc-Type: 4,ENCRYPTED') || 
+                                                          privateKeyContent.includes('-----BEGIN ENCRYPTED PRIVATE KEY-----')
+                                                        );
+  const isDerKeyWaitingForPassword =  privateKeyInfo.format === 'der' &&
+                                      (
+                                        !!pendingPrivateKeyData || // We have pending DER data waiting for password
+                                        (privateKeyInfo.encrypted && !passwordAccepted) // Key info shows encrypted and password not accepted
+                                      );
+  const isPrivateKeyEncrypted = isCurrentPrivateKeyEncrypted || isDerKeyWaitingForPassword;
   const showPrivateKeyInput = results && results.type === 'Certificate';
-  const showPasswordInput = showPrivateKeyInput && hasPrivateKey && isPrivateKeyEncrypted && privateKeyInfo.source !== 'auto';
+  const showPasswordInput = showPrivateKeyInput && 
+                            isPrivateKeyEncrypted && 
+                            !passwordAccepted && 
+                            privateKeyInfo.source !== 'auto';
   const showChainInput = results && results.type === 'Certificate';
   const hasCertificateWithKey = results && results.type === 'Certificate' && hasPrivateKey;
+  const shouldShowPkcs12PasswordInput = showPkcs12PasswordInput && !pkcs12PasswordAccepted;
 
-  // Check server status
-  const updateServerStatus = useCallback(async () => {
-    try {
-      const isOnline = await checkServerStatus();
-      setServerStatus(isOnline ? 'online' : 'offline');
-    } catch (error) {
-      setServerStatus('offline');
-    }
-  }, []);
+  console.log('Password input state debug:', {
+    hasPrivateKey,
+    isCurrentPrivateKeyEncrypted,
+    isDerKeyWaitingForPassword,
+    isPrivateKeyEncrypted,
+    showPrivateKeyInput,
+    passwordAccepted,
+    privateKeyInfoFormat: privateKeyInfo.format,
+    privateKeyInfoEncrypted: privateKeyInfo.encrypted,
+    privateKeyInfoSource: privateKeyInfo.source,
+    hasPendingData: !!pendingPrivateKeyData,
+    pendingDataFormat: pendingPrivateKeyData?.format,
+    showPasswordInput,
+    privateKeyContentLength: privateKeyContent.length
+  });
 
-  // Check status on mount and every 30 seconds
-  useEffect(() => {
-    updateServerStatus();
-    const interval = setInterval(updateServerStatus, 30000);
-    return () => clearInterval(interval);
-  }, [updateServerStatus]);
-
-  // Debounced processing function
+  // Helper function: debounced processing function
   const debounce = (func, wait) => {
     let timeout;
     return function executedFunction(...args) {
@@ -106,7 +108,7 @@ function App() {
     };
   };
 
-  // Helper function to determine file type and format
+  // Helper function: Determine file type and format
   const getFileTypeInfo = (file, detectedFormat = null) => {
     const fileName = file.name.toLowerCase();
     const fileSize = file.size;
@@ -163,7 +165,22 @@ function App() {
     };
   };
 
-  // Process certificate content with private key and chain
+  // Helper function: Check if file is PKCS#12 format
+  const isPkcs12File = (file) => {
+    const lowerName = file.name.toLowerCase();
+    return lowerName.endsWith('.p12') || 
+           lowerName.endsWith('.pfx') || 
+           lowerName.endsWith('.pkcs12');
+  };
+
+  // Helper function: Check if file is likely DER private key
+  const isDerPrivateKeyFile = (file) => {
+    const lowerName = file.name.toLowerCase();
+    return lowerName.endsWith('.der') || 
+          (lowerName.endsWith('.key') && !lowerName.includes('.pem'));
+  };
+
+  // Helper function: Process certificate content
   const processCertificate = async (content, privateKey = '', chain = '', password = '') => {
     if (!content.trim()) {
       setResults(null);
@@ -177,18 +194,91 @@ function App() {
       const data = await parseCertificate(content.trim(), privateKey.trim(), chain.trim(), password.trim());
       setResults(data);
       setError('');
+
+      // Check if password was successful for PEM keys
+      if (privateKey.trim() && password.trim() && data.privateKeyValidation) {
+        if (data.privateKeyValidation.keyPairValid || 
+            (data.privateKeyValidation.publicKeyMatch && data.privateKeyValidation.signatureValid)) {
+          console.log('PEM private key password accepted');
+          setPasswordAccepted(true);
+        } else if (data.privateKeyValidation.details && 
+                   data.privateKeyValidation.details.error && 
+                   (data.privateKeyValidation.details.error.includes('password') ||
+                    data.privateKeyValidation.details.error.includes('decrypt'))) {
+          // Password error
+          setPasswordAccepted(false);
+        }
+      }
     } catch (err) {
       setError(err.message);
       setResults(null);
+
+      // Check if it's a password-related error for PEM keys
+      if (privateKey.trim() && password.trim() && 
+          (err.message.includes('password') || 
+           err.message.includes('decrypt') || 
+           err.message.includes('Invalid password'))) {
+        setPasswordAccepted(false);
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  // Debounced version of processCertificate
+  // Helper function: Debounced version of processCertificate
   const debouncedProcess = useCallback(debounce((content, privateKey, chain, password) => {
     processCertificate(content, privateKey, chain, password);
   }, 500), []);
+
+  //Helper function: Debounced version of processCertificate with password check
+  const debouncedProcessWithPasswordCheck = useCallback(debounce(async (content, privateKey, chain, password) => {
+    setLoading(true);
+    setError('');
+    
+    try {
+      const data = await parseCertificate(content.trim(), privateKey.trim(), chain.trim(), password.trim());
+      setResults(data);
+      setError('');
+
+      // If we have private key validation results and no error, password was accepted
+      if (data.privateKeyValidation && password.trim()) {
+        if (data.privateKeyValidation.keyPairValid) {
+          console.log('PEM private key password accepted');
+          setPasswordAccepted(true);
+        } else if (data.privateKeyValidation.details && 
+                   data.privateKeyValidation.details.error && 
+                   data.privateKeyValidation.details.error.includes('password')) {
+          // Password error - keep showing password input
+          setPasswordAccepted(false);
+        } else {
+          // Other validation error but password was accepted
+          setPasswordAccepted(true);
+        }
+      }
+    } catch (err) {
+      setError(err.message);
+      setResults(null);
+
+      // Check if it's a password-related error
+      if (err.message.includes('password') || 
+          err.message.includes('decrypt') || 
+          err.message.includes('Invalid password')) {
+        setPasswordAccepted(false);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, 500), []);
+
+  // Check server status
+  const updateServerStatus = useCallback(async () => {
+    try {
+      const isOnline = await checkServerStatus();
+      setServerStatus(isOnline ? 'online' : 'offline');
+    } catch (error) {
+      setServerStatus('offline');
+    }
+  }, []);
 
   // Handle text input change
   const handleTextChange = (e) => {
@@ -223,9 +313,24 @@ function App() {
     const value = e.target.value;
     setPrivateKeyContent(value);
     
+    // Clear password states when manually entering new content
+    setPrivateKeyPassword('');
+    setPasswordAccepted(false);
+    setPendingPrivateKeyData(null);
+    
     // Update private key info for manual input
     if (value.trim()) {
       setPrivateKeyInfoFromManual(value);
+
+      // Check if the new content is encrypted
+      const isEncrypted = value.includes('Proc-Type: 4,ENCRYPTED') || 
+                         value.includes('-----BEGIN ENCRYPTED PRIVATE KEY-----');
+
+      // Only auto-process if the key is NOT encrypted
+      if (certContent.trim() && !isEncrypted) {
+        debouncedProcess(certContent, value, chainContent, '');
+      }
+      // If encrypted, don't auto-process - wait for password
     } else {
       setPrivateKeyInfo({
         type: 'none',
@@ -236,11 +341,124 @@ function App() {
         uploadedAt: null,
         encrypted: false
       });
+
+      // If content is empty, process the certificate without private key
+      if (certContent.trim()) {
+        debouncedProcess(certContent, '', chainContent, '');
+      }
     }
+  };
+
+  // Unified private key processing function
+  const processPrivateKeyContent = async (content, fileName, format, password = '') => {
+    setLoading(true);
+    setError('');
     
-    // Re-process certificate with new private key
-    if (certContent.trim()) {
-      debouncedProcess(certContent, value, chainContent, privateKeyPassword);
+    try {
+      console.log('Processing private key:', {
+        fileName: fileName,
+        format: format,
+        contentLength: content.length,
+        hasPassword: password.length > 0
+      });
+
+      let data;
+      if (format === 'der') {
+        data = await parsePrivateKeyDer(content, fileName, password);
+
+        console.log('DER processing result:', {
+          needsPassword: data.needsPassword,
+          hasError: !!data.error,
+          success: !!data.privateKey
+        });
+
+      } else {
+        // For PEM, use existing certificate parsing
+        if (certContent.trim()) {
+          await processCertificate(certContent, privateKeyContent, chainContent, password);
+          setLoading(false);
+          return;
+        }
+      }
+
+      if (data && data.needsPassword && !password) {
+        console.log('DER key needs password - showing password input');
+
+        // Store the content and show password input
+        setPendingPrivateKeyData({ content: content, fileName: fileName, format: format });
+        setPasswordAccepted(false);
+
+        // IMPORTANT: Update private key info to show it's encrypted and needs password
+        setPrivateKeyInfo(prev => ({
+          ...prev,
+          encrypted: true, // Mark as encrypted
+          type: 'encrypted' // Update type to show it's encrypted
+        }));
+
+        // Don't set any private key content yet - wait for password
+        setPrivateKeyContent('');
+
+        setLoading(false);
+        return;
+      }
+
+      if (data && data.error && !data.needsPassword) {
+        throw new Error(data.error);
+      }
+
+      // Success - password was correct or key wasn't encrypted
+      console.log('DER key processed successfully');
+
+      setPasswordAccepted(true);
+      setPendingPrivateKeyData(null);
+      setPrivateKeyPassword('');
+
+      // Set the private key content as PEM (for DER files)
+      if (data && data.privateKey && data.privateKey.pem) {
+        setPrivateKeyContent(data.privateKey.pem);
+
+        // Update private key info to show it's no longer encrypted
+        setPrivateKeyInfo({
+          type: data.privateKey.algorithm.toLowerCase(),
+          format: 'der', // Keep original format for reference
+          source: 'file',
+          fileName: fileName,
+          fileSize: data.privateKey.pem.length,
+          uploadedAt: new Date().toLocaleString(),
+          encrypted: false // No longer encrypted - successfully decrypted
+        });
+
+        // Re-process certificate with new private key (no password needed)
+        if (certContent.trim()) {
+          processCertificate(certContent, data.privateKey.pem, chainContent, '');
+        }
+      }
+
+      setError('');
+
+    } catch (err) {
+      console.error('Private Key Error:', err.message);
+      setError(`Failed to parse ${format.toUpperCase()} private key: ` + err.message);
+
+      // If it's a password error, show password input
+      if (err.message.includes('password') || err.message.includes('decrypt')) {
+        console.log('DER key password error - showing password input');
+
+        setPendingPrivateKeyData({ content: content, fileName: fileName, format: format });
+        setPasswordAccepted(false);
+
+        // Update private key info to show it's encrypted and needs password
+        setPrivateKeyInfo(prev => ({
+          ...prev,
+          encrypted: true,
+          type: 'encrypted'
+        }));
+
+        // Clear any private key content
+        setPrivateKeyContent('');
+      }
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -248,9 +466,18 @@ function App() {
   const handlePrivateKeyPasswordChange = (e) => {
     const value = e.target.value;
     setPrivateKeyPassword(value);
-    // Re-process certificate with new password
-    if (certContent.trim() && privateKeyContent.trim()) {
-      debouncedProcess(certContent, privateKeyContent, chainContent, value);
+    
+    // If we have pending private key data (DER), try to process it
+    if (pendingPrivateKeyData) {
+      processPrivateKeyContent(
+        pendingPrivateKeyData.content, 
+        pendingPrivateKeyData.fileName, 
+        pendingPrivateKeyData.format,
+        value
+      );
+    } else if (certContent.trim() && privateKeyContent.trim()) {
+      // For PEM keys, process immediately (no debounce for password changes)
+      processCertificate(certContent, privateKeyContent, chainContent, value);
     }
   };
 
@@ -261,7 +488,7 @@ function App() {
     
     // If we have pending PKCS#12 data, try to process it with the new password
     if (pendingPkcs12Data) {
-      processPkcs12Content(pendingPkcs12Data.content, pendingPkcs12Data.fileName, value);
+      processPkcs12ContentWithPassword(pendingPkcs12Data.content, pendingPkcs12Data.fileName, value);
     }
   };
 
@@ -353,14 +580,6 @@ function App() {
            lowerName.endsWith('.crt');
   };
 
-  // Check if file is PKCS#12 format
-  const isPkcs12File = (file) => {
-    const lowerName = file.name.toLowerCase();
-    return lowerName.endsWith('.p12') || 
-           lowerName.endsWith('.pfx') || 
-           lowerName.endsWith('.pkcs12');
-  };
-
   // Process dropped/selected file
   const handleFile = (file) => {
     console.log('Processing file:', file.name, 'Size:', file.size);
@@ -369,33 +588,32 @@ function App() {
     if (results || certContent.trim() || privateKeyContent.trim() || chainContent.trim()) {
       handleClearAll();
     }
-    
+
     // Check if this is a PKCS#12 file first
     if (isPkcs12File(file)) {
       console.log('PKCS#12 format detected based on file extension');
       // Set certificate info for PKCS#12
       setCertificateInfo(detectCertificateInfo(file, null, 'PKCS#12'));
-      
+
       const reader = new FileReader();
       reader.onload = (e) => {
         const arrayBuffer = e.target.result;
         const uint8Array = new Uint8Array(arrayBuffer);
         const base64String = btoa(String.fromCharCode.apply(null, uint8Array));
         console.log('Converting PKCS#12 to base64 for processing');
-        processPkcs12Content(base64String, file.name);
+        processPkcs12ContentWithPassword(base64String, file.name); // Use the correct function name
       };
       reader.readAsArrayBuffer(file);
       return;
     }
-    
-    const reader = new FileReader();
-    
+
     // Check if this is likely a DER file
     if (isDerFile(file)) {
       console.log('DER format suspected based on file extension');
       // Set certificate info for DER
       setCertificateInfo(detectCertificateInfo(file, null, 'Certificate'));
-      
+
+      const reader = new FileReader();
       reader.onload = (e) => {
         const arrayBuffer = e.target.result;
         const uint8Array = new Uint8Array(arrayBuffer);
@@ -406,16 +624,17 @@ function App() {
       reader.readAsArrayBuffer(file);
       return;
     }
-    
+
+    const reader = new FileReader();
     reader.onload = (e) => {
       const content = e.target.result;
       console.log('File content loaded, length:', content.length);
       console.log('Content preview:', content.substring(0, 100));
-      
+
       // Check if this is PKCS#7 format
       const isPkcs7Pem = content.includes('-----BEGIN PKCS7-----') || content.includes('-----BEGIN CERTIFICATE-----');
       const isPkcs7Der = !content.includes('-----BEGIN') && file.name.toLowerCase().endsWith('.p7b');
-      
+
       if (isPkcs7Pem || isPkcs7Der) {
         console.log('PKCS#7 format detected, sending to backend for parsing');
         // Set certificate info for PKCS#7
@@ -424,13 +643,13 @@ function App() {
         processPkcs7Content(content, file.name);
         return;
       }
-      
+
       // Check if this is a regular certificate chain (multiple certificates)
       const certMatches = content.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g);
       const certCount = certMatches ? certMatches.length : 0;
-      
+
       console.log('Detected certificates in file:', certCount);
-      
+
       if (certCount > 1) {
         // This is a certificate chain - split it
         console.log('Certificate chain detected, splitting...');
@@ -441,16 +660,16 @@ function App() {
           ...detectChainInfo(file, content, true),
           certificateCount: certCount - 1 // Exclude the main certificate
         });
-        
+
         const firstCert = certMatches[0];
         const chainCerts = certMatches.slice(1).join('\n');
-        
+
         console.log('Setting first certificate as main cert');
         console.log('Setting remaining certificates as chain');
-        
+
         setCertContent(firstCert);
         setChainContent(chainCerts);
-        
+
         // Process with the split content
         processCertificate(firstCert, privateKeyContent, chainCerts, privateKeyPassword);
       } else {
@@ -468,7 +687,7 @@ function App() {
       console.error('File reading error:', e);
       setError('Failed to read file');
     };
-    
+
     // Read as text for PEM format, or as array buffer for potential DER format
     if (file.name.toLowerCase().endsWith('.p7b') || file.name.toLowerCase().endsWith('.p7c')) {
       reader.readAsArrayBuffer(file);
@@ -487,7 +706,7 @@ function App() {
   };
 
   // Process PKCS#12 content
-  const processPkcs12Content = async (base64Content, fileName, password = '') => {
+  const processPkcs12ContentWithPassword = async (base64Content, fileName, password = '') => {
     setLoading(true);
     setError('');
     
@@ -497,13 +716,13 @@ function App() {
         contentLength: base64Content.length,
         hasPassword: password.length > 0
       });
-      
+
       const requestBody = { 
         content: base64Content,
         fileName: fileName,
         password: password
       };
-      
+
       const response = await fetch(`${process.env.REACT_APP_API_URL || ''}/api/parse-pkcs12`, {
         method: 'POST',
         headers: {
@@ -511,9 +730,9 @@ function App() {
         },
         body: JSON.stringify(requestBody)
       });
-      
+
       const data = await response.json();
-      
+
       console.log('API Response:', {
         status: response.status,
         needsPassword: data.needsPassword,
@@ -522,33 +741,47 @@ function App() {
         hasPrivateKey: !!data.privateKey,
         hasChain: data.certificateChain ? data.certificateChain.length : 0
       });
-      
+
       if (data.needsPassword && !password) {
         // Store the content and show password input
         setPendingPkcs12Data({ content: base64Content, fileName: fileName });
         setShowPkcs12PasswordInput(true);
+        setPkcs12PasswordAccepted(false);
         setLoading(false);
         return;
       }
-      
+
       if (data.error) {
         throw new Error(data.error);
       }
-      
-      // Hide password input and clear pending data
+
+      // Success - hide password input and clear pending data
       setShowPkcs12PasswordInput(false);
+      setPkcs12PasswordAccepted(true);
       setPendingPkcs12Data(null);
       setPkcs12Password('');
-      
+
       // Set the certificate content
       if (data.certificate && data.certificate.pem) {
         setCertContent(data.certificate.pem);
         setResults(data.certificate);
+
+        // Update certificate info for PKCS#12
+        setCertificateInfo({
+          type: 'pkcs12',
+          format: 'binary',
+          source: 'file',
+          fileName: fileName,
+          fileSize: base64Content.length,
+          uploadedAt: new Date().toLocaleString()
+        });
       }
-      
+
       // Set the private key content if available
       if (data.privateKey && data.privateKey.pem) {
         setPrivateKeyContent(data.privateKey.pem);
+        setPrivateKeyAutoDetected(true);
+
         // Set private key info for auto-extracted key
         setPrivateKeyInfo({
           type: 'auto',
@@ -559,12 +792,19 @@ function App() {
           uploadedAt: new Date().toLocaleString(),
           encrypted: false // Already decrypted
         });
+
+        // Clear any password states since key was auto-extracted
+        setPrivateKeyPassword('');
+        setPasswordAccepted(true);
       }
-      
+
       // Set the certificate chain if available
       if (data.certificateChain && data.certificateChain.length > 0) {
-        const chainPems = data.certificateChain.map(cert => cert.pem).join('\n');
+        const chainPems = data.certificateChain.map(cert => cert.pem || 
+          `-----BEGIN CERTIFICATE-----\n${cert.subject}\n-----END CERTIFICATE-----`).join('\n');
         setChainContent(chainPems);
+        setChainAutoDetected(true);
+        
         // Set chain info for auto-extracted chain
         setChainInfo({
           type: 'auto',
@@ -576,17 +816,30 @@ function App() {
           certificateCount: data.certificateChain.length
         });
       }
-      
+
+      // Log successful extraction summary
+      console.log('PKCS#12 processing complete:', {
+        hasCertificate: !!data.certificate,
+        hasPrivateKey: !!data.privateKey,
+        chainLength: data.certificateChain ? data.certificateChain.length : 0,
+        keyPairValid: data.certificate?.privateKeyValidation?.keyPairValid || false,
+        chainValid: data.certificate?.chainValidation?.chainValid || false
+      });
+
       setError('');
-      
+
     } catch (err) {
       console.error('PKCS#12 Error:', err.message);
       setError('Failed to parse PKCS#12 file: ' + err.message);
-      
+
       // If it's a password error, show password input
-      if (err.message.includes('password') || err.message.includes('decrypt')) {
+      if (err.message.includes('password') || 
+          err.message.includes('decrypt') || 
+          err.message.includes('Invalid password') ||
+          err.message.includes('MAC verification failed')) {
         setPendingPkcs12Data({ content: base64Content, fileName: fileName });
         setShowPkcs12PasswordInput(true);
+        setPkcs12PasswordAccepted(false);
       }
     } finally {
       setLoading(false);
@@ -661,17 +914,59 @@ function App() {
 
   // Process dropped/selected private key file
   const handlePrivateKeyFile = (file) => {
+    console.log('Processing private key file:', file.name, 'Size:', file.size);
+    
+    // Clear ALL password and encryption states when uploading new file
+    setPrivateKeyPassword('');
+    setPasswordAccepted(false);
+    setPendingPrivateKeyData(null);
+    setPrivateKeyContent(''); // Clear existing content
+    
+    // Check if this is a DER private key file
+    if (isDerPrivateKeyFile(file)) {
+      console.log('DER private key format detected based on file extension');
+
+      // Set initial private key info for DER - assume it might be encrypted
+      setPrivateKeyInfo({
+        type: 'unknown',
+        format: 'der',
+        source: 'file',
+        fileName: file.name,
+        fileSize: file.size,
+        uploadedAt: new Date().toLocaleString(),
+        encrypted: false // Will be updated based on processing result
+      });
+
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const arrayBuffer = e.target.result;
+        const uint8Array = new Uint8Array(arrayBuffer);
+        const base64String = btoa(String.fromCharCode.apply(null, uint8Array));
+        console.log('Converting DER private key to base64 for processing');
+
+        // Don't set privateKeyContent here - let processPrivateKeyContent handle it
+        processPrivateKeyContent(base64String, file.name, 'der');
+      };
+      reader.readAsArrayBuffer(file);
+      return;
+    }
+
+    // PEM processing (unchanged)
     const reader = new FileReader();
     reader.onload = (e) => {
       const content = e.target.result;
       setPrivateKeyContent(content);
-      
+
       // Set private key info for file upload
       setPrivateKeyInfo(detectPrivateKeyInfo(file, content, false));
-      
-      // Re-process certificate with new private key
-      if (certContent.trim()) {
-        processCertificate(certContent, content, chainContent, privateKeyPassword);
+
+      // Check if encrypted before auto-processing
+      const isEncrypted = content.includes('Proc-Type: 4,ENCRYPTED') || 
+                         content.includes('-----BEGIN ENCRYPTED PRIVATE KEY-----');
+
+      // Only auto-process if not encrypted
+      if (certContent.trim() && !isEncrypted) {
+        processCertificate(certContent, content, chainContent, '');
       }
     };
     reader.readAsText(file);
@@ -732,10 +1027,13 @@ function App() {
     setChainContent('');
     setPrivateKeyPassword('');
     setPkcs12Password('');
+    setPasswordAccepted(false);
+    setPkcs12PasswordAccepted(false);
     setShowPkcs12PasswordInput(false);
     setPendingPkcs12Data(null);
+    setPendingPrivateKeyData(null);
     setChainAutoDetected(false);
-    setPrivateKeyAutoDetected(false); // Reset private key auto-detection
+    setPrivateKeyAutoDetected(false);
     setCertificateInfo({
       type: 'none',
       format: 'none',
@@ -744,7 +1042,7 @@ function App() {
       fileSize: null,
       uploadedAt: null
     });
-    
+
     setPrivateKeyInfo({
       type: 'none',
       format: 'none',
@@ -754,7 +1052,7 @@ function App() {
       uploadedAt: null,
       encrypted: false
     });
-    
+
     setChainInfo({
       type: 'none',
       format: 'none',
@@ -764,7 +1062,7 @@ function App() {
       uploadedAt: null,
       certificateCount: 0
     });
-    
+
     setResults(null);
     setError('');
   };
@@ -1002,12 +1300,17 @@ function App() {
     let source = isAuto ? 'auto' : 'file';
     let encrypted = false;
 
-    if (content) {
-      // Detect encryption
+    // Detect format from file extension first
+    if (fileName.endsWith('.der') || (fileName.endsWith('.key') && !fileName.includes('.pem'))) {
+      format = 'der';
+    }
+
+    if (content && format === 'pem') {
+      // Detect encryption for PEM
       encrypted = content.includes('Proc-Type: 4,ENCRYPTED') || 
                  content.includes('-----BEGIN ENCRYPTED PRIVATE KEY-----');
-      
-      // Detect type from content
+
+      // Detect type from PEM content
       if (content.includes('-----BEGIN EC PRIVATE KEY-----')) {
         type = 'ec';
         format = 'traditional';
@@ -1024,10 +1327,9 @@ function App() {
       if (encrypted) {
         type = 'encrypted';
       }
-    }
-
-    if (fileName.endsWith('.der')) {
-      format = 'der';
+    } else if (format === 'der') {
+      // For DER files, we'll detect encryption after trying to parse
+      type = 'unknown'; // Will be determined after parsing
     }
 
     return {
@@ -1160,6 +1462,13 @@ function App() {
     });
   };
 
+  // Check status on mount and every 30 seconds
+  useEffect(() => {
+    updateServerStatus();
+    const interval = setInterval(updateServerStatus, 30000);
+    return () => clearInterval(interval);
+  }, [updateServerStatus]);
+
   return (
     <div className="App">
       <div className="main-layout">
@@ -1186,6 +1495,7 @@ function App() {
             privateKeyPassword={privateKeyPassword}
             onPrivateKeyPasswordChange={handlePrivateKeyPasswordChange}
             showPasswordInput={showPasswordInput}
+            privateKeyInfo={privateKeyInfo}
             chainContent={chainContent}
             onChainTextChange={handleChainTextChange}
             chainDragOver={chainDragOver}
@@ -1197,7 +1507,7 @@ function App() {
             chainAutoDetected={chainInfo.source === 'auto'}
             pkcs12Password={pkcs12Password}
             onPkcs12PasswordChange={handlePkcs12PasswordChange}
-            showPkcs12PasswordInput={showPkcs12PasswordInput}
+            showPkcs12PasswordInput={shouldShowPkcs12PasswordInput}
             results={results}
           />
 

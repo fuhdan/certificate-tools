@@ -18,10 +18,11 @@ const InputSection = ({
   onPrivateKeyFileSelect,
   showPrivateKeyInput,
   privateKeyAutoDetected,
-  // Password props
+  // Password props (unified)
   privateKeyPassword,
   onPrivateKeyPasswordChange,
   showPasswordInput,
+  privateKeyInfo = { format: 'none', encrypted: false },
   // Chain props
   chainContent,
   onChainTextChange,
@@ -42,6 +43,21 @@ const InputSection = ({
   // Check if private key was auto-detected
   const hasAutoDetectedPrivateKey = privateKeyAutoDetected && privateKeyContent.trim().length > 0;
   
+  // Determine password label based on key format
+  const getPasswordLabel = () => {
+    if (privateKeyInfo.format === 'der') {
+      return '🔐 Private Key Password (DER):';
+    }
+    return '🔐 Private Key Password (PEM):';
+  };
+  
+  const getPasswordHint = () => {
+    if (privateKeyInfo.format === 'der') {
+      return 'This DER private key is encrypted and requires a password to decrypt.';
+    }
+    return 'This PEM private key is encrypted and requires a password to decrypt.';
+  };
+
   return (
     <div className="input-section">
       <div className="input-group">
@@ -142,31 +158,35 @@ const InputSection = ({
             >
               <div className="drop-icon">🔑</div>
               <p><strong>Drop your private key file here</strong></p>
-              <p>or click to browse</p>
+              <p>Supports PEM (.key, .pem) and DER (.der, .key) formats</p>
+              <p style={{ fontSize: '0.8em', marginTop: '8px', opacity: 0.7 }}>
+                💡 Encrypted DER and PEM private keys are supported
+              </p>
             </div>
             <input
               type="file"
               id="privateKeyFileInput"
               className="hidden-input"
-              accept=".key,.pem,.txt"
+              accept=".key,.pem,.der,.txt"
               onChange={onPrivateKeyFileSelect}
             />
           </div>
 
-          {/* Password Input - Only show for encrypted private keys */}
+          {/* Unified Private Key Password Input - Show when any private key needs password */}
           {showPasswordInput && (
             <div className="input-group">
-              <label htmlFor="privateKeyPassword">🔐 Private Key Password:</label>
+              <label htmlFor="privateKeyPassword">{getPasswordLabel()}</label>
               <input
                 type="password"
                 id="privateKeyPassword"
                 className="password-input"
                 value={privateKeyPassword}
                 onChange={onPrivateKeyPasswordChange}
-                placeholder="Enter password for encrypted private key..."
+                placeholder={`Enter password for encrypted ${privateKeyInfo.format.toUpperCase()} private key...`}
+                autoFocus
               />
               <small className="password-hint">
-                This private key is encrypted and requires a password to decrypt.
+                {getPasswordHint()}
               </small>
             </div>
           )}

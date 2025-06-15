@@ -45,7 +45,6 @@ function App() {
   const showPasswordInput = showPrivateKeyInput && hasPrivateKey && isPrivateKeyEncrypted && !privateKeyAutoDetected;
   const showChainInput = results && results.type === 'Certificate'; // Always show for certificates
   const hasCertificateWithKey = results && results.type === 'Certificate' && hasPrivateKey;
-  const hasAutoDetectedChain = chainAutoDetected && chainContent.trim().length > 0;
 
   // Check server status
   const updateServerStatus = useCallback(async () => {
@@ -825,7 +824,7 @@ function App() {
             onPrivateKeyDrop={handlePrivateKeyFileDrop}
             onPrivateKeyFileSelect={handlePrivateKeyFileInput}
             showPrivateKeyInput={showPrivateKeyInput}
-            privateKeyAutoDetected={privateKeyAutoDetected} // Pass the auto-detection flag
+            privateKeyAutoDetected={privateKeyAutoDetected}
             privateKeyPassword={privateKeyPassword}
             onPrivateKeyPasswordChange={handlePrivateKeyPasswordChange}
             showPasswordInput={showPasswordInput}
@@ -837,6 +836,7 @@ function App() {
             onChainDrop={handleChainFileDrop}
             onChainFileSelect={handleChainFileInput}
             showChainInput={showChainInput}
+            chainAutoDetected={chainAutoDetected} // ADD THIS LINE
             pkcs12Password={pkcs12Password}
             onPkcs12PasswordChange={handlePkcs12PasswordChange}
             showPkcs12PasswordInput={showPkcs12PasswordInput}

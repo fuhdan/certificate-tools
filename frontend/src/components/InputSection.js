@@ -31,6 +31,7 @@ const InputSection = ({
   onChainDrop,
   onChainFileSelect,
   showChainInput,
+  chainAutoDetected, // ADD THIS PROP
   // PKCS#12 props
   pkcs12Password,
   onPkcs12PasswordChange,
@@ -38,9 +39,6 @@ const InputSection = ({
   // Results for showing PKCS#12 info
   results
 }) => {
-  // Check if chain content was auto-populated
-  const hasAutoDetectedChain = chainContent.trim().length > 0 && showChainInput;
-  
   // Check if private key was auto-detected
   const hasAutoDetectedPrivateKey = privateKeyAutoDetected && privateKeyContent.trim().length > 0;
   
@@ -176,7 +174,7 @@ const InputSection = ({
       )}
 
       {/* Certificate Chain Input - Always show for certificates, unless auto-detected */}
-      {showChainInput && !hasAutoDetectedChain && (
+      {showChainInput && !chainAutoDetected && (
         <>
           <div className="input-group">
             <label htmlFor="chainInput">Certificate Chain (Optional - for chain validation):</label>
@@ -214,7 +212,7 @@ const InputSection = ({
       )}
 
       {/* Show info when chain was auto-detected */}
-      {hasAutoDetectedChain && (
+      {chainAutoDetected && chainContent.trim().length > 0 && (
         <div className="input-group">
           <div className="chain-detected-info">
             <div className="info-icon">✅</div>

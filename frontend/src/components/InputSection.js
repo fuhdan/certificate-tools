@@ -31,7 +31,7 @@ const InputSection = ({
   onChainDrop,
   onChainFileSelect,
   showChainInput,
-  chainAutoDetected, // ADD THIS PROP
+  chainAutoDetected,
   // PKCS#12 props
   pkcs12Password,
   onPkcs12PasswordChange,
@@ -105,7 +105,7 @@ const InputSection = ({
           <div className="private-key-detected-info">
             <div className="info-icon">✅</div>
             <div className="info-content">
-              <strong>Private Key Detected!</strong>
+              <strong>Private Key Auto-Detected!</strong>
               <p>Successfully extracted and loaded private key from the uploaded file. The private key has been automatically validated with the certificate.</p>
               {results && results.summary && results.summary.chainLength > 0 && (
                 <p style={{ marginTop: '8px', fontSize: '0.9em', opacity: 0.8 }}>
@@ -217,7 +217,7 @@ const InputSection = ({
           <div className="chain-detected-info">
             <div className="info-icon">✅</div>
             <div className="info-content">
-              <strong>Certificate Chain Detected!</strong>
+              <strong>Certificate Chain Auto-Detected!</strong>
               <p>Found multiple certificates in the uploaded file. The first certificate is being used as the end-entity certificate, and the remaining certificates are being validated as the certificate chain.</p>
               {!hasAutoDetectedPrivateKey && privateKeyContent.trim().length === 0 && (
                 <p style={{ marginTop: '8px', fontSize: '0.9em', opacity: 0.8 }}>

@@ -27,6 +27,36 @@ function App() {
   // NEW: Track original file information
   const [originalFileInfo, setOriginalFileInfo] = useState(null);
 
+  // NEW: Enhanced file tracking state
+  const [certificateInfo, setCertificateInfo] = useState({
+    type: 'none', // 'certificate', 'csr', 'pkcs12', 'pkcs7', 'none'
+    format: 'none', // 'pem', 'der', 'binary', 'none'
+    source: 'none', // 'manual', 'file', 'auto', 'none'
+    fileName: null,
+    fileSize: null,
+    uploadedAt: null
+  });
+  
+  const [privateKeyInfo, setPrivateKeyInfo] = useState({
+    type: 'none', // 'rsa', 'ec', 'dsa', 'encrypted', 'auto', 'none'
+    format: 'none', // 'pem', 'der', 'pkcs8', 'traditional', 'none'
+    source: 'none', // 'manual', 'file', 'auto', 'none'
+    fileName: null,
+    fileSize: null,
+    uploadedAt: null,
+    encrypted: false
+  });
+  
+  const [chainInfo, setChainInfo] = useState({
+    type: 'none', // 'chain', 'bundle', 'pkcs7', 'auto', 'none'
+    format: 'none', // 'pem', 'der', 'p7b', 'p7c', 'none'
+    source: 'none', // 'manual', 'file', 'auto', 'none'
+    fileName: null,
+    fileSize: null,
+    uploadedAt: null,
+    certificateCount: 0
+  });
+
   // Control panel options
   const [showRawData, setShowRawData] = useState(false);
   const [exportResults, setExportResults] = useState(false);
@@ -35,15 +65,15 @@ function App() {
   // NEW: Track copy success state
   const [copySuccess, setCopySuccess] = useState(false);
 
-  // Computed values - moved to the bottom to avoid initialization issues
+  // Computed values
   const hasPrivateKey = privateKeyContent.trim().length > 0;
   const isPrivateKeyEncrypted = hasPrivateKey && (
     privateKeyContent.includes('Proc-Type: 4,ENCRYPTED') || 
     privateKeyContent.includes('-----BEGIN ENCRYPTED PRIVATE KEY-----')
   );
   const showPrivateKeyInput = results && results.type === 'Certificate';
-  const showPasswordInput = showPrivateKeyInput && hasPrivateKey && isPrivateKeyEncrypted && !privateKeyAutoDetected;
-  const showChainInput = results && results.type === 'Certificate'; // Always show for certificates
+  const showPasswordInput = showPrivateKeyInput && hasPrivateKey && isPrivateKeyEncrypted && privateKeyInfo.source !== 'auto';
+  const showChainInput = results && results.type === 'Certificate';
   const hasCertificateWithKey = results && results.type === 'Certificate' && hasPrivateKey;
 
   // Check server status
@@ -164,16 +194,25 @@ function App() {
   const handleTextChange = (e) => {
     const value = e.target.value;
 
-     // If new content is being pasted/typed and we have existing results, clear all first
+    // If new content is being pasted/typed and we have existing results, clear all first
     if (value.trim() && value !== certContent && results) {
       handleClearAll();
     }
 
     setCertContent(value);
     
-    // Clear file info when manually typing
-    if (originalFileInfo && value !== certContent) {
-      setOriginalFileInfo(null);
+    // Update certificate info for manual input
+    if (value.trim()) {
+      setCertificateInfoFromManual(value);
+    } else {
+      setCertificateInfo({
+        type: 'none',
+        format: 'none',
+        source: 'none',
+        fileName: null,
+        fileSize: null,
+        uploadedAt: null
+      });
     }
     
     debouncedProcess(value, privateKeyContent, chainContent, privateKeyPassword);
@@ -183,7 +222,21 @@ function App() {
   const handlePrivateKeyTextChange = (e) => {
     const value = e.target.value;
     setPrivateKeyContent(value);
-    setPrivateKeyAutoDetected(false); // Manual input, not auto-detected
+    
+    // Update private key info for manual input
+    if (value.trim()) {
+      setPrivateKeyInfoFromManual(value);
+    } else {
+      setPrivateKeyInfo({
+        type: 'none',
+        format: 'none',
+        source: 'none',
+        fileName: null,
+        fileSize: null,
+        uploadedAt: null,
+        encrypted: false
+      });
+    }
     
     // Re-process certificate with new private key
     if (certContent.trim()) {
@@ -216,7 +269,22 @@ function App() {
   const handleChainTextChange = (e) => {
     const value = e.target.value;
     setChainContent(value);
-    setChainAutoDetected(false); // Manual input, not auto-detected
+    
+    // Update chain info for manual input
+    if (value.trim()) {
+      setChainInfoFromManual(value);
+    } else {
+      setChainInfo({
+        type: 'none',
+        format: 'none',
+        source: 'none',
+        fileName: null,
+        fileSize: null,
+        uploadedAt: null,
+        certificateCount: 0
+      });
+    }
+    
     // Re-process certificate with new chain
     if (certContent.trim()) {
       debouncedProcess(certContent, privateKeyContent, value, privateKeyPassword);
@@ -302,14 +370,11 @@ function App() {
       handleClearAll();
     }
     
-    // Set original file info
-    setOriginalFileInfo(getFileTypeInfo(file));
-    
     // Check if this is a PKCS#12 file first
     if (isPkcs12File(file)) {
       console.log('PKCS#12 format detected based on file extension');
-      // Update file info with detected format
-      setOriginalFileInfo(getFileTypeInfo(file, 'PKCS#12'));
+      // Set certificate info for PKCS#12
+      setCertificateInfo(detectCertificateInfo(file, null, 'PKCS#12'));
       
       const reader = new FileReader();
       reader.onload = (e) => {
@@ -328,8 +393,8 @@ function App() {
     // Check if this is likely a DER file
     if (isDerFile(file)) {
       console.log('DER format suspected based on file extension');
-      // Update file info with detected format
-      setOriginalFileInfo(getFileTypeInfo(file, 'Certificate'));
+      // Set certificate info for DER
+      setCertificateInfo(detectCertificateInfo(file, null, 'Certificate'));
       
       reader.onload = (e) => {
         const arrayBuffer = e.target.result;
@@ -353,8 +418,8 @@ function App() {
       
       if (isPkcs7Pem || isPkcs7Der) {
         console.log('PKCS#7 format detected, sending to backend for parsing');
-        // Update file info with detected format
-        setOriginalFileInfo(getFileTypeInfo(file, 'PKCS#7'));
+        // Set certificate info for PKCS#7
+        setCertificateInfo(detectCertificateInfo(file, content, 'PKCS#7'));
         // Send PKCS#7 content to backend for parsing
         processPkcs7Content(content, file.name);
         return;
@@ -369,8 +434,13 @@ function App() {
       if (certCount > 1) {
         // This is a certificate chain - split it
         console.log('Certificate chain detected, splitting...');
-        // Update file info with detected format
-        setOriginalFileInfo(getFileTypeInfo(file, 'Certificate Chain'));
+        // Set certificate info for the main certificate
+        setCertificateInfo(detectCertificateInfo(file, content, 'Certificate'));
+        // Set chain info for auto-detected chain
+        setChainInfo({
+          ...detectChainInfo(file, content, true),
+          certificateCount: certCount - 1 // Exclude the main certificate
+        });
         
         const firstCert = certMatches[0];
         const chainCerts = certMatches.slice(1).join('\n');
@@ -380,7 +450,6 @@ function App() {
         
         setCertContent(firstCert);
         setChainContent(chainCerts);
-        setChainAutoDetected(true); // Mark as auto-detected
         
         // Process with the split content
         processCertificate(firstCert, privateKeyContent, chainCerts, privateKeyPassword);
@@ -391,7 +460,7 @@ function App() {
         if (content.includes('-----BEGIN CERTIFICATE REQUEST-----')) {
           detectedType = 'CSR';
         }
-        setOriginalFileInfo(getFileTypeInfo(file, detectedType));
+        setCertificateInfo(detectCertificateInfo(file, content, detectedType));
         processContent(content, file.name);
       }
     };
@@ -409,7 +478,7 @@ function App() {
         const uint8Array = new Uint8Array(arrayBuffer);
         const base64String = btoa(String.fromCharCode.apply(null, uint8Array));
         console.log('PKCS#7 DER format detected, converting to base64');
-        setOriginalFileInfo(getFileTypeInfo(file, 'PKCS#7'));
+        setCertificateInfo(detectCertificateInfo(file, null, 'PKCS#7'));
         processPkcs7Content(base64String, file.name, true); // true indicates DER format
       };
     } else {
@@ -480,14 +549,32 @@ function App() {
       // Set the private key content if available
       if (data.privateKey && data.privateKey.pem) {
         setPrivateKeyContent(data.privateKey.pem);
-        setPrivateKeyAutoDetected(true); // Mark as auto-detected
+        // Set private key info for auto-extracted key
+        setPrivateKeyInfo({
+          type: 'auto',
+          format: 'pem',
+          source: 'auto',
+          fileName: fileName,
+          fileSize: data.privateKey.pem.length,
+          uploadedAt: new Date().toLocaleString(),
+          encrypted: false // Already decrypted
+        });
       }
       
       // Set the certificate chain if available
       if (data.certificateChain && data.certificateChain.length > 0) {
         const chainPems = data.certificateChain.map(cert => cert.pem).join('\n');
         setChainContent(chainPems);
-        setChainAutoDetected(true);
+        // Set chain info for auto-extracted chain
+        setChainInfo({
+          type: 'auto',
+          format: 'pem',
+          source: 'auto',
+          fileName: fileName,
+          fileSize: chainPems.length,
+          uploadedAt: new Date().toLocaleString(),
+          certificateCount: data.certificateChain.length
+        });
       }
       
       setError('');
@@ -514,7 +601,6 @@ function App() {
       processDerCertificate(content, fileName);
     } else {
       setCertContent(content);
-      setChainAutoDetected(false);
       processCertificate(content, privateKeyContent, chainContent, privateKeyPassword);
     }
   };
@@ -580,6 +666,9 @@ function App() {
       const content = e.target.result;
       setPrivateKeyContent(content);
       
+      // Set private key info for file upload
+      setPrivateKeyInfo(detectPrivateKeyInfo(file, content, false));
+      
       // Re-process certificate with new private key
       if (certContent.trim()) {
         processCertificate(certContent, content, chainContent, privateKeyPassword);
@@ -594,7 +683,10 @@ function App() {
     reader.onload = (e) => {
       const content = e.target.result;
       setChainContent(content);
-      setChainAutoDetected(false); // This is manually uploaded, not auto-detected
+      
+      // Set chain info for file upload
+      setChainInfo(detectChainInfo(file, content, false));
+      
       // Re-process certificate with new chain
       if (certContent.trim()) {
         processCertificate(certContent, privateKeyContent, content, privateKeyPassword);
@@ -613,6 +705,26 @@ function App() {
     setDragOver(false);
   };
 
+  // Drag handlers for private key
+  const handlePrivateKeyDragOver = (e) => {
+    e.preventDefault();
+    setPrivateKeyDragOver(true);
+  };
+
+  const handlePrivateKeyDragLeave = () => {
+    setPrivateKeyDragOver(false);
+  };
+
+  // Drag handlers for chain
+  const handleChainDragOver = (e) => {
+    e.preventDefault();
+    setChainDragOver(true);
+  };
+
+  const handleChainDragLeave = () => {
+    setChainDragOver(false);
+  };
+
   // Control panel functions
   const handleClearAll = () => {
     setCertContent('');
@@ -624,7 +736,35 @@ function App() {
     setPendingPkcs12Data(null);
     setChainAutoDetected(false);
     setPrivateKeyAutoDetected(false); // Reset private key auto-detection
-    setOriginalFileInfo(null); // Clear file info
+    setCertificateInfo({
+      type: 'none',
+      format: 'none',
+      source: 'none',
+      fileName: null,
+      fileSize: null,
+      uploadedAt: null
+    });
+    
+    setPrivateKeyInfo({
+      type: 'none',
+      format: 'none',
+      source: 'none',
+      fileName: null,
+      fileSize: null,
+      uploadedAt: null,
+      encrypted: false
+    });
+    
+    setChainInfo({
+      type: 'none',
+      format: 'none',
+      source: 'none',
+      fileName: null,
+      fileSize: null,
+      uploadedAt: null,
+      certificateCount: 0
+    });
+    
     setResults(null);
     setError('');
   };
@@ -646,7 +786,12 @@ function App() {
       ...(results.subjectAlternativeNames && { sans: results.subjectAlternativeNames }),
       ...(results.extensions && { extensions: results.extensions }),
       ...(results.privateKeyValidation && { validation: results.privateKeyValidation }),
-      ...(originalFileInfo && { originalFile: originalFileInfo }),
+      // Include file tracking information
+      fileInfo: {
+        certificate: certificateInfo,
+        privateKey: privateKeyInfo,
+        chain: chainInfo
+      },
       ...(showRawData && results.raw && { raw: results.raw })
     };
 
@@ -665,6 +810,16 @@ function App() {
     let text = `Certificate Analysis Report\n`;
     text += `Generated: ${new Date().toLocaleString()}\n\n`;
     text += `Type: ${results.type}\n`;
+    
+    // Add file information
+    text += `\nFile Information:\n`;
+    text += `  Certificate: ${certificateInfo.type} (${certificateInfo.format}, ${certificateInfo.source})\n`;
+    if (privateKeyInfo.type !== 'none') {
+      text += `  Private Key: ${privateKeyInfo.type} (${privateKeyInfo.format}, ${privateKeyInfo.source})\n`;
+    }
+    if (chainInfo.type !== 'none') {
+      text += `  Chain: ${chainInfo.type} (${chainInfo.format}, ${chainInfo.source}, ${chainInfo.certificateCount} certs)\n`;
+    }
     
     // Add subject info
     text += `\nSubject:\n`;
@@ -709,26 +864,6 @@ function App() {
         document.body.removeChild(textarea);
       }
     }
-  };
-
-  // Drag handlers for private key
-  const handlePrivateKeyDragOver = (e) => {
-    e.preventDefault();
-    setPrivateKeyDragOver(true);
-  };
-
-  const handlePrivateKeyDragLeave = () => {
-    setPrivateKeyDragOver(false);
-  };
-
-  // Drag handlers for chain
-  const handleChainDragOver = (e) => {
-    e.preventDefault();
-    setChainDragOver(true);
-  };
-
-  const handleChainDragLeave = () => {
-    setChainDragOver(false);
   };
 
   // Process PKCS#7 content
@@ -781,13 +916,21 @@ function App() {
           // Set remaining certificates as chain
           const chainCerts = data.certificates.slice(1).map(cert => cert.pem).join('\n');
           setChainContent(chainCerts);
-          setChainAutoDetected(true);
+          // Set chain info for auto-extracted chain from PKCS#7
+          setChainInfo({
+            type: 'pkcs7',
+            format: isDer ? 'der' : 'pem',
+            source: 'auto',
+            fileName: fileName,
+            fileSize: chainCerts.length,
+            uploadedAt: new Date().toLocaleString(),
+            certificateCount: data.certificates.length - 1
+          });
           
           // Process with split content
           processCertificate(firstCert, privateKeyContent, chainCerts, privateKeyPassword);
         } else {
           // Single certificate in PKCS#7
-          setChainAutoDetected(false);
           processCertificate(firstCert, privateKeyContent, chainContent, privateKeyPassword);
         }
       } else {
@@ -800,6 +943,221 @@ function App() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const detectCertificateInfo = (file, content = null, detectedType = null) => {
+    const fileName = file.name.toLowerCase();
+    const fileSize = file.size;
+    const uploadedAt = new Date().toLocaleString();
+    
+    let type = 'certificate';
+    let format = 'pem';
+    let source = 'file';
+
+    // Determine type and format based on file extension and content
+    if (fileName.endsWith('.p12') || fileName.endsWith('.pfx') || fileName.endsWith('.pkcs12')) {
+      type = 'pkcs12';
+      format = 'binary';
+    } else if (fileName.endsWith('.p7b') || fileName.endsWith('.p7c')) {
+      type = 'pkcs7';
+      format = fileName.endsWith('.p7b') ? 'der' : 'pem';
+    } else if (fileName.endsWith('.der') || fileName.endsWith('.cer')) {
+      type = 'certificate';
+      format = 'der';
+    } else if (fileName.endsWith('.csr')) {
+      type = 'csr';
+      format = 'pem';
+    } else if (content) {
+      // Detect from content
+      if (content.includes('-----BEGIN CERTIFICATE REQUEST-----')) {
+        type = 'csr';
+      } else if (content.includes('-----BEGIN PKCS7-----')) {
+        type = 'pkcs7';
+      } else if (content.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g)?.length > 1) {
+        type = 'chain';
+      }
+    }
+
+    if (detectedType) {
+      type = detectedType.toLowerCase();
+    }
+
+    return {
+      type,
+      format,
+      source,
+      fileName: file.name,
+      fileSize,
+      uploadedAt
+    };
+  };
+
+  const detectPrivateKeyInfo = (file, content = null, isAuto = false) => {
+    const fileName = file.name.toLowerCase();
+    const fileSize = file.size;
+    const uploadedAt = new Date().toLocaleString();
+    
+    let type = 'rsa'; // default assumption
+    let format = 'pem';
+    let source = isAuto ? 'auto' : 'file';
+    let encrypted = false;
+
+    if (content) {
+      // Detect encryption
+      encrypted = content.includes('Proc-Type: 4,ENCRYPTED') || 
+                 content.includes('-----BEGIN ENCRYPTED PRIVATE KEY-----');
+      
+      // Detect type from content
+      if (content.includes('-----BEGIN EC PRIVATE KEY-----')) {
+        type = 'ec';
+        format = 'traditional';
+      } else if (content.includes('-----BEGIN PRIVATE KEY-----')) {
+        format = 'pkcs8';
+      } else if (content.includes('-----BEGIN RSA PRIVATE KEY-----')) {
+        type = 'rsa';
+        format = 'traditional';
+      } else if (content.includes('-----BEGIN DSA PRIVATE KEY-----')) {
+        type = 'dsa';
+        format = 'traditional';
+      }
+
+      if (encrypted) {
+        type = 'encrypted';
+      }
+    }
+
+    if (fileName.endsWith('.der')) {
+      format = 'der';
+    }
+
+    return {
+      type,
+      format,
+      source,
+      fileName: file.name,
+      fileSize,
+      uploadedAt,
+      encrypted
+    };
+  };
+
+  const detectChainInfo = (file, content = null, isAuto = false) => {
+    const fileName = file.name.toLowerCase();
+    const fileSize = file.size;
+    const uploadedAt = new Date().toLocaleString();
+    
+    let type = 'chain';
+    let format = 'pem';
+    let source = isAuto ? 'auto' : 'file';
+    let certificateCount = 0;
+
+    if (fileName.endsWith('.p7b') || fileName.endsWith('.p7c')) {
+      type = 'pkcs7';
+      format = fileName.endsWith('.p7b') ? 'der' : 'pem';
+    }
+
+    if (content) {
+      // Count certificates in chain
+      const certMatches = content.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g);
+      certificateCount = certMatches ? certMatches.length : 0;
+      
+      if (certificateCount > 1) {
+        type = 'chain';
+      } else if (certificateCount === 1) {
+        type = 'bundle';
+      }
+    }
+
+    return {
+      type,
+      format,
+      source,
+      fileName: file.name,
+      fileSize,
+      uploadedAt,
+      certificateCount
+    };
+  };
+
+  // Updated function to set certificate info from manual input
+  const setCertificateInfoFromManual = (content) => {
+    let type = 'certificate';
+    let format = 'pem';
+    
+    if (content.includes('-----BEGIN CERTIFICATE REQUEST-----')) {
+      type = 'csr';
+    } else if (content.includes('-----BEGIN PKCS7-----')) {
+      type = 'pkcs7';
+    }
+
+    setCertificateInfo({
+      type,
+      format,
+      source: 'manual',
+      fileName: null,
+      fileSize: content.length,
+      uploadedAt: new Date().toLocaleString()
+    });
+  };
+
+  // Updated function to set private key info from manual input
+  const setPrivateKeyInfoFromManual = (content) => {
+    let type = 'rsa';
+    let format = 'pem';
+    let encrypted = false;
+
+    if (content.includes('-----BEGIN EC PRIVATE KEY-----')) {
+      type = 'ec';
+      format = 'traditional';
+    } else if (content.includes('-----BEGIN PRIVATE KEY-----')) {
+      format = 'pkcs8';
+    } else if (content.includes('-----BEGIN RSA PRIVATE KEY-----')) {
+      type = 'rsa';
+      format = 'traditional';
+    } else if (content.includes('-----BEGIN DSA PRIVATE KEY-----')) {
+      type = 'dsa';
+      format = 'traditional';
+    }
+
+    encrypted = content.includes('Proc-Type: 4,ENCRYPTED') || 
+               content.includes('-----BEGIN ENCRYPTED PRIVATE KEY-----');
+
+    if (encrypted) {
+      type = 'encrypted';
+    }
+
+    setPrivateKeyInfo({
+      type,
+      format,
+      source: 'manual',
+      fileName: null,
+      fileSize: content.length,
+      uploadedAt: new Date().toLocaleString(),
+      encrypted
+    });
+  };
+
+  // Updated function to set chain info from manual input
+  const setChainInfoFromManual = (content) => {
+    const certMatches = content.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g);
+    const certificateCount = certMatches ? certMatches.length : 0;
+    
+    let type = 'chain';
+    if (certificateCount === 1) {
+      type = 'bundle';
+    } else if (certificateCount === 0) {
+      type = 'none';
+    }
+
+    setChainInfo({
+      type,
+      format: 'pem',
+      source: 'manual',
+      fileName: null,
+      fileSize: content.length,
+      uploadedAt: new Date().toLocaleString(),
+      certificateCount
+    });
   };
 
   return (
@@ -824,7 +1182,7 @@ function App() {
             onPrivateKeyDrop={handlePrivateKeyFileDrop}
             onPrivateKeyFileSelect={handlePrivateKeyFileInput}
             showPrivateKeyInput={showPrivateKeyInput}
-            privateKeyAutoDetected={privateKeyAutoDetected}
+            privateKeyAutoDetected={privateKeyInfo.source === 'auto'}
             privateKeyPassword={privateKeyPassword}
             onPrivateKeyPasswordChange={handlePrivateKeyPasswordChange}
             showPasswordInput={showPasswordInput}
@@ -836,7 +1194,7 @@ function App() {
             onChainDrop={handleChainFileDrop}
             onChainFileSelect={handleChainFileInput}
             showChainInput={showChainInput}
-            chainAutoDetected={chainAutoDetected} // ADD THIS LINE
+            chainAutoDetected={chainInfo.source === 'auto'}
             pkcs12Password={pkcs12Password}
             onPkcs12PasswordChange={handlePkcs12PasswordChange}
             showPkcs12PasswordInput={showPkcs12PasswordInput}
@@ -867,6 +1225,8 @@ function App() {
               </div>
             </div>
           </div>
+          
+
           
           <div className="control-section">
             <h4>Display Options</h4>
@@ -937,11 +1297,11 @@ function App() {
           </div>
           
           {results && results.type === 'Certificate' && (() => {
-            // Determine current format from the raw PEM data
-            const rawPem = results.raw?.pem || '';
-            const isPemFormat = rawPem.includes('-----BEGIN CERTIFICATE-----');
-            const isDerFormat = !isPemFormat && rawPem.length > 0;
-            const isBase64Format = !isPemFormat && !isDerFormat;
+            // Determine current format from the certificate info
+            const currentFormat = certificateInfo.format;
+            const isPemFormat = currentFormat === 'pem';
+            const isDerFormat = currentFormat === 'der';
+            const isBase64Format = currentFormat === 'binary';
             
             return (
               <div className="control-section">
@@ -993,14 +1353,39 @@ function App() {
                   </button>
                 )}
                 
-                {/* Original File Info */}
-                {originalFileInfo && (
+                {/* Expanded Original File Info */}
+                {certificateInfo.fileName && (
                   <div className="original-file-info">
                     <small>
-                      <strong>Original:</strong> {originalFileInfo.fileType} ({originalFileInfo.format})
+                      <strong>Original:</strong>
                       <br />
                       <span className="file-details">
-                        {originalFileInfo.fileName} • {(originalFileInfo.fileSize / 1024).toFixed(1)}KB
+                        <strong>Filetype:</strong> {certificateInfo.type} ({certificateInfo.format})
+                      </span>
+                      {privateKeyInfo.type !== 'none' && (
+                        <>
+                          <span className="file-details">
+                            <strong>Private Key:</strong> {privateKeyInfo.type} ({privateKeyInfo.format}, {privateKeyInfo.source})
+                            {privateKeyInfo.encrypted && ' • Encrypted'}
+                          </span>
+                        </>
+                      )}
+                      {chainInfo.type !== 'none' && chainInfo.certificateCount > 0 && (
+                        <>
+                          <span className="file-details">
+                            <strong>Chain:</strong> {chainInfo.type} ({chainInfo.format}, {chainInfo.source}) • {chainInfo.certificateCount} certs
+                          </span>
+                        </>
+                      )}
+                      <br />
+                      <span className="file-details">
+                        <strong>Filename:</strong> {certificateInfo.fileName}
+                      </span>
+                      <span className="file-details">
+                        <strong>Filesize:</strong> {certificateInfo.fileSize ? (certificateInfo.fileSize / 1024).toFixed(1) + 'KB' : 'Unknown size'}
+                      </span>
+                      <span className="file-details">
+                        <strong>Uploaded:</strong> {certificateInfo.uploadedAt}
                       </span>
                     </small>
                   </div>

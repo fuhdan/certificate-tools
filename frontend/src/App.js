@@ -161,6 +161,12 @@ function App() {
   // Handle text input change
   const handleTextChange = (e) => {
     const value = e.target.value;
+
+     // If new content is being pasted/typed and we have existing results, clear all first
+    if (value.trim() && value !== certContent && results) {
+      handleClearAll();
+    }
+
     setCertContent(value);
     
     // Clear file info when manually typing
@@ -289,6 +295,11 @@ function App() {
   const handleFile = (file) => {
     console.log('Processing file:', file.name, 'Size:', file.size);
     
+    // Clear all existing data when a new file is uploaded
+    if (results || certContent.trim() || privateKeyContent.trim() || chainContent.trim()) {
+      handleClearAll();
+    }
+    
     // Set original file info
     setOriginalFileInfo(getFileTypeInfo(file));
     
@@ -328,6 +339,7 @@ function App() {
       reader.readAsArrayBuffer(file);
       return;
     }
+    
     reader.onload = (e) => {
       const content = e.target.result;
       console.log('File content loaded, length:', content.length);

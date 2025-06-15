@@ -1,6 +1,6 @@
 #!/bin/bash
 
-set -eo pipefail
+set -euo pipefail
 
 # =============================================================================
 # Enhanced Certificate Issuance Script
@@ -605,28 +605,28 @@ generate_java_keystores() {
 
 get_password_input() {
     local default_password="$1"
+    local -n password_var="$2"  # Use nameref to return password
     
-    # Temporarily disable progress bar
-    local temp_progress_state="$PROGRESS_RESERVED"
-    PROGRESS_RESERVED=false
+    # Ensure all previous output is flushed
+    sync
     
     echo ""
     echo -e "${CYAN}🔐 Password Configuration${NC}"
     echo "========================"
     echo "   Press Enter for default password ('$default_password')"
     echo -n "   Or enter custom password: "
-    read -s user_password
-    echo ""
     
-    # Restore progress bar state
-    PROGRESS_RESERVED="$temp_progress_state"
-
+    # Read password silently
+    local user_password
+    read -s user_password
+    echo ""  # New line after hidden input
+    
     if [[ -z "$user_password" ]]; then
-        echo "$default_password"
+        password_var="$default_password"
         log_info "Using default password"
     else
-        echo "$user_password"
-        log_info "Using custom password"
+        password_var="$user_password"
+        log_info "Using custom password (hidden for security)"
     fi
 }
 
@@ -778,7 +778,8 @@ display_usage_guidelines() {
     echo "   🔧 Legacy/Binary systems:         Use $cert_dir/$cn.cert.der + $cert_dir/$cn.key.der"
     echo "   🧪 Testing purposes:              Use appropriate format for your test environment"
     echo ""
-    echo -e "${RED}🔐 Password for encrypted files: $password${NC}"
+    echo -e "${RED}🔐 Password for encrypted files: (stored securely by user)${NC}"
+    echo -e "${RED}   Note: Use the password you entered during setup${NC}"
     echo ""
 }
 
@@ -937,6 +938,10 @@ main() {
     echo "📅 Validity: $DEFAULT_VALIDITY_DAYS days"
     echo ""
     
+    # Get password for encryption
+    local password
+    get_password_input "$DEFAULT_PASSWORD" password
+    
     # Initialize progress tracking (17 total steps)
     log_debug "Initializing progress tracking with 17 steps"
     init_progress 17
@@ -969,10 +974,6 @@ main() {
     fi
     mkdir -p "$cert_dir"
     update_progress
-    
-    # Get password
-    local password
-    password=$(get_password_input "$DEFAULT_PASSWORD")
     
     # Generate certificate files
     log_info "Starting certificate generation process"

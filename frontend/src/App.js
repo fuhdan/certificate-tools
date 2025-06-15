@@ -32,6 +32,9 @@ function App() {
   const [exportResults, setExportResults] = useState(false);
   const [detailedValidation, setDetailedValidation] = useState(false);
 
+  // NEW: Track copy success state
+  const [copySuccess, setCopySuccess] = useState(false);
+
   // Computed values - moved to the bottom to avoid initialization issues
   const hasPrivateKey = privateKeyContent.trim().length > 0;
   const isPrivateKeyEncrypted = hasPrivateKey && (
@@ -657,7 +660,7 @@ function App() {
     URL.revokeObjectURL(url);
   };
 
-  const handleCopyDetails = () => {
+  const handleCopyDetails = async () => {
     if (!results) return;
     
     let text = `Certificate Analysis Report\n`;
@@ -686,10 +689,27 @@ function App() {
       text += `  Key Pair Valid: ${results.privateKeyValidation.keyPairValid ? 'Valid' : 'Invalid'}\n`;
     }
     
-    navigator.clipboard.writeText(text).then(() => {
-      // Could add a toast notification here
+    try {
+      // Try the modern clipboard API first
+      await navigator.clipboard.writeText(text);
       console.log('Certificate details copied to clipboard');
-    });
+    } catch (err) {
+      // Fallback method for older browsers or when clipboard API fails
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.style.position = 'fixed';  // Prevent scrolling to bottom
+      document.body.appendChild(textarea);
+      textarea.select();
+      
+      try {
+        document.execCommand('copy');
+        console.log('Certificate details copied using fallback method');
+      } catch (err) {
+        console.error('Failed to copy text:', err);
+      } finally {
+        document.body.removeChild(textarea);
+      }
+    }
   };
 
   // Drag handlers for private key
@@ -903,11 +923,15 @@ function App() {
             </button>
             {results && (
               <button 
-                className="control-button" 
-                onClick={handleCopyDetails}
+                className={`control-button ${copySuccess ? 'success' : ''}`}
+                onClick={async () => {
+                  await handleCopyDetails();
+                  setCopySuccess(true);
+                  setTimeout(() => setCopySuccess(false), 2000); // Reset after 2 seconds
+                }}
                 title="Copy formatted certificate details to clipboard"
               >
-                📋 Copy Summary
+                {copySuccess ? '✅ Copied!' : '📋 Copy Summary'}
               </button>
             )}
           </div>

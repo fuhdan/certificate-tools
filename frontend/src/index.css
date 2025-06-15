@@ -116,6 +116,11 @@ code {
   background: #ccc;
 }
 
+.control-button.success {
+  background-color: #4CAF50;
+  color: white;
+}
+
 .conversion-button {
   font-size: 0.85rem;
   padding: 8px 12px;

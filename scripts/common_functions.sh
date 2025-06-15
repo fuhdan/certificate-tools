@@ -91,12 +91,18 @@ update_progress() {
     local bar_length=40
     local filled_length=$((percentage * bar_length / 100))
     
+    # Ensure we don't exceed 100%
+    if [[ $percentage -gt 100 ]]; then
+        percentage=100
+        filled_length=$bar_length
+    fi
+    
     printf "\r${BLUE}Progress: ${NC}["
-    printf "%*s" $filled_length | tr ' ' '█'
-    printf "%*s" $((bar_length - filled_length)) | tr ' ' '░'
+    printf "%*s" $filled_length | tr ' ' '#'
+    printf "%*s" $((bar_length - filled_length)) | tr ' ' '-'
     printf "] %d%% (%d/%d)" $percentage $CURRENT_STEP $TOTAL_STEPS
     
-    if [[ $CURRENT_STEP -eq $TOTAL_STEPS ]]; then
+    if [[ $CURRENT_STEP -ge $TOTAL_STEPS ]]; then
         echo ""
         log_success "All steps completed successfully"
     fi
@@ -348,15 +354,17 @@ validate_certificate_chain() {
     log_debug "Validating certificate chain: $cert_file -> $parent_cert_file"
     
     if [[ -n "$parent_cert_file" && -f "$parent_cert_file" ]]; then
+        # For intermediate certificates, verify against parent
         if openssl verify -CAfile "$parent_cert_file" "$cert_file" >/dev/null 2>>"${LOG_FILE:-/dev/null}"; then
             log_success "Certificate chain validation passed"
             return 0
         else
             log_error "Certificate chain validation failed"
+            log_debug "Attempted to verify $cert_file against CA $parent_cert_file"
             return 1
         fi
     else
-        # Self-signed certificate
+        # For root certificates, verify self-signed
         if openssl verify -CAfile "$cert_file" "$cert_file" >/dev/null 2>>"${LOG_FILE:-/dev/null}"; then
             log_success "Self-signed certificate validation passed"
             return 0
@@ -642,6 +650,12 @@ basicConstraints = critical, CA:true
 keyUsage = critical, digitalSignature, cRLSign, keyCertSign
 
 [ v3_intermediate_ca ]
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid:always,issuer
+basicConstraints = critical, CA:true, pathlen:1
+keyUsage = critical, digitalSignature, cRLSign, keyCertSign
+
+[ v3_issuing_ca ]
 subjectKeyIdentifier = hash
 authorityKeyIdentifier = keyid:always,issuer
 basicConstraints = critical, CA:true, pathlen:0

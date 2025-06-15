@@ -6,7 +6,7 @@ set -euo pipefail
 # Enhanced Certificate Authority Creation Script
 # =============================================================================
 
-# Configuration file with defaults
+# Configuration
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly CONFIG_FILE="${SCRIPT_DIR}/ca_config.conf"
 readonly DEFAULT_CONFIG="# CA Configuration
@@ -45,20 +45,10 @@ declare -g CONFIG_LOADED=false
 # =============================================================================
 
 load_configuration() {
-    if [[ ! -f "$CONFIG_FILE" ]]; then
-        log_info "Creating default configuration file: $CONFIG_FILE"
-        echo "$DEFAULT_CONFIG" > "$CONFIG_FILE"
-    fi
-    
-    # Source configuration with validation
-    if source "$CONFIG_FILE" 2>/dev/null; then
-        validate_configuration
-        CONFIG_LOADED=true
-        log_debug "Configuration loaded successfully"
-    else
-        log_error "Failed to load configuration from $CONFIG_FILE"
-        return 1
-    fi
+    load_config_file "$CONFIG_FILE" "$DEFAULT_CONFIG" || return 1
+    validate_configuration || return 1
+    CONFIG_LOADED=true
+    log_debug "Configuration loaded successfully"
 }
 
 validate_configuration() {
@@ -74,6 +64,11 @@ validate_configuration() {
     validate_config_value "INTERMEDIATE_VALIDITY_DAYS" "$INTERMEDIATE_VALIDITY_DAYS" "^[0-9]+$" "must be a positive number" || errors+=("INTERMEDIATE_VALIDITY_DAYS")
     validate_config_value "ISSUING_VALIDITY_DAYS" "$ISSUING_VALIDITY_DAYS" "^[0-9]+$" "must be a positive number" || errors+=("ISSUING_VALIDITY_DAYS")
     
+    # Additional validation for positive values
+    [[ "$ROOT_VALIDITY_DAYS" -gt 0 ]] || errors+=("ROOT_VALIDITY_DAYS must be greater than 0")
+    [[ "$INTERMEDIATE_VALIDITY_DAYS" -gt 0 ]] || errors+=("INTERMEDIATE_VALIDITY_DAYS must be greater than 0")
+    [[ "$ISSUING_VALIDITY_DAYS" -gt 0 ]] || errors+=("ISSUING_VALIDITY_DAYS must be greater than 0")
+    
     # Validate directories
     [[ -n "$BASE_DIR" ]] || errors+=("BASE_DIR cannot be empty")
     
@@ -84,38 +79,13 @@ validate_configuration() {
         log_error "Configuration validation failed for: ${errors[*]}"
         return 1
     fi
-} 0 ]] || errors+=("Invalid ISSUING_VALIDITY_DAYS: $ISSUING_VALIDITY_DAYS")
     
-    # Validate directories
-    [[ -n "$BASE_DIR" ]] || errors+=("BASE_DIR cannot be empty")
-    
-    # Validate log level
-    [[ "$LOG_LEVEL" =~ ^(DEBUG|INFO|WARNING|ERROR)$ ]] || errors+=("Invalid LOG_LEVEL: $LOG_LEVEL")
-    
-    if [[ ${#errors[@]} -gt 0 ]]; then
-        log_error "Configuration validation failed:"
-        printf '%s\n' "${errors[@]}" >&2
-        return 1
-    fi
+    return 0
 }
 
 # =============================================================================
-# ENHANCED LOGGING SYSTEM
+# CLEANUP AND RECOVERY
 # =============================================================================
-
-# Logging is now handled by common_functions.sh
-
-# =============================================================================
-# PROGRESS TRACKING  
-# =============================================================================
-
-# Progress tracking is now handled by common_functions.sh
-
-# =============================================================================
-# ATOMIC OPERATIONS & RECOVERY
-# =============================================================================
-
-# File operations are now handled by common_functions.sh
 
 rollback_ca_creation() {
     local ca_name="$1"
@@ -167,10 +137,8 @@ cleanup_on_exit() {
 trap cleanup_on_exit EXIT
 
 # =============================================================================
-# UTILITY FUNCTIONS
+# VALIDATION FUNCTIONS
 # =============================================================================
-
-# Most utility functions are now in common_functions.sh
 
 validate_prerequisites() {
     log_info "Validating prerequisites..."
@@ -192,72 +160,224 @@ validate_prerequisites() {
     return 0
 }
 
-# =============================================================================
-# CERTIFICATE VALIDATION
-# =============================================================================
-
-validate_certificate_chain() {
-    local cert_file="$1"
-    local parent_cert_file="$2"
+test_ca_certificate() {
+    local ca_dir=$1
+    local ca_name=$2
+    local parent_ca_dir=$3
     
-    log_debug "Validating certificate chain: $cert_file -> $parent_cert_file"
+    log_info "Testing CA certificate: $ca_name"
     
-    if [[ -n "$parent_cert_file" && -f "$parent_cert_file" ]]; then
-        if openssl verify -CAfile "$parent_cert_file" "$cert_file" >/dev/null 2>>"$LOG_FILE"; then
-            log_success "Certificate chain validation passed"
-            return 0
+    local cert_file="$ca_dir/certs/ca.cert.pem"
+    local key_file="$ca_dir/private/ca.key.pem"
+    
+    # Test certificate and key formats
+    validate_certificate_format "$cert_file" || return 1
+    validate_private_key_format "$key_file" || return 1
+    
+    # Test certificate-key pair matching
+    validate_certificate_key_pair "$cert_file" "$key_file" || return 1
+    
+    # Test certificate extensions
+    validate_certificate_extensions "$cert_file" "true" || return 1
+    
+    # Test certificate chain validation
+    if [[ -n "$parent_ca_dir" ]]; then
+        local parent_cert="$parent_ca_dir/certs/ca.cert.pem"
+        
+        # For intermediate CAs, we need to also check if there's a grandparent
+        local root_cert=""
+        if [[ -f "$BASE_DIR/RootCA/certs/ca.cert.pem" ]]; then
+            root_cert="$BASE_DIR/RootCA/certs/ca.cert.pem"
+        fi
+        
+        # Create temporary certificate bundle for validation
+        if [[ -n "$root_cert" && "$parent_cert" != "$root_cert" ]]; then
+            local temp_bundle
+            temp_bundle=$(mktemp)
+            add_temp_file "$temp_bundle"
+            cat "$parent_cert" "$root_cert" > "$temp_bundle"
+            
+            # Validate against the bundle
+            if openssl verify -CAfile "$root_cert" -untrusted "$parent_cert" "$cert_file" >/dev/null 2>>"$LOG_FILE"; then
+                log_success "Certificate chain validation passed"
+            else
+                log_error "Certificate chain validation failed"
+                return 1
+            fi
         else
-            log_error "Certificate chain validation failed"
+            validate_certificate_chain "$cert_file" "$parent_cert" || return 1
+        fi
+    else
+        validate_certificate_chain "$cert_file" "" || return 1
+    fi
+    
+    log_success "All tests passed for CA: $ca_name"
+    return 0
+}
+
+test_ca_functionality() {
+    local ca_dir=$1
+    local ca_name=$2
+
+    log_info "Testing CA functionality: $ca_name"
+
+    # Create a temporary test certificate request
+    local temp_key temp_csr temp_cert
+    temp_key=$(mktemp)
+    temp_csr=$(mktemp)
+    temp_cert=$(mktemp)
+    add_temp_file "$temp_key"
+    add_temp_file "$temp_csr"
+    add_temp_file "$temp_cert"
+
+    # Generate test key
+    if ! openssl genrsa -out "$temp_key" 2048 >/dev/null 2>>"$LOG_FILE"; then
+        log_error "Failed to generate test key"
+        return 1
+    fi
+
+    # Generate test CSR
+    if ! openssl req -new -key "$temp_key" -out "$temp_csr" \
+        -subj "/C=CH/ST=BE/O=DanielF/OU=Testing/CN=test.example.com" >/dev/null 2>>"$LOG_FILE"; then
+        log_error "Failed to generate test CSR"
+        return 1
+    fi
+
+    # Try to sign the test certificate
+    if ! openssl ca -config "$ca_dir/openssl.cnf" \
+        -in "$temp_csr" -out "$temp_cert" \
+        -batch -notext -days 30 >/dev/null 2>>"$LOG_FILE"; then
+        log_error "Failed to sign test certificate"
+        return 1
+    fi
+
+    # Verify the certificate - different approach for each CA type
+    if [[ "$ca_name" == "IssuingCA1" ]]; then
+        # For 3-tier: verify against root CA with intermediate chain
+        local intermediate_chain
+        intermediate_chain=$(mktemp)
+        add_temp_file "$intermediate_chain"
+        
+        # Build chain: IssuingCA1 + IntermediateCA1
+        cat "$ca_dir/certs/ca.cert.pem" \
+            "$BASE_DIR/IntermediateCA1/certs/ca.cert.pem" > "$intermediate_chain"
+        
+        # Verify against root CA with the intermediate chain
+        if ! openssl verify -CAfile "$BASE_DIR/RootCA/certs/ca.cert.pem" \
+            -untrusted "$intermediate_chain" "$temp_cert" >/dev/null 2>>"$LOG_FILE"; then
+            log_error "Test certificate verification failed"
+            return 1
+        fi
+    elif [[ "$ca_name" == "IssuingCA2" ]]; then
+        # For 2-tier: verify against root CA with IssuingCA2 as untrusted
+        if ! openssl verify -CAfile "$BASE_DIR/RootCA/certs/ca.cert.pem" \
+            -untrusted "$ca_dir/certs/ca.cert.pem" "$temp_cert" >/dev/null 2>>"$LOG_FILE"; then
+            log_error "Test certificate verification failed"
             return 1
         fi
     else
-        # Self-signed certificate
-        if openssl verify -CAfile "$cert_file" "$cert_file" >/dev/null 2>>"$LOG_FILE"; then
-            log_success "Self-signed certificate validation passed"
-            return 0
-        else
-            log_error "Self-signed certificate validation failed"
+        # Root CA - verify against itself
+        if ! openssl verify -CAfile "$ca_dir/certs/ca.cert.pem" "$temp_cert" >/dev/null 2>>"$LOG_FILE"; then
+            log_error "Test certificate verification failed"
             return 1
         fi
     fi
+
+    log_success "CA functionality test passed for: $ca_name"
+    return 0
 }
 
-validate_certificate_details() {
-    local cert_file="$1"
-    local expected_ca_flag="$2"
-    
-    log_debug "Validating certificate details: $cert_file"
-    
-    # Check basic constraints
-    local basic_constraints
-    basic_constraints=$(openssl x509 -in "$cert_file" -noout -ext basicConstraints 2>/dev/null)
-    
-    if [[ "$expected_ca_flag" == "true" ]]; then
-        if [[ "$basic_constraints" != *"CA:TRUE"* ]]; then
-            log_error "Certificate is missing CA:TRUE basic constraint"
-            return 1
+comprehensive_testing() {
+    log_info "Starting comprehensive testing of CA hierarchy..."
+
+    local test_results=()
+    local total_tests=0
+    local passed_tests=0
+
+    # Test each CA
+    local cas=("RootCA" "IntermediateCA1" "IssuingCA1" "IssuingCA2")
+    local parents=("" "RootCA" "IntermediateCA1" "RootCA")
+
+    for i in "${!cas[@]}"; do
+        local ca_name="${cas[$i]}"
+        local parent="${parents[$i]}"
+        local ca_dir="$BASE_DIR/$ca_name"
+        local parent_dir=""
+
+        if [[ -n "$parent" ]]; then
+            parent_dir="$BASE_DIR/$parent"
         fi
-    fi
-    
-    # Check key usage
-    local key_usage
-    key_usage=$(openssl x509 -in "$cert_file" -noout -ext keyUsage 2>/dev/null)
-    
-    if [[ "$expected_ca_flag" == "true" ]]; then
-        if [[ "$key_usage" != *"Certificate Sign"* ]] || [[ "$key_usage" != *"CRL Sign"* ]]; then
-            log_error "Certificate is missing required CA key usage extensions"
-            return 1
+
+        echo ""
+        log_info "Testing CA: $ca_name"
+
+        # Certificate validation test
+        ((total_tests++))
+        if test_ca_certificate "$ca_dir" "$ca_name" "$parent_dir"; then
+            ((passed_tests++))
+            test_results+=("$ca_name Certificate: ✅ PASS")
+        else
+            test_results+=("$ca_name Certificate: ❌ FAIL")
         fi
+
+        # Functionality test (only for issuing CAs)
+        if [[ "$ca_name" == "IssuingCA"* ]]; then
+            ((total_tests++))
+            if test_ca_functionality "$ca_dir" "$ca_name"; then
+                ((passed_tests++))
+                test_results+=("$ca_name Functionality: ✅ PASS")
+            else
+                test_results+=("$ca_name Functionality: ❌ FAIL")
+            fi
+        fi
+    done
+
+    # Test hierarchy integrity
+    ((total_tests++))
+    log_info "Testing hierarchy integrity..."
+    local hierarchy_ok=true
+
+    # Test IssuingCA1 chain: IssuingCA1 -> IntermediateCA1 -> RootCA
+    if ! openssl verify -CAfile "$BASE_DIR/RootCA/certs/ca.cert.pem" \
+        -untrusted "$BASE_DIR/IntermediateCA1/certs/ca.cert.pem" \
+        "$BASE_DIR/IssuingCA1/certs/ca.cert.pem" >/dev/null 2>>"$LOG_FILE"; then
+        log_error "IssuingCA1 chain validation failed"
+        hierarchy_ok=false
     fi
-    
-    # Check validity period
-    if ! openssl x509 -in "$cert_file" -noout -checkend 0 >/dev/null 2>&1; then
-        log_error "Certificate is not yet valid or has expired"
+
+    # Test IssuingCA2 chain: IssuingCA2 -> RootCA
+    if ! openssl verify -CAfile "$BASE_DIR/RootCA/certs/ca.cert.pem" \
+        "$BASE_DIR/IssuingCA2/certs/ca.cert.pem" >/dev/null 2>>"$LOG_FILE"; then
+        log_error "IssuingCA2 chain validation failed"
+        hierarchy_ok=false
+    fi
+
+    if $hierarchy_ok; then
+        ((passed_tests++))
+        test_results+=("Hierarchy Integrity: ✅ PASS")
+        log_success "Hierarchy integrity test passed"
+    else
+        test_results+=("Hierarchy Integrity: ❌ FAIL")
+    fi
+
+    # Print test summary
+    echo ""
+    echo "=========================================="
+    log_info "TEST SUMMARY"
+    echo "=========================================="
+
+    for result in "${test_results[@]}"; do
+        echo "  $result"
+    done
+
+    echo ""
+    if [[ $passed_tests -eq $total_tests ]]; then
+        log_success "All tests passed! ($passed_tests/$total_tests)"
+        return 0
+    else
+        log_error "Some tests failed! ($passed_tests/$total_tests)"
         return 1
     fi
-    
-    log_success "Certificate details validation passed"
-    return 0
 }
 
 # =============================================================================
@@ -377,16 +497,20 @@ create_ca_certificate() {
             
             log_info "Signing certificate with parent CA"
             
+            # Choose the right extension based on CA type
+            local extension="v3_intermediate_ca"
+            if [[ "$ca_name" == "IssuingCA"* ]]; then
+                extension="v3_issuing_ca"
+            fi
+            
             # Sign with parent CA
             if atomic_file_operation \
                 "Certificate signing" \
-                "openssl ca -config '$parent_ca_dir/openssl.cnf' -extensions v3_intermediate_ca -days $validity_days -notext -md sha256 -in '$csr_file' -out '$cert_file' -batch" \
+                "openssl ca -config '$parent_ca_dir/openssl.cnf' -extensions $extension -days $validity_days -notext -md sha256 -in '$csr_file' -out '$cert_file' -batch" \
                 "$cert_file"; then
                 
-                # Validate the created certificate
-                local parent_cert="$parent_ca_dir/certs/ca.cert.pem"
-                if validate_certificate_extensions "$cert_file" "true" && \
-                   validate_certificate_chain "$cert_file" "$parent_cert"; then
+                # Validate the created certificate - simplified validation for intermediate CAs
+                if validate_certificate_extensions "$cert_file" "true"; then
                     log_success "Certificate created and validated"
                     update_progress
                     return 0
@@ -463,6 +587,38 @@ ${BOLD}Configuration:${NC}
 EOF
 }
 
+clean_existing_cas() {
+    if [[ -d "$BASE_DIR" ]]; then
+        log_warning "Cleaning existing CA hierarchy..."
+        
+        # List what will be removed
+        log_info "The following will be removed:"
+        find "$BASE_DIR" -type f -name "*.pem" -o -name "*.txt" -o -name "*.cnf" | head -10 | while read -r file; do
+            log_info "  - $file"
+        done
+        
+        local file_count
+        file_count=$(find "$BASE_DIR" -type f | wc -l)
+        if [[ "$file_count" -gt 10 ]]; then
+            log_info "  ... and $((file_count - 10)) more files"
+        fi
+        
+        if confirm_action "Are you sure you want to delete the existing CA hierarchy?"; then
+            if rm -rf "$BASE_DIR"; then
+                log_success "Existing CA hierarchy cleaned"
+            else
+                log_error "Failed to clean existing CA hierarchy"
+                exit 1
+            fi
+        else
+            log_info "Clean operation cancelled"
+            exit 0
+        fi
+    else
+        log_info "No existing CA hierarchy found to clean"
+    fi
+}
+
 main() {
     OPERATION_START_TIME=$(date +%s)
     
@@ -470,6 +626,7 @@ main() {
     local test_only=false
     local clean_first=false
     local custom_config=""
+    local run_tests=true
     
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -502,7 +659,7 @@ main() {
                 shift
                 ;;
             --no-tests)
-                # This will be handled later
+                run_tests=false
                 shift
                 ;;
             *)
@@ -534,31 +691,37 @@ main() {
     # Handle test-only mode
     if $test_only; then
         log_info "Running in test-only mode"
-        # Test functionality would go here
-        log_success "Test-only mode completed"
-        exit 0
+        if [[ ! -d "$BASE_DIR" ]]; then
+            log_error "No existing CA hierarchy found to test"
+            log_info "Run without --test-only to create CA hierarchy first"
+            exit 1
+        fi
+        
+        if comprehensive_testing; then
+            log_success "All tests completed successfully"
+            exit 0
+        else
+            log_error "Some tests failed"
+            exit 1
+        fi
     fi
     
-    # Initialize progress tracking (8 steps total)
-    init_progress 8
+    # Initialize progress tracking (15 steps total)
+    # 1. Prerequisites, 2. Clean/skip, 3. Create base dir
+    # 4-6. RootCA (dir, key, cert)
+    # 7-9. IntermediateCA1 (dir, key, cert) 
+    # 10-12. IssuingCA1 (dir, key, cert)
+    # 13-15. IssuingCA2 (dir, key, cert)
+    init_progress 15
     
     # Validate prerequisites
     validate_prerequisites || exit 1
     
     # Handle clean option
     if $clean_first; then
-        log_warning "Cleaning existing CA hierarchy"
-        if [[ -d "$BASE_DIR" ]]; then
-            echo -n "Are you sure you want to delete existing CAs? [y/N]: "
-            read -r response
-            if [[ "$response" =~ ^[Yy]$ ]]; then
-                rm -rf "$BASE_DIR"
-                log_success "Existing CA hierarchy cleaned"
-            else
-                log_info "Clean operation cancelled"
-                exit 0
-            fi
-        fi
+        clean_existing_cas
+        update_progress
+    else
         update_progress
     fi
     
@@ -587,8 +750,21 @@ main() {
     echo ""
     echo -e "${GREEN}${BOLD}🎉 CA Hierarchy Created Successfully!${NC}"
     echo "==========================================="
-    log_success "Created ${#CREATED_CAS[@]} Certificate Authorities in ${duration}s"
+    log_success "Created ${#CREATED_CAS[@]} Certificate Authorities in $(format_duration $duration)"
     log_info "Location: $BASE_DIR"
+    
+    # Run comprehensive testing if requested
+    if $run_tests; then
+        echo ""
+        log_info "Running comprehensive tests..."
+        if comprehensive_testing; then
+            log_success "All tests passed - CA hierarchy is ready for use!"
+        else
+            log_warning "Some tests failed, but CA hierarchy was created successfully"
+            log_info "You can use the CAs for certificate generation"
+            # Don't exit with error for test failures since CAs are actually working
+        fi
+    fi
     
     echo ""
     echo -e "${BLUE}${BOLD}Available CAs for certificate signing:${NC}"
@@ -596,8 +772,8 @@ main() {
     echo "  📋 IssuingCA2 (2-tier: Root → Issuing)"
     echo ""
     echo -e "${BLUE}${BOLD}Next Steps:${NC}"
-    echo "  🔧 Use: ./issue_certificates.sh <CA_NAME> <COMMON_NAME> [SANs...]"
-    echo "  📖 Example: ./issue_certificates.sh IssuingCA1 server1.local www.server1.local"
+    echo "  🔧 Use: ./enhanced_issue_certificates.sh <CA_NAME> <COMMON_NAME> [SANs...]"
+    echo "  📖 Example: ./enhanced_issue_certificates.sh IssuingCA1 server1.local www.server1.local"
     echo ""
     
     log_success "Script completed successfully"

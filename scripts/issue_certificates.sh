@@ -34,7 +34,7 @@ else
     exit 1
 fi
 
-# Global state
+# Global variables
 declare -g OPERATION_START_TIME
 declare -g CONFIG_LOADED=false
 declare -g STATS_TOTAL_FILES=0
@@ -44,228 +44,58 @@ declare -g STATS_WARNINGS=0
 declare -g FAILED_OPERATIONS=()
 declare -g WARNING_MESSAGES=()
 
-# Certificate generation formats
-declare -Ar CERT_FORMATS=(
-    ["unencrypted_key_pem"]="Unencrypted Private Key (PEM)"
-    ["unencrypted_key_der"]="Unencrypted Private Key (DER)"
-    ["encrypted_key_pem"]="Encrypted Private Key (PEM)"
-    ["encrypted_key_der"]="Encrypted Private Key (DER)"
-    ["csr_pem"]="Certificate Signing Request"
-    ["cert_pem"]="Certificate (PEM)"
-    ["cert_der"]="Certificate (DER)"
-    ["chain_pem"]="Certificate Chain (PEM)"
-    ["chain_der"]="Certificate Chain (DER)"
-    ["pkcs7_pem"]="PKCS#7 Bundle (PEM)"
-    ["pkcs7_der"]="PKCS#7 Bundle (DER/P7B)"
-    ["pkcs12_pwd"]="PKCS#12 Bundle (with password)"
-    ["pkcs12_no_pwd"]="PKCS#12 Bundle (no password)"
-    ["pfx"]="PFX Bundle (Windows)"
-    ["jks"]="Java KeyStore (JKS)"
-    ["bks_pwd"]="BKS KeyStore (with password)"
-    ["bks_no_pwd"]="BKS KeyStore (no password)"
-)
+# Progress tracking variables (also declared in common_functions.sh)
+declare -g CURRENT_STEP=0
+declare -g TOTAL_STEPS=0
 
 # =============================================================================
 # CONFIGURATION MANAGEMENT
 # =============================================================================
 
 load_configuration() {
-    if [[ ! -f "$CONFIG_FILE" ]]; then
-        log_info "Creating default configuration file: $CONFIG_FILE"
-        echo "$DEFAULT_CONFIG" > "$CONFIG_FILE"
-    fi
-    
-    if source "$CONFIG_FILE" 2>/dev/null; then
-        validate_configuration
-        CONFIG_LOADED=true
-        log_debug "Configuration loaded successfully"
-    else
-        log_error "Failed to load configuration from $CONFIG_FILE"
-        return 1
-    fi
+    load_config_file "$CONFIG_FILE" "$DEFAULT_CONFIG" || return 1
+    validate_cert_configuration || return 1
+    CONFIG_LOADED=true
+    log_debug "Certificate configuration loaded successfully"
 }
 
-validate_configuration() {
+validate_cert_configuration() {
     local errors=()
     
     # Validate key size
-    [[ "$DEFAULT_KEY_SIZE" =~ ^(2048|3072|4096)$ ]] || errors+=("Invalid DEFAULT_KEY_SIZE: $DEFAULT_KEY_SIZE")
+    validate_config_value "DEFAULT_KEY_SIZE" "$DEFAULT_KEY_SIZE" "^(2048|3072|4096)$" "must be 2048, 3072, or 4096" || errors+=("DEFAULT_KEY_SIZE")
     
     # Validate validity days
-    [[ "$DEFAULT_VALIDITY_DAYS" =~ ^[0-9]+$ ]] && [[ "$DEFAULT_VALIDITY_DAYS" -gt 0 ]] || errors+=("Invalid DEFAULT_VALIDITY_DAYS: $DEFAULT_VALIDITY_DAYS")
+    validate_config_value "DEFAULT_VALIDITY_DAYS" "$DEFAULT_VALIDITY_DAYS" "^[0-9]+$" "must be a positive number" || errors+=("DEFAULT_VALIDITY_DAYS")
+    [[ "$DEFAULT_VALIDITY_DAYS" -gt 0 ]] || errors+=("DEFAULT_VALIDITY_DAYS must be greater than 0")
     
     # Validate directories
     [[ -n "$BASE_CA_DIR" ]] || errors+=("BASE_CA_DIR cannot be empty")
     [[ -n "$CERT_OUTPUT_DIR" ]] || errors+=("CERT_OUTPUT_DIR cannot be empty")
     
     # Validate log level
-    [[ "$LOG_LEVEL" =~ ^(DEBUG|INFO|WARNING|ERROR)$ ]] || errors+=("Invalid LOG_LEVEL: $LOG_LEVEL")
+    validate_config_value "LOG_LEVEL" "$LOG_LEVEL" "^(DEBUG|INFO|WARNING|ERROR)$" "must be DEBUG, INFO, WARNING, or ERROR" || errors+=("LOG_LEVEL")
     
     if [[ ${#errors[@]} -gt 0 ]]; then
-        log_error "Configuration validation failed:"
-        printf '%s\n' "${errors[@]}" >&2
+        log_error "Certificate configuration validation failed for: ${errors[*]}"
         return 1
     fi
-}
-
-# =============================================================================
-# ENHANCED LOGGING SYSTEM
-# =============================================================================
-
-setup_logging() {
-    local log_dir="${SCRIPT_DIR}/logs"
-    mkdir -p "$log_dir"
-    LOG_FILE="${log_dir}/cert_issuance_$(date +%Y%m%d_%H%M%S).log"
     
-    echo "=== Enhanced Certificate Issuance Log - $(date) ===" > "$LOG_FILE"
-    echo "Configuration: $CONFIG_FILE" >> "$LOG_FILE"
-    echo "Log Level: $LOG_LEVEL" >> "$LOG_FILE"
-    echo "=========================================" >> "$LOG_FILE"
-}
-
-log_with_level() {
-    local level="$1"
-    local message="$2"
-    local color="$3"
-    local symbol="$4"
-    
-    # Check if we should log this level
-    case "$LOG_LEVEL" in
-        ERROR) [[ "$level" == "ERROR" ]] || return 0 ;;
-        WARNING) [[ "$level" =~ ^(ERROR|WARNING)$ ]] || return 0 ;;
-        INFO) [[ "$level" =~ ^(ERROR|WARNING|INFO)$ ]] || return 0 ;;
-        DEBUG) ;; # Log everything
-    esac
-    
-    local timestamp="$(date '+%H:%M:%S')"
-    local log_entry="[$timestamp] [$level] $message"
-    
-    echo -e "${color}${symbol} ${level}:${NC} $message"
-    echo "$log_entry" >> "$LOG_FILE"
-}
-
-log_debug() { log_with_level "DEBUG" "$1" "$PURPLE" "🔍"; }
-log_info() { log_with_level "INFO" "$1" "$BLUE" "ℹ️ "; }
-log_success() { log_with_level "INFO" "$1" "$GREEN" "✅"; }
-log_warning() { log_with_level "WARNING" "$1" "$YELLOW" "⚠️ "; }
-log_error() { log_with_level "ERROR" "$1" "$RED" "❌"; }
-
-# =============================================================================
-# PROGRESS TRACKING
-# =============================================================================
-
-init_progress() {
-    TOTAL_STEPS="$1"
-    CURRENT_STEP=0
-    log_info "Starting certificate generation with $TOTAL_STEPS steps"
-}
-
-update_progress() {
-    ((CURRENT_STEP++))
-    local percentage=$((CURRENT_STEP * 100 / TOTAL_STEPS))
-    local bar_length=40
-    local filled_length=$((percentage * bar_length / 100))
-    
-    printf "\r${BLUE}Progress: ${NC}["
-    printf "%*s" $filled_length | tr ' ' '█'
-    printf "%*s" $((bar_length - filled_length)) | tr ' ' '░'
-    printf "] %d%% (%d/%d)" $percentage $CURRENT_STEP $TOTAL_STEPS
-    
-    if [[ $CURRENT_STEP -eq $TOTAL_STEPS ]]; then
-        echo ""
-        log_success "All certificate generation steps completed"
-    fi
-}
-
-# =============================================================================
-# ATOMIC OPERATIONS & RECOVERY
-# =============================================================================
-
-add_temp_file() {
-    TEMP_FILES+=("$1")
-    log_debug "Added temp file: $1"
-}
-
-atomic_file_operation() {
-    local description="$1"
-    local command="$2"
-    local target_file="$3"
-    local is_critical="${4:-true}"
-    
-    local temp_file="${target_file}.tmp.$"
-    add_temp_file "$temp_file"
-    
-    log_debug "Starting atomic operation: $description"
-    ((STATS_TOTAL_FILES++))
-    
-    # Execute command with temp file
-    if eval "${command//$target_file/$temp_file}" 2>>"$LOG_FILE"; then
-        if [[ -f "$temp_file" && -s "$temp_file" ]]; then
-            # Atomic move
-            if mv "$temp_file" "$target_file"; then
-                log_success "$description completed successfully"
-                local file_size
-                file_size=$(stat -f%z "$target_file" 2>/dev/null || stat -c%s "$target_file" 2>/dev/null || echo "unknown")
-                log_debug "File: $target_file ($file_size bytes)"
-                ((STATS_SUCCESS_FILES++))
-                # Remove from temp files since it's now permanent
-                TEMP_FILES=("${TEMP_FILES[@]/$temp_file}")
-                update_progress
-                return 0
-            else
-                log_error "Failed to move temporary file to final location"
-            fi
-        else
-            log_error "$description failed - temporary file is empty or missing"
-        fi
-    else
-        log_error "$description failed - command execution error"
-    fi
-    
-    FAILED_OPERATIONS+=("$description")
-    ((STATS_FAILED_FILES++))
-    
-    if [[ "$is_critical" == "true" ]]; then
-        return 1
-    else
-        update_progress
-        return 0
-    fi
-}
-
-backup_existing_cert_dir() {
-    local cert_dir="$1"
-    
-    if [[ -d "$cert_dir" && "$BACKUP_EXISTING_CERTS" == "true" ]]; then
-        local backup_dir="${cert_dir}.backup.$(date +%Y%m%d_%H%M%S)"
-        log_info "Backing up existing certificate directory to: $backup_dir"
-        
-        if cp -r "$cert_dir" "$backup_dir"; then
-            log_success "Backup created successfully"
-            return 0
-        else
-            log_error "Failed to create backup"
-            return 1
-        fi
-    fi
     return 0
 }
+
+# =============================================================================
+# CLEANUP AND ERROR HANDLING
+# =============================================================================
 
 cleanup_on_exit() {
     local exit_code=$?
     
     log_debug "Cleanup started (exit code: $exit_code)"
-    
-    # Clean up temporary files
-    if [[ ${#TEMP_FILES[@]} -gt 0 ]]; then
-        log_info "Cleaning up ${#TEMP_FILES[@]} temporary files"
-        for temp_file in "${TEMP_FILES[@]}"; do
-            [[ -f "$temp_file" ]] && rm -f "$temp_file" 2>/dev/null
-        done
-    fi
+    cleanup_temp_files
     
     if [[ $exit_code -ne 0 ]]; then
-        log_error "Script exited with error. Check log: $LOG_FILE"
+        [[ -n "${LOG_FILE:-}" ]] && log_error "Script exited with error. Check log: $LOG_FILE"
     else
         log_success "Script completed successfully"
     fi
@@ -276,14 +106,32 @@ cleanup_on_exit() {
 trap cleanup_on_exit EXIT
 
 # =============================================================================
-# CA AND CERTIFICATE VALIDATION
+# VALIDATION FUNCTIONS
 # =============================================================================
+
+validate_prerequisites() {
+    log_info "Validating prerequisites"
+    
+    validate_openssl || return 1
+    
+    # Check Java tools (optional)
+    local warnings
+    warnings=($(check_java_tools))
+    for warning in "${warnings[@]}"; do
+        WARNING_MESSAGES+=("$warning")
+        ((STATS_WARNINGS++))
+    done
+    
+    log_success "Prerequisites validation completed"
+    return 0
+}
 
 validate_ca_structure() {
     local ca_name="$1"
     local ca_dir="$BASE_CA_DIR/$ca_name"
     
     log_info "Validating CA structure for '$ca_name'"
+    log_debug "CA directory: $ca_dir"
     
     if [[ ! -d "$ca_dir" ]]; then
         log_error "CA directory '$ca_dir' does not exist"
@@ -304,17 +152,19 @@ validate_ca_structure() {
             log_error "Required CA file missing: $file"
             return 1
         fi
+        log_debug "Found required file: $file"
     done
     
-    # Validate CA certificate
-    if ! openssl x509 -in "$ca_dir/certs/ca.cert.pem" -noout -text >/dev/null 2>>"$LOG_FILE"; then
-        log_error "CA certificate is invalid or corrupted"
+    # Validate CA certificate and key
+    log_debug "Validating CA certificate format"
+    if ! validate_certificate_format "$ca_dir/certs/ca.cert.pem"; then
+        log_error "CA certificate validation failed"
         return 1
     fi
     
-    # Validate CA private key
-    if ! openssl rsa -in "$ca_dir/private/ca.key.pem" -check -noout >/dev/null 2>>"$LOG_FILE"; then
-        log_error "CA private key is invalid or corrupted"
+    log_debug "Validating CA private key format"
+    if ! validate_private_key_format "$ca_dir/private/ca.key.pem"; then
+        log_error "CA private key validation failed"
         return 1
     fi
     
@@ -322,38 +172,25 @@ validate_ca_structure() {
     return 0
 }
 
-validate_prerequisites() {
-    log_info "Validating prerequisites"
+validate_input_parameters() {
+    local ca_name="$1"
+    local cn="$2"
     
-    # Check OpenSSL
-    if ! command -v openssl >/dev/null 2>&1; then
-        log_error "OpenSSL is not installed or not in PATH"
-        return 1
-    fi
+    validate_ca_name "$ca_name" || return 1
+    validate_common_name "$cn" || return 1
     
-    local openssl_version
-    openssl_version=$(openssl version)
-    log_debug "OpenSSL version: $openssl_version"
+    log_success "Input parameters validation passed"
+    return 0
+}
+
+validate_sans() {
+    local sans=("$@")
     
-    # Check Java for JKS and BKS (optional)
-    if ! command -v keytool >/dev/null 2>&1; then
-        log_warning "Java keytool not found - JKS and BKS generation will be skipped"
-        WARNING_MESSAGES+=("Java keytool not available")
-        ((STATS_WARNINGS++))
-    else
-        local java_version
-        java_version=$(java -version 2>&1 | head -n1)
-        log_debug "Java version: $java_version"
-        
-        # Check for Bouncy Castle provider (for BKS)
-        if ! keytool -storetype BKS -help >/dev/null 2>&1; then
-            log_warning "Bouncy Castle provider not available - BKS generation may fail"
-            WARNING_MESSAGES+=("BKS support requires Bouncy Castle provider")
-            ((STATS_WARNINGS++))
-        fi
-    fi
+    for san in "${sans[@]}"; do
+        validate_san_entry "$san" || return 1
+    done
     
-    log_success "Prerequisites validation completed"
+    log_success "SANs validation passed"
     return 0
 }
 
@@ -373,28 +210,57 @@ generate_private_keys() {
     local pwd_key_der_file="$cert_dir/$cn.pwd.key.der"
     
     # Generate unencrypted private key (PEM)
-    atomic_file_operation \
+    ((STATS_TOTAL_FILES++))
+    if atomic_file_operation \
         "Unencrypted private key (PEM)" \
         "openssl genrsa -out '$key_file' $key_size" \
-        "$key_file" || return 1
+        "$key_file"; then
+        ((STATS_SUCCESS_FILES++))
+        update_progress
+    else
+        ((STATS_FAILED_FILES++))
+        FAILED_OPERATIONS+=("Unencrypted private key (PEM)")
+        return 1
+    fi
     
     # Generate unencrypted private key (DER)
-    atomic_file_operation \
+    ((STATS_TOTAL_FILES++))
+    if atomic_file_operation \
         "Unencrypted private key (DER)" \
         "openssl rsa -in '$key_file' -outform DER -out '$key_der_file'" \
-        "$key_der_file" || return 1
+        "$key_der_file"; then
+        ((STATS_SUCCESS_FILES++))
+        update_progress
+    else
+        ((STATS_FAILED_FILES++))
+        FAILED_OPERATIONS+=("Unencrypted private key (DER)")
+    fi
     
     # Generate encrypted private key (PEM)
-    atomic_file_operation \
+    ((STATS_TOTAL_FILES++))
+    if atomic_file_operation \
         "Encrypted private key (PEM)" \
         "openssl rsa -in '$key_file' -aes256 -out '$pwd_key_file' -passout pass:'$password'" \
-        "$pwd_key_file" || return 1
+        "$pwd_key_file"; then
+        ((STATS_SUCCESS_FILES++))
+        update_progress
+    else
+        ((STATS_FAILED_FILES++))
+        FAILED_OPERATIONS+=("Encrypted private key (PEM)")
+    fi
     
     # Generate encrypted private key (DER)
-    atomic_file_operation \
+    ((STATS_TOTAL_FILES++))
+    if atomic_file_operation \
         "Encrypted private key (DER)" \
         "openssl rsa -in '$pwd_key_file' -aes256 -outform DER -out '$pwd_key_der_file' -passin pass:'$password' -passout pass:'$password'" \
-        "$pwd_key_der_file" || return 1
+        "$pwd_key_der_file"; then
+        ((STATS_SUCCESS_FILES++))
+        update_progress
+    else
+        ((STATS_FAILED_FILES++))
+        FAILED_OPERATIONS+=("Encrypted private key (DER)")
+    fi
     
     return 0
 }
@@ -402,7 +268,8 @@ generate_private_keys() {
 generate_csr_with_sans() {
     local cn="$1"
     local cert_dir="$2"
-    local sans=("${@:3}")
+    shift 2
+    local sans=("$@")
     
     local key_file="$cert_dir/$cn.key.pem"
     local csr_file="$cert_dir/$cn.csr.pem"
@@ -446,19 +313,27 @@ EOF
     done
     
     # Generate CSR
-    atomic_file_operation \
+    ((STATS_TOTAL_FILES++))
+    if atomic_file_operation \
         "Certificate signing request" \
         "openssl req -new -key '$key_file' -out '$csr_file' -config '$config_file'" \
-        "$csr_file" || return 1
-    
-    return 0
+        "$csr_file"; then
+        ((STATS_SUCCESS_FILES++))
+        update_progress
+        return 0
+    else
+        ((STATS_FAILED_FILES++))
+        FAILED_OPERATIONS+=("Certificate signing request")
+        return 1
+    fi
 }
 
 sign_certificate() {
     local ca_name="$1"
     local cn="$2"
     local cert_dir="$3"
-    local sans=("${@:4}")
+    shift 3
+    local sans=("$@")
     
     local ca_dir="$BASE_CA_DIR/$ca_name"
     local csr_file="$cert_dir/$cn.csr.pem"
@@ -496,12 +371,19 @@ EOF
     done
     
     # Sign certificate
-    atomic_file_operation \
+    ((STATS_TOTAL_FILES++))
+    if atomic_file_operation \
         "Signed certificate" \
         "openssl ca -batch -config '$temp_ca_config' -extensions v3_usr -days $DEFAULT_VALIDITY_DAYS -notext -md sha256 -in '$csr_file' -out '$cert_file'" \
-        "$cert_file" || return 1
-    
-    return 0
+        "$cert_file"; then
+        ((STATS_SUCCESS_FILES++))
+        update_progress
+        return 0
+    else
+        ((STATS_FAILED_FILES++))
+        FAILED_OPERATIONS+=("Signed certificate")
+        return 1
+    fi
 }
 
 build_certificate_chain() {
@@ -558,50 +440,99 @@ generate_certificate_formats() {
     local key_file="$cert_dir/$cn.key.pem"
     
     # DER formats
-    atomic_file_operation \
+    ((STATS_TOTAL_FILES++))
+    if atomic_file_operation \
         "Certificate (DER)" \
         "openssl x509 -in '$cert_file' -outform DER -out '$cert_dir/$cn.cert.der'" \
         "$cert_dir/$cn.cert.der" \
-        false
+        false; then
+        ((STATS_SUCCESS_FILES++))
+        update_progress
+    else
+        ((STATS_FAILED_FILES++))
+        FAILED_OPERATIONS+=("Certificate (DER)")
+    fi
     
-    atomic_file_operation \
+    ((STATS_TOTAL_FILES++))
+    if atomic_file_operation \
         "Certificate chain (DER)" \
         "openssl x509 -in '$chain_file' -outform DER -out '$cert_dir/$cn.chain.cert.der'" \
         "$cert_dir/$cn.chain.cert.der" \
-        false
+        false; then
+        ((STATS_SUCCESS_FILES++))
+        update_progress
+    else
+        ((STATS_FAILED_FILES++))
+        FAILED_OPERATIONS+=("Certificate chain (DER)")
+    fi
     
     # PKCS#7 bundles
-    atomic_file_operation \
+    ((STATS_TOTAL_FILES++))
+    if atomic_file_operation \
         "PKCS#7 bundle (PEM)" \
         "openssl crl2pkcs7 -nocrl -certfile '$chain_file' -out '$cert_dir/$cn.pkcs7.pem'" \
         "$cert_dir/$cn.pkcs7.pem" \
-        false
+        false; then
+        ((STATS_SUCCESS_FILES++))
+        update_progress
+    else
+        ((STATS_FAILED_FILES++))
+        FAILED_OPERATIONS+=("PKCS#7 bundle (PEM)")
+    fi
     
-    atomic_file_operation \
+    ((STATS_TOTAL_FILES++))
+    if atomic_file_operation \
         "PKCS#7 bundle (DER)" \
         "openssl crl2pkcs7 -nocrl -certfile '$chain_file' -outform DER -out '$cert_dir/$cn.pkcs7.p7b'" \
         "$cert_dir/$cn.pkcs7.p7b" \
-        false
+        false; then
+        ((STATS_SUCCESS_FILES++))
+        update_progress
+    else
+        ((STATS_FAILED_FILES++))
+        FAILED_OPERATIONS+=("PKCS#7 bundle (DER)")
+    fi
     
     # PKCS#12 bundles
-    atomic_file_operation \
+    ((STATS_TOTAL_FILES++))
+    if atomic_file_operation \
         "PKCS#12 bundle (with password)" \
         "openssl pkcs12 -export -in '$chain_file' -inkey '$key_file' -out '$cert_dir/$cn.pkcs12.p12' -name '$cn' -passout pass:'$password'" \
         "$cert_dir/$cn.pkcs12.p12" \
-        false
+        false; then
+        ((STATS_SUCCESS_FILES++))
+        update_progress
+    else
+        ((STATS_FAILED_FILES++))
+        FAILED_OPERATIONS+=("PKCS#12 bundle (with password)")
+    fi
     
-    atomic_file_operation \
+    ((STATS_TOTAL_FILES++))
+    if atomic_file_operation \
         "PKCS#12 bundle (without password)" \
         "openssl pkcs12 -export -in '$chain_file' -inkey '$key_file' -out '$cert_dir/$cn.nopass.pkcs12.p12' -name '$cn' -passout pass:" \
         "$cert_dir/$cn.nopass.pkcs12.p12" \
-        false
+        false; then
+        ((STATS_SUCCESS_FILES++))
+        update_progress
+    else
+        ((STATS_FAILED_FILES++))
+        FAILED_OPERATIONS+=("PKCS#12 bundle (without password)")
+    fi
     
     # PFX (same as PKCS#12)
-    atomic_file_operation \
+    ((STATS_TOTAL_FILES++))
+    if atomic_file_operation \
         "PFX bundle (Windows)" \
         "openssl pkcs12 -export -in '$chain_file' -inkey '$key_file' -out '$cert_dir/$cn.pfx' -name '$cn' -passout pass:'$password'" \
         "$cert_dir/$cn.pfx" \
-        false
+        false; then
+        ((STATS_SUCCESS_FILES++))
+        update_progress
+    else
+        ((STATS_FAILED_FILES++))
+        FAILED_OPERATIONS+=("PFX bundle (Windows)")
+    fi
     
     # Java KeyStore formats (if available)
     generate_java_keystores "$cn" "$cert_dir" "$password"
@@ -625,6 +556,7 @@ generate_java_keystores() {
     local pkcs12_nopass_file="$cert_dir/$cn.nopass.pkcs12.p12"
     
     # JKS KeyStore
+    ((STATS_TOTAL_FILES++))
     if keytool -importkeystore -deststorepass "$password" -destkeypass "$password" \
         -destkeystore "$cert_dir/$cn.keystore.jks" \
         -srckeystore "$pkcs12_file" -srcstoretype PKCS12 -srcstorepass "$password" \
@@ -638,9 +570,9 @@ generate_java_keystores() {
         ((STATS_WARNINGS++))
         ((STATS_FAILED_FILES++))
     fi
-    ((STATS_TOTAL_FILES++))
     
     # BKS KeyStore (with password)
+    ((STATS_TOTAL_FILES++))
     if keytool -importkeystore -deststorepass "$password" -destkeypass "$password" \
         -deststoretype BKS -destkeystore "$cert_dir/$cn.keystore.bks" \
         -srckeystore "$pkcs12_file" -srcstoretype PKCS12 -srcstorepass "$password" \
@@ -655,9 +587,9 @@ generate_java_keystores() {
         ((STATS_WARNINGS++))
         ((STATS_FAILED_FILES++))
     fi
-    ((STATS_TOTAL_FILES++))
     
     # BKS KeyStore (without password)
+    ((STATS_TOTAL_FILES++))
     if keytool -importkeystore -deststorepass "" -destkeypass "" \
         -deststoretype BKS -destkeystore "$cert_dir/$cn.nopass.keystore.bks" \
         -srckeystore "$pkcs12_nopass_file" -srcstoretype PKCS12 -srcstorepass "" \
@@ -672,70 +604,11 @@ generate_java_keystores() {
         ((STATS_WARNINGS++))
         ((STATS_FAILED_FILES++))
     fi
-    ((STATS_TOTAL_FILES++))
 }
 
 # =============================================================================
-# INPUT VALIDATION AND USER INTERACTION
+# USER INTERFACE FUNCTIONS
 # =============================================================================
-
-validate_input_parameters() {
-    local ca_name="$1"
-    local cn="$2"
-    
-    # Validate CA name
-    if [[ ! "$ca_name" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-        log_error "Invalid CA name: $ca_name (only alphanumeric, underscore, and dash allowed)"
-        return 1
-    fi
-    
-    # Validate Common Name
-    if [[ -z "$cn" ]]; then
-        log_error "Common Name cannot be empty"
-        return 1
-    fi
-    
-    if [[ ${#cn} -gt 64 ]]; then
-        log_error "Common Name too long (max 64 characters): $cn"
-        return 1
-    fi
-    
-    # Validate CN format (basic check)
-    if [[ ! "$cn" =~ ^[a-zA-Z0-9._-]+$ ]]; then
-        log_error "Invalid Common Name format: $cn"
-        return 1
-    fi
-    
-    log_success "Input parameters validation passed"
-    return 0
-}
-
-validate_sans() {
-    local sans=("$@")
-    
-    for san in "${sans[@]}"; do
-        # Check if it's an IP address
-        if [[ $san =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            # Basic IP validation
-            IFS='.' read -ra ADDR <<< "$san"
-            for i in "${ADDR[@]}"; do
-                if [[ $i -lt 0 || $i -gt 255 ]]; then
-                    log_error "Invalid IP address in SANs: $san"
-                    return 1
-                fi
-            done
-        else
-            # DNS name validation
-            if [[ ! "$san" =~ ^[a-zA-Z0-9._-]+$ ]] || [[ ${#san} -gt 253 ]]; then
-                log_error "Invalid DNS name in SANs: $san"
-                return 1
-            fi
-        fi
-    done
-    
-    log_success "SANs validation passed"
-    return 0
-}
 
 get_password_input() {
     local default_password="$1"
@@ -768,7 +641,7 @@ show_available_cas() {
             fi
         done
     else
-        echo "  No CAs found. Run create_ca_hierarchy.sh first."
+        echo "  No CAs found. Run create_ca.sh first."
     fi
 }
 
@@ -784,18 +657,14 @@ display_certificate_details() {
         echo -e "${BLUE}🔍 Certificate Details:${NC}"
         echo "======================"
         
-        # Extract and display certificate information
-        local subject
-        local validity
-        local sans
-        
+        local subject validity sans
         subject=$(openssl x509 -in "$cert_file" -noout -subject 2>/dev/null | sed 's/subject=//')
         validity=$(openssl x509 -in "$cert_file" -noout -dates 2>/dev/null)
-        sans=$(openssl x509 -in "$cert_file" -noout -ext subjectAltName 2>/dev/null | grep -v "X509v3 Subject Alternative Name:" | tr -d ' ')
+        sans=$(openssl x509 -in "$cert_file" -noout -ext subjectAltName 2>/dev/null | grep -v "X509v3 Subject Alternative Name:" | tr -d ' ' || echo "None")
         
         echo "   Subject: $subject"
         echo "   $validity"
-        [[ -n "$sans" ]] && echo "   SANs: $sans"
+        echo "   SANs: $sans"
         echo ""
     fi
 }
@@ -810,7 +679,7 @@ generate_summary_report() {
     echo -e "${GREEN}${BOLD}📊 CERTIFICATE GENERATION SUMMARY${NC}"
     echo "=================================="
     echo "📅 Completed at: $(date)"
-    echo "⏱️  Duration: ${duration}s"
+    echo "⏱️  Duration: $(format_duration $duration)"
     echo ""
     echo "📈 Statistics:"
     echo "   📁 Total files attempted: $STATS_TOTAL_FILES"
@@ -884,19 +753,6 @@ display_file_inventory() {
     echo -e "${YELLOW}📋 Other Files:${NC}"
     check_and_display_file "$cert_dir/$cn.csr.pem" "CSR"
     echo ""
-}
-
-check_and_display_file() {
-    local file_path="$1"
-    local description="$2"
-    
-    if [[ -f "$file_path" ]]; then
-        local file_size
-        file_size=$(stat -f%z "$file_path" 2>/dev/null || stat -c%s "$file_path" 2>/dev/null || echo "unknown")
-        printf "   ✅ %-25s %s (%s bytes)\n" "$description:" "$file_path" "$file_size"
-    else
-        printf "   ❌ %-25s %s\n" "$description:" "$file_path"
-    fi
 }
 
 display_usage_guidelines() {
@@ -1027,13 +883,17 @@ main() {
     
     # Set overrides from environment
     [[ -n "${DEBUG:-}" ]] && LOG_LEVEL="DEBUG"
-    [[ -n "${LOG_LEVEL:-}" ]] && LOG_LEVEL="$LOG_LEVEL"
+    [[ -n "${LOG_LEVEL:-}" ]] && export LOG_LEVEL="$LOG_LEVEL"
     
     # Initialize logging
     setup_logging "cert_issuance"
     
     # Load and validate configuration
-    load_configuration || exit 1
+    log_debug "Loading configuration from: $CONFIG_FILE"
+    if ! load_configuration; then
+        log_error "Configuration loading failed"
+        exit 1
+    fi
     
     # Apply overrides
     [[ -n "$override_key_size" ]] && DEFAULT_KEY_SIZE="$override_key_size"
@@ -1069,18 +929,36 @@ main() {
     echo "📅 Validity: $DEFAULT_VALIDITY_DAYS days"
     echo ""
     
-    # Initialize progress (17 total steps)
+    # Initialize progress tracking (17 total steps)
+    log_debug "Initializing progress tracking with 17 steps"
     init_progress 17
+    log_debug "Progress tracking initialized successfully"
     
     # Validate prerequisites
-    validate_prerequisites || exit 1
+    log_debug "About to validate prerequisites"
+    if ! validate_prerequisites; then
+        log_error "Prerequisites validation failed"
+        exit 1
+    fi
+    log_debug "Prerequisites validation completed, updating progress"
+    update_progress
+    log_debug "Progress updated successfully"
     
     # Validate CA structure
-    validate_ca_structure "$ca_name" || exit 1
+    log_debug "About to validate CA structure for: $ca_name"
+    if ! validate_ca_structure "$ca_name"; then
+        log_error "CA structure validation failed"
+        exit 1
+    fi
+    log_debug "CA structure validation completed, updating progress"
+    update_progress
+    log_debug "Progress updated successfully"
     
     # Create output directory
     log_info "Setting up output directory"
-    backup_existing_cert_dir "$cert_dir"
+    if [[ "$BACKUP_EXISTING_CERTS" == "true" ]]; then
+        backup_directory "$cert_dir" "$BACKUP_EXISTING_CERTS" || log_warning "Failed to backup existing directory"
+    fi
     mkdir -p "$cert_dir"
     update_progress
     
@@ -1091,19 +969,19 @@ main() {
     # Generate certificate files
     log_info "Starting certificate generation process"
     
-    # Step 1-4: Generate private keys
+    # Steps 4-7: Generate private keys
     generate_private_keys "$cn" "$cert_dir" "$DEFAULT_KEY_SIZE" "$password" || exit 1
     
-    # Step 5: Generate CSR
+    # Step 8: Generate CSR
     generate_csr_with_sans "$cn" "$cert_dir" "${sans[@]}" || exit 1
     
-    # Step 6: Sign certificate
+    # Step 9: Sign certificate
     sign_certificate "$ca_name" "$cn" "$cert_dir" "${sans[@]}" || exit 1
     
-    # Step 7: Build certificate chain
+    # Step 10: Build certificate chain
     build_certificate_chain "$ca_name" "$cn" "$cert_dir" || exit 1
     
-    # Steps 8-17: Generate all certificate formats
+    # Steps 11-17: Generate all certificate formats
     generate_certificate_formats "$cn" "$cert_dir" "$password" || exit 1
     
     local end_time=$(date +%s)

@@ -113,7 +113,7 @@ cleanup_on_exit() {
     
     log_debug "Cleanup started (exit code: $exit_code)"
     cleanup_temp_files
-    
+    echo "Cleaning up temporary files successfull..."
     if [[ $exit_code -ne 0 ]]; then
         [[ -n "${LOG_FILE:-}" ]] && log_error "Script exited with error. Check log: $LOG_FILE"
     else

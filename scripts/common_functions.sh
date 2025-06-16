@@ -456,18 +456,7 @@ cleanup_temp_files() {
     if [[ ${#TEMP_FILES[@]} -gt 0 ]]; then
         log_info "Cleaning up ${#TEMP_FILES[@]} temporary files"
 
-        log_info "=== FINAL STATE DEBUG ==="
-        log_info "STATS_FAILED_FILES: $STATS_FAILED_FILES"
-        log_info "STATS_SUCCESS_FILES: $STATS_SUCCESS_FILES"
-        log_info "STATS_WARNINGS: $STATS_WARNINGS"
-        log_info "FAILED_OPERATIONS array length: ${#FAILED_OPERATIONS[@]}"
-        log_info "FAILED_OPERATIONS contents: ${FAILED_OPERATIONS[*]:-}"
-        log_info "WARNING_MESSAGES array length: ${#WARNING_MESSAGES[@]}"
-        log_info "WARNING_MESSAGES contents: ${WARNING_MESSAGES[*]:-}"
-        log_info "TEMP_FILES array length: ${#TEMP_FILES[@]}"
-        log_info "TEMP_FILES contents: ${TEMP_FILES[*]:-}"
-        log_info "SSL_TYPE: $SSL_TYPE"
-        log_info "=========================="
+        echo "Cleaning up temporary files: ${TEMP_FILES[*]:-}"
 
         for temp_file in "${TEMP_FILES[@]}"; do
             [[ -f "$temp_file" ]] && rm -f "$temp_file" 2>/dev/null

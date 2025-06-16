@@ -114,7 +114,6 @@ cleanup_on_exit() {
     log_debug "Cleanup started (exit code: $exit_code)"
     echo "Cleanup started (exit code: $exit_code)"
     cleanup_temp_files
-    echo "Cleanup finished (exit code: $exit_code)"
     if [[ $exit_code -ne 0 ]]; then
         [[ -n "${LOG_FILE:-}" ]] && log_error "Script exited with error. Check log: $LOG_FILE"
     else
@@ -1168,8 +1167,10 @@ main() {
     display_certificate_details "$cert_dir/$cn.cert.pem"
 
     # Generate and display summary report
+    echo "calling summary report: $STATS_FAILED_FILES"
     generate_summary_report "$cn" "$cert_dir" "$password" "$duration"
     
+    echo "calling final state: $STATS_FAILED_FILES"
     # Final status
     if [[ $STATS_FAILED_FILES -eq 0 ]]; then
         echo -e "${GREEN}${BOLD}🎉 Certificate generation completed successfully!${NC}"

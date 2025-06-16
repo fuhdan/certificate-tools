@@ -841,7 +841,7 @@ generate_summary_report() {
     local cert_dir="$2"
     local password="$3"
     local duration="$4"
-    echo "Before Report: FAILED_OPERATIONS=${#FAILED_OPERATIONS[@]}"
+    
     echo ""
     echo -e "${GREEN}${BOLD}📊 CERTIFICATE GENERATION SUMMARY${NC}"
     echo "=================================="
@@ -854,7 +854,7 @@ generate_summary_report() {
     echo "   ❌ Failed to create: $STATS_FAILED_FILES"
     echo "   ⚠️  Warnings: $STATS_WARNINGS"
     echo ""
-    echo "After Report: FAILED_OPERATIONS=${#FAILED_OPERATIONS[@]}"
+    
     # Show failed operations if any
     if [[ ${#FAILED_OPERATIONS[@]} -gt 0 ]]; then
         echo -e "${RED}❌ Failed Operations:${NC}"
@@ -863,7 +863,7 @@ generate_summary_report() {
         done
         echo ""
     fi
-    echo "After List ERROR Files: FAILED_OPERATIONS=${#FAILED_OPERATIONS[@]}"
+    
     # Show warnings if any
     if [[ ${#WARNING_MESSAGES[@]} -gt 0 ]]; then
         echo -e "${YELLOW}⚠️  Warnings:${NC}"
@@ -872,7 +872,6 @@ generate_summary_report() {
         done
         echo ""
     fi
-    echo "After List WARNING Files: FAILED_OPERATIONS=${#FAILED_OPERATIONS[@]}"
     
     # Display file inventory
     display_file_inventory "$cn" "$cert_dir"
@@ -915,6 +914,7 @@ display_file_inventory() {
     check_and_display_file "$cert_dir/$cn.nopass.pkcs12.p12" "PKCS#12 (no password)"
     check_and_display_file "$cert_dir/$cn.pfx" "PFX (Windows)"
     
+    echo "Checking for Java KeyStores... $(check_java_tools)"
     # Only show Java keystores if Java is available
     if command -v keytool >/dev/null 2>&1; then
         check_and_display_file "$cert_dir/$cn.keystore.jks" "Java KeyStore (JKS)"

@@ -680,7 +680,14 @@ generate_java_keystores() {
         update_progress
     else
         log_warning "JKS KeyStore creation failed"
-        ((STATS_FAILED_FILES++))
+        # LibreSSL compatibility: treat Java failures as warnings, not critical failures
+        if [[ "$SSL_TYPE" == "libressl" ]]; then
+            ((STATS_WARNINGS++))
+            WARNING_MESSAGES+=("JKS KeyStore creation failed - Java/keytool issue")
+        else
+            ((STATS_FAILED_FILES++))
+            FAILED_OPERATIONS+=("Java KeyStore (JKS)")
+        fi
     fi
     
     # BKS KeyStore (with password)
@@ -695,7 +702,14 @@ generate_java_keystores() {
         update_progress
     else
         log_warning "BKS KeyStore creation failed - Bouncy Castle provider may not be available"
-        ((STATS_FAILED_FILES++))
+        # LibreSSL compatibility: treat Java failures as warnings, not critical failures
+        if [[ "$SSL_TYPE" == "libressl" ]]; then
+            ((STATS_WARNINGS++))
+            WARNING_MESSAGES+=("BKS KeyStore creation failed - Bouncy Castle provider not available")
+        else
+            ((STATS_FAILED_FILES++))
+            FAILED_OPERATIONS+=("BKS KeyStore (with password)")
+        fi
     fi
     
     # BKS KeyStore (without password)
@@ -710,7 +724,14 @@ generate_java_keystores() {
         update_progress
     else
         log_warning "BKS KeyStore (no password) creation failed"
-        ((STATS_FAILED_FILES++))
+        # LibreSSL compatibility: treat Java failures as warnings, not critical failures
+        if [[ "$SSL_TYPE" == "libressl" ]]; then
+            ((STATS_WARNINGS++))
+            WARNING_MESSAGES+=("BKS KeyStore (no password) creation failed")
+        else
+            ((STATS_FAILED_FILES++))
+            FAILED_OPERATIONS+=("BKS KeyStore (without password)")
+        fi
     fi
 }
 
@@ -790,7 +811,23 @@ display_certificate_details() {
         local subject validity sans
         subject=$(openssl x509 -in "$cert_file" -noout -subject 2>/dev/null | sed 's/subject=//')
         validity=$(openssl x509 -in "$cert_file" -noout -dates 2>/dev/null)
-        sans=$(openssl x509 -in "$cert_file" -noout -ext subjectAltName 2>/dev/null | grep -v "X509v3 Subject Alternative Name:" | tr -d ' ' || echo "None")
+        
+        # LibreSSL compatible SAN extraction
+        if [[ "$SSL_TYPE" == "libressl" ]]; then
+            # Use text output and grep for LibreSSL
+            sans=$(openssl x509 -in "$cert_file" -noout -text 2>/dev/null | grep -A1 "Subject Alternative Name" | tail -1 | sed 's/^[[:space:]]*//' || echo "None")
+        else
+            # Use -ext flag for OpenSSL
+            sans=$(openssl x509 -in "$cert_file" -noout -ext subjectAltName 2>/dev/null | grep -v "X509v3 Subject Alternative Name:" | tr -d ' ' || echo "None")
+        fi
+        
+        # Clean up SANs display
+        if [[ "$sans" == "None" ]] || [[ -z "$sans" ]]; then
+            sans="None"
+        else
+            # Clean up the format
+            sans=$(echo "$sans" | sed 's/DNS://g; s/IP://g; s/,/, /g')
+        fi
         
         echo "   Subject: $subject"
         echo "   $validity"

@@ -494,20 +494,45 @@ create_ca_certificate() {
         # Platform-specific root certificate creation
         local root_cert_cmd
         if [[ "$SSL_TYPE" == "libressl" ]]; then
-            # LibreSSL needs explicit extension file approach
-            log_debug "Using LibreSSL-compatible root certificate creation"
+            # LibreSSL approach: Create certificate first, then add extensions manually
+            log_debug "Using LibreSSL-compatible root certificate creation (multi-step)"
             
-            # Create a temporary extensions file for LibreSSL
+            # Step 1: Create basic self-signed certificate without extensions
+            local basic_cert_cmd="openssl req -config '$ca_dir/openssl.cnf' -key '$key_file' -new -x509 -days $validity_days -sha256 -out '$cert_file'"
+            
+            if ! eval "$basic_cert_cmd" 2>>"${LOG_FILE:-/dev/null}"; then
+                log_error "Failed to create basic root certificate"
+                log_error "Command that failed: $basic_cert_cmd"
+                return 1
+            fi
+            
+            # Step 2: Create a proper certificate with extensions using a different approach
+            local temp_cert="$ca_dir/temp_ca.cert.pem"
             local ext_file="$ca_dir/v3_ca.ext"
+            
             cat > "$ext_file" << EOF
+[ v3_ca ]
 basicConstraints = critical, CA:true
 keyUsage = critical, digitalSignature, cRLSign, keyCertSign
 subjectKeyIdentifier = hash
-authorityKeyIdentifier = keyid:always,issuer
+authorityKeyIdentifier = keyid:always,issuer:always
 EOF
             add_temp_file "$ext_file"
+            add_temp_file "$temp_cert"
             
-            root_cert_cmd="openssl req -config '$ca_dir/openssl.cnf' -key '$key_file' -new -x509 -days $validity_days -sha256 -extfile '$ext_file' -out '$cert_file'"
+            # Create CSR first, then self-sign with extensions
+            local csr_temp="$ca_dir/temp_root.csr"
+            add_temp_file "$csr_temp"
+            
+            # Generate CSR
+            if ! openssl req -config "$ca_dir/openssl.cnf" -key "$key_file" -new -out "$csr_temp" 2>>"${LOG_FILE:-/dev/null}"; then
+                log_error "Failed to create root CA CSR"
+                return 1
+            fi
+            
+            # Self-sign the CSR with extensions
+            root_cert_cmd="openssl x509 -req -in '$csr_temp' -signkey '$key_file' -out '$cert_file' -days $validity_days -sha256 -extensions v3_ca -extfile '$ext_file'"
+            
         else
             # Standard OpenSSL approach
             log_debug "Using OpenSSL-compatible root certificate creation"

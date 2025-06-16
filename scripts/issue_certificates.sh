@@ -207,7 +207,35 @@ validate_sans() {
     local sans=("$@")
     
     for san in "${sans[@]}"; do
-        validate_san_entry "$san" || return 1
+        # Enhanced SAN validation with IPv6 support
+        if [[ $san =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            # IPv4 address validation
+            IFS='.' read -ra ADDR <<< "$san"
+            for i in "${ADDR[@]}"; do
+                if [[ $i -lt 0 || $i -gt 255 ]]; then
+                    log_error "Invalid IPv4 address in SANs: $san"
+                    return 1
+                fi
+            done
+        elif [[ $san =~ ^[0-9a-fA-F:]+$ ]] && [[ $san == *":"* ]]; then
+            # Basic IPv6 validation (simplified)
+            if [[ ${#san} -gt 39 ]]; then
+                log_error "Invalid IPv6 address in SANs: $san (too long)"
+                return 1
+            fi
+        else
+            # DNS name validation
+            if [[ ! "$san" =~ ^[a-zA-Z0-9._-]+$ ]] || [[ ${#san} -gt 253 ]]; then
+                log_error "Invalid DNS name in SANs: $san"
+                return 1
+            fi
+            
+            # Check for valid DNS format (no consecutive dots, etc.)
+            if [[ "$san" == *".." ]] || [[ "$san" == .* ]] || [[ "$san" == *. ]]; then
+                log_error "Invalid DNS name format in SANs: $san"
+                return 1
+            fi
+        fi
     done
     
     log_success "SANs validation passed"
@@ -297,7 +325,7 @@ generate_csr_with_sans() {
     
     log_info "Creating certificate signing request configuration"
     
-    # Generate CSR config with SANs
+    # Generate CSR config with SANs - LibreSSL compatible format
     cat > "$config_file" <<EOF
 [ req ]
 default_bits        = $DEFAULT_KEY_SIZE
@@ -314,23 +342,38 @@ OU = $DEFAULT_OU
 CN = $cn
 
 [ req_ext ]
+basicConstraints = CA:FALSE
+keyUsage = digitalSignature, keyEncipherment
+extendedKeyUsage = serverAuth, clientAuth
 subjectAltName = @alt_names
 
 [ alt_names ]
 EOF
 
-    # Add SANs to config
+    # Add SANs to config - ensure CN is always first DNS entry
     local index=1
     echo "DNS.$index = $cn" >> "$config_file"
     
     for san in "${sans[@]}"; do
+        # Skip if SAN is same as CN to avoid duplicates
+        if [[ "$san" == "$cn" ]]; then
+            continue
+        fi
+        
         ((index++))
         if [[ $san =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            # IPv4 address
+            echo "IP.$((index - 1)) = $san" >> "$config_file"
+        elif [[ $san =~ ^[0-9a-fA-F:]+$ ]] && [[ $san == *":"* ]]; then
+            # IPv6 address
             echo "IP.$((index - 1)) = $san" >> "$config_file"
         else
+            # DNS name
             echo "DNS.$index = $san" >> "$config_file"
         fi
     done
+    
+    add_temp_file "$config_file"
     
     # Generate CSR
     ((STATS_TOTAL_FILES++))
@@ -358,13 +401,64 @@ sign_certificate() {
     local ca_dir="$BASE_CA_DIR/$ca_name"
     local csr_file="$cert_dir/$cn.csr.pem"
     local cert_file="$cert_dir/$cn.cert.pem"
-    local temp_ca_config="$ca_dir/temp_openssl.cnf"
     
-    # Create temporary CA config with SANs
-    cp "$ca_dir/openssl.cnf" "$temp_ca_config"
-    add_temp_file "$temp_ca_config"
+    # Create extensions file for LibreSSL compatibility
+    local ext_file="$cert_dir/v3_usr.ext"
+    cat > "$ext_file" << EOF
+[ v3_usr ]
+basicConstraints = CA:FALSE
+keyUsage = digitalSignature, keyEncipherment
+extendedKeyUsage = serverAuth, clientAuth
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid,issuer
+subjectAltName = @alt_names
+
+[ alt_names ]
+EOF
+
+    # Add alt_names to extensions file
+    local index=1
+    echo "DNS.$index = $cn" >> "$ext_file"
     
-    cat >> "$temp_ca_config" <<EOF
+    for san in "${sans[@]}"; do
+        ((index++))
+        if [[ $san =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "IP.$((index - 1)) = $san" >> "$ext_file"
+        else
+            echo "DNS.$index = $san" >> "$ext_file"
+        fi
+    done
+    
+    add_temp_file "$ext_file"
+    
+    # LibreSSL compatible signing - use x509 instead of ca command for better compatibility
+    if [[ "$SSL_TYPE" == "libressl" ]]; then
+        log_info "Using LibreSSL-compatible certificate signing"
+        
+        # Sign using x509 command with extensions file
+        ((STATS_TOTAL_FILES++))
+        if atomic_file_operation \
+            "Signed certificate" \
+            "openssl x509 -req -in '$csr_file' -CA '$ca_dir/certs/ca.cert.pem' -CAkey '$ca_dir/private/ca.key.pem' -CAcreateserial -out '$cert_file' -days $DEFAULT_VALIDITY_DAYS -sha256 -extensions v3_usr -extfile '$ext_file'" \
+            "$cert_file"; then
+            ((STATS_SUCCESS_FILES++))
+            update_progress
+            return 0
+        else
+            ((STATS_FAILED_FILES++))
+            FAILED_OPERATIONS+=("Signed certificate")
+            return 1
+        fi
+    else
+        # Standard OpenSSL approach using ca command
+        log_info "Using OpenSSL ca command for certificate signing"
+        
+        # Create temporary CA config with SANs
+        local temp_ca_config="$ca_dir/temp_openssl.cnf"
+        cp "$ca_dir/openssl.cnf" "$temp_ca_config"
+        add_temp_file "$temp_ca_config"
+        
+        cat >> "$temp_ca_config" <<EOF
 
 [ v3_usr ]
 basicConstraints = CA:FALSE
@@ -377,32 +471,33 @@ subjectAltName = @alt_names
 [ alt_names ]
 EOF
 
-    # Add alt_names to CA config
-    local index=1
-    echo "DNS.$index = $cn" >> "$temp_ca_config"
-    
-    for san in "${sans[@]}"; do
-        ((index++))
-        if [[ $san =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "IP.$((index - 1)) = $san" >> "$temp_ca_config"
+        # Add alt_names to CA config
+        local index=1
+        echo "DNS.$index = $cn" >> "$temp_ca_config"
+        
+        for san in "${sans[@]}"; do
+            ((index++))
+            if [[ $san =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                echo "IP.$((index - 1)) = $san" >> "$temp_ca_config"
+            else
+                echo "DNS.$index = $san" >> "$temp_ca_config"
+            fi
+        done
+        
+        # Sign certificate using ca command
+        ((STATS_TOTAL_FILES++))
+        if atomic_file_operation \
+            "Signed certificate" \
+            "openssl ca -batch -config '$temp_ca_config' -extensions v3_usr -days $DEFAULT_VALIDITY_DAYS -notext -md sha256 -in '$csr_file' -out '$cert_file'" \
+            "$cert_file"; then
+            ((STATS_SUCCESS_FILES++))
+            update_progress
+            return 0
         else
-            echo "DNS.$index = $san" >> "$temp_ca_config"
+            ((STATS_FAILED_FILES++))
+            FAILED_OPERATIONS+=("Signed certificate")
+            return 1
         fi
-    done
-    
-    # Sign certificate
-    ((STATS_TOTAL_FILES++))
-    if atomic_file_operation \
-        "Signed certificate" \
-        "openssl ca -batch -config '$temp_ca_config' -extensions v3_usr -days $DEFAULT_VALIDITY_DAYS -notext -md sha256 -in '$csr_file' -out '$cert_file'" \
-        "$cert_file"; then
-        ((STATS_SUCCESS_FILES++))
-        update_progress
-        return 0
-    else
-        ((STATS_FAILED_FILES++))
-        FAILED_OPERATIONS+=("Signed certificate")
-        return 1
     fi
 }
 

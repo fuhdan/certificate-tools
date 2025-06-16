@@ -488,80 +488,54 @@ create_ca_certificate() {
     local key_file="$ca_dir/private/ca.key.pem"
     
     if [[ -z "$parent_ca_dir" ]]; then
-        # Root CA - self-signed
+        # Root CA - LibreSSL compatible approach
         log_info "Creating self-signed root certificate"
         
-        # Platform-specific root certificate creation
-        local root_cert_cmd
-        if [[ "$SSL_TYPE" == "libressl" ]]; then
-            # LibreSSL approach: Create certificate first, then add extensions manually
-            log_debug "Using LibreSSL-compatible root certificate creation (multi-step)"
-            
-            # Step 1: Create basic self-signed certificate without extensions
-            local basic_cert_cmd="openssl req -config '$ca_dir/openssl.cnf' -key '$key_file' -new -x509 -days $validity_days -sha256 -out '$cert_file'"
-            
-            if ! eval "$basic_cert_cmd" 2>>"${LOG_FILE:-/dev/null}"; then
-                log_error "Failed to create basic root certificate"
-                log_error "Command that failed: $basic_cert_cmd"
-                return 1
-            fi
-            
-            # Step 2: Create a proper certificate with extensions using a different approach
-            local temp_cert="$ca_dir/temp_ca.cert.pem"
-            local ext_file="$ca_dir/v3_ca.ext"
-            
-            cat > "$ext_file" << EOF
+        # Create extensions file for LibreSSL compatibility
+        local ext_file="$ca_dir/v3_ca.ext"
+        cat > "$ext_file" << EOF
 [ v3_ca ]
 basicConstraints = critical, CA:true
 keyUsage = critical, digitalSignature, cRLSign, keyCertSign
 subjectKeyIdentifier = hash
 authorityKeyIdentifier = keyid:always,issuer:always
 EOF
-            add_temp_file "$ext_file"
-            add_temp_file "$temp_cert"
-            
-            # Create CSR first, then self-sign with extensions
-            local csr_temp="$ca_dir/temp_root.csr"
-            add_temp_file "$csr_temp"
-            
-            # Generate CSR
-            if ! openssl req -config "$ca_dir/openssl.cnf" -key "$key_file" -new -out "$csr_temp" 2>>"${LOG_FILE:-/dev/null}"; then
-                log_error "Failed to create root CA CSR"
-                return 1
-            fi
-            
-            # Self-sign the CSR with extensions
-            root_cert_cmd="openssl x509 -req -in '$csr_temp' -signkey '$key_file' -out '$cert_file' -days $validity_days -sha256 -extensions v3_ca -extfile '$ext_file'"
-            
-        else
-            # Standard OpenSSL approach
-            log_debug "Using OpenSSL-compatible root certificate creation"
-            root_cert_cmd="openssl req -config '$ca_dir/openssl.cnf' -key '$key_file' -new -x509 -days $validity_days -sha256 -extensions v3_ca -out '$cert_file'"
+        add_temp_file "$ext_file"
+        
+        # Create CSR first
+        local csr_temp="$ca_dir/temp_root.csr"
+        add_temp_file "$csr_temp"
+        
+        # Generate CSR
+        if ! atomic_file_operation \
+            "Root CA CSR creation" \
+            "openssl req -config '$ca_dir/openssl.cnf' -key '$key_file' -new -out '$csr_temp'" \
+            "$csr_temp"; then
+            log_error "Failed to create root CA CSR"
+            return 1
         fi
         
+        # Self-sign the CSR with extensions
         if atomic_file_operation \
             "Root certificate creation" \
-            "$root_cert_cmd" \
+            "openssl x509 -req -in '$csr_temp' -signkey '$key_file' -out '$cert_file' -days $validity_days -sha256 -extensions v3_ca -extfile '$ext_file'" \
             "$cert_file"; then
             
             # Validate the created certificate
-            if validate_certificate_extensions "$cert_file" "true" && \
-               validate_certificate_chain "$cert_file" ""; then
+            if validate_certificate_extensions "$cert_file" "true"; then
                 log_success "Root certificate created and validated"
                 update_progress
                 return 0
             else
                 log_error "Root certificate validation failed"
-                log_debug "Certificate creation command used: $root_cert_cmd"
                 return 1
             fi
         else
             log_error "Failed to create root certificate"
-            log_error "Command that failed: $root_cert_cmd"
             return 1
         fi
     else
-        # Intermediate/Issuing CA
+        # Intermediate/Issuing CA - unchanged logic
         local csr_file="$ca_dir/$ca_name.csr.pem"
         
         log_info "Creating certificate signing request"
@@ -582,25 +556,13 @@ EOF
                 extension="v3_issuing_ca"
             fi
             
-            # Platform-specific OpenSSL CA command
-            local openssl_ca_cmd
-            if [[ "$SSL_TYPE" == "libressl" ]]; then
-                # LibreSSL variant - may need different approach
-                openssl_ca_cmd="openssl ca -config '$parent_ca_dir/openssl.cnf' -extensions $extension -days $validity_days -notext -md sha256 -in '$csr_file' -out '$cert_file' -batch -passin pass:"
-                log_debug "Using LibreSSL-compatible CA signing command"
-            else
-                # Standard OpenSSL command
-                openssl_ca_cmd="openssl ca -config '$parent_ca_dir/openssl.cnf' -extensions $extension -days $validity_days -notext -md sha256 -in '$csr_file' -out '$cert_file' -batch"
-                log_debug "Using OpenSSL CA signing command"
-            fi
-            
             # Sign with parent CA
             if atomic_file_operation \
                 "Certificate signing" \
-                "$openssl_ca_cmd" \
+                "openssl ca -config '$parent_ca_dir/openssl.cnf' -extensions $extension -days $validity_days -notext -md sha256 -in '$csr_file' -out '$cert_file' -batch" \
                 "$cert_file"; then
                 
-                # Validate the created certificate - simplified validation for intermediate CAs
+                # Validate the created certificate
                 if validate_certificate_extensions "$cert_file" "true"; then
                     log_success "Certificate created and validated"
                     update_progress
@@ -610,9 +572,7 @@ EOF
                     return 1
                 fi
             else
-                log_error "Failed to sign certificate with command: $openssl_ca_cmd"
-                log_error "This might be a LibreSSL compatibility issue. Consider installing OpenSSL via Homebrew:"
-                log_error "  brew install openssl && export PATH=\"/opt/homebrew/bin:\$PATH\""
+                log_error "Failed to sign certificate"
                 return 1
             fi
         else

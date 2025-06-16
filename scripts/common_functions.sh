@@ -456,9 +456,10 @@ cleanup_temp_files() {
     if [[ ${#TEMP_FILES[@]} -gt 0 ]]; then
         log_info "Cleaning up ${#TEMP_FILES[@]} temporary files"
 
-        echo "Cleaning up temporary files: ${TEMP_FILES[*]:-}"
+        echo "Temporary files: ${TEMP_FILES[*]:-}"
 
         for temp_file in "${TEMP_FILES[@]}"; do
+            echo "Cleaning temporary file: ${temp_file}"
             [[ -f "$temp_file" ]] && rm -f "$temp_file" 2>/dev/null
         done
         TEMP_FILES=()

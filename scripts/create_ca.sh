@@ -163,6 +163,26 @@ validate_prerequisites() {
         return 1
     fi
     
+    # OS-specific warnings and recommendations
+    case "$OS_TYPE" in
+        macos)
+            # Check if using LibreSSL and suggest OpenSSL
+            if openssl version | grep -q "LibreSSL"; then
+                log_warning "LibreSSL detected. For best compatibility, consider installing OpenSSL via Homebrew:"
+                log_warning "  brew install openssl"
+                log_warning "  export PATH=\"/opt/homebrew/bin:\$PATH\"  # Apple Silicon"
+                log_warning "  export PATH=\"/usr/local/bin:\$PATH\"     # Intel"
+            fi
+            ;;
+        linux)
+            log_debug "Linux system detected - using native tools"
+            ;;
+        *)
+            log_warning "Unknown operating system: $OS_TYPE"
+            log_warning "Scripts may work but are not tested on this platform"
+            ;;
+    esac
+    
     log_success "Prerequisites validation completed"
     return 0
 }
@@ -415,7 +435,7 @@ setup_ca_directory_structure() {
         return 1
     fi
     
-    # Set secure permissions
+    # Set secure permissions (works on both macOS and Linux)
     chmod 755 "$ca_dir"
     chmod 700 "$ca_dir/private"
     
@@ -512,10 +532,32 @@ create_ca_certificate() {
                 extension="v3_issuing_ca"
             fi
             
+            # Platform-specific OpenSSL CA command
+            local openssl_ca_cmd
+            case "$OS_TYPE" in
+                macos)
+                    # LibreSSL on macOS sometimes needs different flags
+                    if openssl version | grep -q "LibreSSL"; then
+                        # LibreSSL variant - may need different approach
+                        openssl_ca_cmd="openssl ca -config '$parent_ca_dir/openssl.cnf' -extensions $extension -days $validity_days -notext -md sha256 -in '$csr_file' -out '$cert_file' -batch -passin pass:"
+                        log_debug "Using LibreSSL-compatible command"
+                    else
+                        # Homebrew OpenSSL on macOS
+                        openssl_ca_cmd="openssl ca -config '$parent_ca_dir/openssl.cnf' -extensions $extension -days $validity_days -notext -md sha256 -in '$csr_file' -out '$cert_file' -batch"
+                        log_debug "Using OpenSSL command on macOS"
+                    fi
+                    ;;
+                linux|*)
+                    # Standard OpenSSL command for Linux and other platforms
+                    openssl_ca_cmd="openssl ca -config '$parent_ca_dir/openssl.cnf' -extensions $extension -days $validity_days -notext -md sha256 -in '$csr_file' -out '$cert_file' -batch"
+                    log_debug "Using standard OpenSSL command"
+                    ;;
+            esac
+            
             # Sign with parent CA
             if atomic_file_operation \
                 "Certificate signing" \
-                "openssl ca -config '$parent_ca_dir/openssl.cnf' -extensions $extension -days $validity_days -notext -md sha256 -in '$csr_file' -out '$cert_file' -batch" \
+                "$openssl_ca_cmd" \
                 "$cert_file"; then
                 
                 # Validate the created certificate - simplified validation for intermediate CAs
@@ -528,7 +570,9 @@ create_ca_certificate() {
                     return 1
                 fi
             else
-                log_error "Failed to sign certificate"
+                log_error "Failed to sign certificate with command: $openssl_ca_cmd"
+                log_error "This might be a LibreSSL compatibility issue. Consider installing OpenSSL via Homebrew:"
+                log_error "  brew install openssl && export PATH=\"/opt/homebrew/bin:\$PATH\""
                 return 1
             fi
         else
@@ -693,6 +737,7 @@ main() {
     echo -e "${CYAN}${BOLD}🚀 Enhanced Certificate Authority Creation${NC}"
     echo "=============================================="
     log_info "Starting CA hierarchy creation"
+    log_info "Operating System: $OS_TYPE"
     log_info "Configuration: $CONFIG_FILE"
     log_info "Base directory: $BASE_DIR"
     echo ""
@@ -802,6 +847,22 @@ main() {
     echo -e "${BLUE}${BOLD}Next Steps:${NC}"
     echo "  🔧 Use: ./issue_certificates.sh <CA_NAME> <COMMON_NAME> [SANs...]"
     echo "  📖 Example: ./issue_certificates.sh IssuingCA1 server1.local www.server1.local"
+    
+    # Platform-specific next steps
+    case "$OS_TYPE" in
+        macos)
+            echo ""
+            echo -e "${YELLOW}${BOLD}macOS Notes:${NC}"
+            echo "  🍺 If you encounter Java/OpenSSL issues, consider Homebrew:"
+            echo "     brew install openssl openjdk bouncy-castle"
+            ;;
+        linux)
+            echo ""
+            echo -e "${YELLOW}${BOLD}Linux Notes:${NC}"
+            echo "  📦 For Java keystore support, ensure Java is installed:"
+            echo "     sudo apt-get install openjdk-11-jdk libbcprov-java"
+            ;;
+    esac
     echo ""
 }
 

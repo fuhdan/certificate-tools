@@ -13,6 +13,186 @@ fi
 readonly _COMMON_FUNCTIONS_LOADED=true
 
 # =============================================================================
+# OS DETECTION AND PLATFORM-SPECIFIC SETTINGS
+# =============================================================================
+
+# Detect operating system
+detect_os() {
+    case "$(uname -s)" in
+        Darwin*)    OS_TYPE="macos" ;;
+        Linux*)     OS_TYPE="linux" ;;
+        CYGWIN*|MINGW*|MSYS*)  OS_TYPE="windows" ;;
+        *)          OS_TYPE="unknown" ;;
+    esac
+    
+    # Export for use in other functions
+    export OS_TYPE
+    log_debug "Detected OS: $OS_TYPE"
+}
+
+# Platform-specific file size function
+get_file_size_by_os() {
+    local file_path="$1"
+    if [[ ! -f "$file_path" ]]; then
+        echo "0"
+        return
+    fi
+    
+    case "$OS_TYPE" in
+        macos)
+            stat -f%z "$file_path" 2>/dev/null || echo "unknown"
+            ;;
+        linux)
+            stat -c%s "$file_path" 2>/dev/null || echo "unknown"
+            ;;
+        *)
+            # Fallback: try both and use whichever works
+            stat -c%s "$file_path" 2>/dev/null || stat -f%z "$file_path" 2>/dev/null || echo "unknown"
+            ;;
+    esac
+}
+
+# Platform-specific disk space check
+check_disk_space_by_os() {
+    local required_mb="${1:-100}"
+    local target_dir="${2:-.}"
+    
+    if ! command -v df >/dev/null 2>&1; then
+        log_warning "Cannot check disk space - df command not available"
+        return 0
+    fi
+    
+    local available_mb
+    case "$OS_TYPE" in
+        macos)
+            # macOS df uses 512-byte blocks by default, -m for MB
+            available_mb=$(df -m "$(dirname "$target_dir")" | awk 'NR==2 {print $4}')
+            ;;
+        linux)
+            # Linux df, -BM for MB
+            available_mb=$(df -BM "$(dirname "$target_dir")" | awk 'NR==2 {print $4}' | sed 's/M//')
+            ;;
+        *)
+            # Fallback: try portable -m flag
+            available_mb=$(df -m "$(dirname "$target_dir")" 2>/dev/null | awk 'NR==2 {print $4}' || echo "1000")
+            ;;
+    esac
+    
+    if [[ $available_mb -lt $required_mb ]]; then
+        log_error "Insufficient disk space. Required: ${required_mb}MB, Available: ${available_mb}MB"
+        return 1
+    fi
+    
+    log_debug "Disk space check passed. Available: ${available_mb}MB"
+    return 0
+}
+
+# Platform-specific OpenSSL validation
+validate_openssl_by_os() {
+    local min_version="${1:-1.1.1}"
+    
+    if ! command -v openssl >/dev/null 2>&1; then
+        log_error "OpenSSL not found in PATH"
+        return 1
+    fi
+    
+    local openssl_version openssl_variant
+    openssl_version=$(openssl version | cut -d' ' -f2)
+    openssl_variant=$(openssl version | cut -d' ' -f1)
+    
+    log_info "OpenSSL version: $openssl_version ($openssl_variant)"
+    
+    # Check for LibreSSL on macOS
+    if [[ "$OS_TYPE" == "macos" && "$openssl_variant" == "LibreSSL" ]]; then
+        log_warning "LibreSSL detected on macOS. Consider installing OpenSSL via Homebrew for full compatibility:"
+        log_warning "  brew install openssl"
+        log_warning "  export PATH=\"/opt/homebrew/bin:\$PATH\"  # for Apple Silicon"
+        log_warning "  export PATH=\"/usr/local/bin:\$PATH\"     # for Intel"
+    fi
+    
+    # Simple version comparison (works for both OpenSSL and LibreSSL)
+    if [[ "$(printf '%s\n' "$min_version" "$openssl_version" | sort -V | head -n1)" != "$min_version" ]]; then
+        log_warning "OpenSSL/LibreSSL version $openssl_version is older than recommended $min_version"
+    fi
+    
+    return 0
+}
+
+# Platform-specific Java tools check
+check_java_tools_by_os() {
+    local warnings=()
+    
+    if ! command -v keytool >/dev/null 2>&1; then
+        case "$OS_TYPE" in
+            macos)
+                warnings+=("Java keytool not available - JKS/BKS formats skipped")
+                warnings+=("Install Java: brew install openjdk")
+                ;;
+            linux)
+                warnings+=("Java keytool not available - JKS/BKS formats skipped")
+                warnings+=("Install Java: sudo apt-get install openjdk-11-jdk (Ubuntu/Debian)")
+                ;;
+            *)
+                warnings+=("Java keytool not available - JKS/BKS formats skipped")
+                ;;
+        esac
+    else
+        local java_version
+        java_version=$(java -version 2>&1 | head -n1)
+        log_debug "Java version: $java_version"
+        
+        # Check for Bouncy Castle provider (platform-specific paths)
+        local bc_jar_paths=()
+        case "$OS_TYPE" in
+            macos)
+                bc_jar_paths=(
+                    "/opt/homebrew/share/java/bcprov.jar"  # Homebrew Apple Silicon
+                    "/usr/local/share/java/bcprov.jar"    # Homebrew Intel
+                    "/usr/share/java/bcprov.jar"          # Standard location
+                )
+                ;;
+            linux)
+                bc_jar_paths=(
+                    "/usr/share/java/bcprov.jar"
+                    "/usr/share/java/bcprov-jdk15on.jar"
+                )
+                ;;
+            *)
+                bc_jar_paths=("/usr/share/java/bcprov.jar")
+                ;;
+        esac
+        
+        local bc_found=false
+        for bc_jar in "${bc_jar_paths[@]}"; do
+            if [[ -f "$bc_jar" ]]; then
+                bc_found=true
+                log_debug "Found Bouncy Castle provider: $bc_jar"
+                break
+            fi
+        done
+        
+        if ! $bc_found; then
+            case "$OS_TYPE" in
+                macos)
+                    warnings+=("BKS support requires Bouncy Castle provider")
+                    warnings+=("Install with: brew install bouncy-castle")
+                    ;;
+                linux)
+                    warnings+=("BKS support requires Bouncy Castle provider")
+                    warnings+=("Install with: sudo apt-get install libbcprov-java (Ubuntu/Debian)")
+                    ;;
+                *)
+                    warnings+=("BKS support requires Bouncy Castle provider")
+                    ;;
+            esac
+        fi
+    fi
+    
+    # Return warnings as properly quoted array elements
+    printf '%s\n' "${warnings[@]}"
+}
+
+# =============================================================================
 # CONSTANTS AND GLOBALS
 # =============================================================================
 
@@ -35,6 +215,7 @@ if [[ ${BASH_VERSION%%.*} -ge 4 ]]; then
     declare -g CURRENT_STEP=0
     declare -g TOTAL_STEPS=0
     declare -g PROGRESS_RESERVED=false
+    declare -g OS_TYPE=""
 else
     declare LOG_FILE
     declare LOG_LEVEL="INFO"
@@ -42,6 +223,7 @@ else
     declare CURRENT_STEP=0
     declare TOTAL_STEPS=0
     declare PROGRESS_RESERVED=false
+    declare OS_TYPE=""
     # Initialize arrays separately for older Bash
     TEMP_FILES=()
 fi
@@ -58,6 +240,7 @@ setup_logging() {
     
     echo "=== Enhanced $script_name Log - $(date) ===" > "$LOG_FILE"
     echo "Log Level: $LOG_LEVEL" >> "$LOG_FILE"
+    echo "Operating System: $OS_TYPE" >> "$LOG_FILE"
     echo "=========================================" >> "$LOG_FILE"
 }
 
@@ -98,6 +281,9 @@ log_info() { log_with_level "INFO" "$1" "$BLUE" "ℹ️ "; }
 log_success() { log_with_level "INFO" "$1" "$GREEN" "✅"; }
 log_warning() { log_with_level "WARNING" "$1" "$YELLOW" "⚠️ "; }
 log_error() { log_with_level "ERROR" "$1" "$RED" "❌"; }
+
+# Initialize OS detection
+detect_os
 
 # =============================================================================
 # PROGRESS TRACKING (Updated with bottom positioning)
@@ -275,7 +461,7 @@ atomic_file_operation() {
             if mv "$temp_file" "$target_file"; then
                 log_success "$description completed successfully"
                 local file_size
-                file_size=$(stat -f%z "$target_file" 2>/dev/null || stat -c%s "$target_file" 2>/dev/null || echo "unknown")
+                file_size=$(get_file_size_by_os "$target_file")
                 log_debug "File: $target_file ($file_size bytes)"
                 # Remove from temp files since it's now permanent
                 TEMP_FILES=("${TEMP_FILES[@]/$temp_file}")
@@ -313,78 +499,24 @@ backup_directory() {
 }
 
 get_file_size() {
-    local file_path="$1"
-    if [[ -f "$file_path" ]]; then
-        stat -f%z "$file_path" 2>/dev/null || stat -c%s "$file_path" 2>/dev/null || echo "unknown"
-    else
-        echo "0"
-    fi
+    # Wrapper function for backward compatibility
+    get_file_size_by_os "$1"
 }
 
 # =============================================================================
-# SYSTEM VALIDATION
+# SYSTEM VALIDATION (Updated to use OS-specific functions)
 # =============================================================================
 
 check_disk_space() {
-    local required_mb="${1:-100}"
-    local target_dir="${2:-.}"
-    
-    if command -v df >/dev/null 2>&1; then
-        local available_mb
-        available_mb=$(df -m "$(dirname "$target_dir")" | awk 'NR==2 {print $4}')
-        
-        if [[ $available_mb -lt $required_mb ]]; then
-            log_error "Insufficient disk space. Required: ${required_mb}MB, Available: ${available_mb}MB"
-            return 1
-        fi
-        
-        log_debug "Disk space check passed. Available: ${available_mb}MB"
-    else
-        log_warning "Cannot check disk space - df command not available"
-    fi
-    
-    return 0
+    check_disk_space_by_os "$@"
 }
 
 validate_openssl() {
-    local min_version="${1:-1.1.1}"
-    
-    if ! command -v openssl >/dev/null 2>&1; then
-        log_error "OpenSSL not found in PATH"
-        return 1
-    fi
-    
-    local openssl_version
-    openssl_version=$(openssl version | cut -d' ' -f2)
-    log_info "OpenSSL version: $openssl_version"
-    
-    # Simple version comparison
-    if [[ "$(printf '%s\n' "$min_version" "$openssl_version" | sort -V | head -n1)" != "$min_version" ]]; then
-        log_warning "OpenSSL version $openssl_version is older than recommended $min_version"
-    fi
-    
-    return 0
+    validate_openssl_by_os "$@"
 }
 
 check_java_tools() {
-    local warnings=()
-    
-    if ! command -v keytool >/dev/null 2>&1; then
-        # Only add ONE warning message, don't call log_warning here
-        warnings+=("Java keytool not available - JKS/BKS formats skipped")
-    else
-        local java_version
-        java_version=$(java -version 2>&1 | head -n1)
-        log_debug "Java version: $java_version"
-        
-        # Check for Bouncy Castle provider (for BKS)
-        if ! keytool -storetype BKS -help >/dev/null 2>&1; then
-            warnings+=("BKS support requires Bouncy Castle provider")
-        fi
-    fi
-    
-    # Return warnings as properly quoted array elements
-    printf '%s\n' "${warnings[@]}"
+    check_java_tools_by_os
 }
 
 # =============================================================================
@@ -608,7 +740,7 @@ check_and_display_file() {
     if [[ -f "$file_path" ]]; then
         if [[ "$show_size" == "true" ]]; then
             local file_size
-            file_size=$(get_file_size "$file_path")
+            file_size=$(get_file_size_by_os "$file_path")
             printf "   ✅ %-25s %s (%s bytes)\n" "$description:" "$file_path" "$file_size"
         else
             printf "   ✅ %-25s %s\n" "$description:" "$file_path"
@@ -785,5 +917,6 @@ export -f display_certificate_info check_and_display_file
 export -f setup_error_handling handle_error
 export -f generate_timestamp format_duration confirm_action
 export -f generate_openssl_config_template get_file_size
+export -f detect_os get_file_size_by_os check_disk_space_by_os validate_openssl_by_os check_java_tools_by_os
 
 log_debug "Common functions library loaded successfully"

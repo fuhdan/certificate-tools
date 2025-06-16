@@ -464,6 +464,7 @@ cleanup_temp_files() {
         done
         echo "Temporary files: cleand up"
         TEMP_FILES=()
+        echo "TEMP_FILES cleared"
     fi
 }
 

@@ -462,6 +462,7 @@ cleanup_temp_files() {
             echo "Cleaning temporary file: ${temp_file}"
             [[ -f "$temp_file" ]] && rm -f "$temp_file" 2>/dev/null
         done
+        echo "Temporary files: cleand up"
         TEMP_FILES=()
     fi
 }

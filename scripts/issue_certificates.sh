@@ -720,7 +720,6 @@ generate_java_keystores() {
 
 get_password_input() {
     local default_password="$1"
-    local -n password_var="$2"  # Use nameref to return password
     
     # Ensure all previous output is flushed
     sync
@@ -736,12 +735,28 @@ get_password_input() {
     read -s user_password
     echo ""  # New line after hidden input
     
-    if [[ -z "$user_password" ]]; then
-        password_var="$default_password"
-        log_info "Using default password"
+    # Use Bash version-appropriate method to return the password
+    if [[ ${BASH_VERSION%%.*} -ge 4 ]] && [[ ${BASH_VERSION#*.} -ge 3 ]] 2>/dev/null; then
+        # Bash 4.3+ supports nameref - use modern approach
+        local -n password_var="$2"
+        if [[ -z "$user_password" ]]; then
+            password_var="$default_password"
+            log_info "Using default password"
+        else
+            password_var="$user_password"
+            log_info "Using custom password (hidden for security)"
+        fi
     else
-        password_var="$user_password"
-        log_info "Using custom password (hidden for security)"
+        # Bash < 4.3 - use eval fallback for compatibility
+        local password_var_name="$2"
+        if [[ -z "$user_password" ]]; then
+            eval "$password_var_name=\"$default_password\""
+            log_info "Using default password"
+        else
+            eval "$password_var_name=\"$user_password\""
+            log_info "Using custom password (hidden for security)"
+        fi
+        log_debug "Using Bash compatibility mode for password input (Bash $BASH_VERSION)"
     fi
 }
 

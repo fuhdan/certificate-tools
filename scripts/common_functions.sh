@@ -137,6 +137,7 @@ validate_openssl_by_os() {
 check_java_tools_by_os() {
     local warnings=()
     
+    # Step 1: Check if keytool is available
     if ! command -v keytool >/dev/null 2>&1; then
         case "$OS_TYPE" in
             macos)
@@ -151,59 +152,83 @@ check_java_tools_by_os() {
                 warnings+=("Java keytool not available - JKS/BKS formats skipped")
                 ;;
         esac
-    else
-        local java_version
-        java_version=$(java -version 2>&1 | head -n1)
-        log_debug "Java version: $java_version"
-        
-        # Check for Bouncy Castle provider (platform-specific paths)
-        local bc_jar_paths=()
-        case "$OS_TYPE" in
-            macos)
-                bc_jar_paths=(
-                    "/opt/homebrew/share/java/bcprov.jar"  # Homebrew Apple Silicon
-                    "/usr/local/share/java/bcprov.jar"    # Homebrew Intel
-                    "/usr/share/java/bcprov.jar"          # Standard location
-                )
-                ;;
-            linux)
-                bc_jar_paths=(
-                    "/usr/share/java/bcprov.jar"
-                    "/usr/share/java/bcprov-jdk15on.jar"
-                )
-                ;;
-            *)
-                bc_jar_paths=("/usr/share/java/bcprov.jar")
-                ;;
-        esac
-        
-        local bc_found=false
-        for bc_jar in "${bc_jar_paths[@]}"; do
-            if [[ -f "$bc_jar" ]]; then
-                bc_found=true
-                log_debug "Found Bouncy Castle provider: $bc_jar"
-                break
-            fi
-        done
-        
-        if ! $bc_found; then
-            case "$OS_TYPE" in
-                macos)
-                    warnings+=("BKS support requires Bouncy Castle provider")
-                    warnings+=("Install with: brew install bouncy-castle")
-                    ;;
-                linux)
-                    warnings+=("BKS support requires Bouncy Castle provider")
-                    warnings+=("Install with: sudo apt-get install libbcprov-java (Ubuntu/Debian)")
-                    ;;
-                *)
-                    warnings+=("BKS support requires Bouncy Castle provider")
-                    ;;
-            esac
-        fi
+        # If keytool is not available, we can't do anything
+        printf '%s\n' "${warnings[@]}"
+        return 0
     fi
     
-    # Return warnings as properly quoted array elements
+    # Step 2: Check if Java runtime is available
+    if ! java -version >/dev/null 2>&1; then
+        case "$OS_TYPE" in
+            macos)
+                warnings+=("Java runtime not available - JKS/BKS formats skipped")
+                warnings+=("Install Java runtime: brew install openjdk")
+                ;;
+            linux)
+                warnings+=("Java runtime not available - JKS/BKS formats skipped")
+                warnings+=("Install Java runtime: sudo apt-get install openjdk-11-jre (Ubuntu/Debian)")
+                ;;
+            *)
+                warnings+=("Java runtime not available - JKS/BKS formats skipped")
+                ;;
+        esac
+        # If Java runtime is not available, we can't do anything
+        printf '%s\n' "${warnings[@]}"
+        return 0
+    fi
+    
+    # Step 3: keytool and Java are available - log version info
+    local java_version
+    java_version=$(java -version 2>&1 | head -n1)
+    log_debug "Java version: $java_version"
+    
+    # Step 4: Check for Bouncy Castle provider (needed for BKS)
+    local bc_jar_paths=()
+    case "$OS_TYPE" in
+        macos)
+            bc_jar_paths=(
+                "/opt/homebrew/share/java/bcprov.jar"  # Homebrew Apple Silicon
+                "/usr/local/share/java/bcprov.jar"    # Homebrew Intel
+                "/usr/share/java/bcprov.jar"          # Standard location
+            )
+            ;;
+        linux)
+            bc_jar_paths=(
+                "/usr/share/java/bcprov.jar"
+                "/usr/share/java/bcprov-jdk15on.jar"
+            )
+            ;;
+        *)
+            bc_jar_paths=("/usr/share/java/bcprov.jar")
+            ;;
+    esac
+    
+    local bc_found=false
+    for bc_jar in "${bc_jar_paths[@]}"; do
+        if [[ -f "$bc_jar" ]]; then
+            bc_found=true
+            log_debug "Found Bouncy Castle provider: $bc_jar"
+            break
+        fi
+    done
+    
+    if ! $bc_found; then
+        case "$OS_TYPE" in
+            macos)
+                warnings+=("BKS support requires Bouncy Castle provider")
+                warnings+=("Install with: brew install bouncy-castle")
+                ;;
+            linux)
+                warnings+=("BKS support requires Bouncy Castle provider")
+                warnings+=("Install with: sudo apt-get install libbcprov-java (Ubuntu/Debian)")
+                ;;
+            *)
+                warnings+=("BKS support requires Bouncy Castle provider")
+                ;;
+        esac
+    fi
+    
+    # Return warnings (empty if everything is available)
     printf '%s\n' "${warnings[@]}"
 }
 

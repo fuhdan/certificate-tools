@@ -659,17 +659,19 @@ generate_java_keystores() {
     local cn="$1"
     local cert_dir="$2"
     local password="$3"
+    local java_warnings=$(check_java_tools_by_os)
     
-    if ! command -v keytool >/dev/null 2>&1; then
-        # Don't add warning here - already handled in validate_prerequisites
-        log_debug "JKS/BKS creation skipped - Java keytool not available"
+    # Check what Java capabilities are available
+    if [[ "$java_warnings" == *"keytool not available"* ]] || [[ "$java_warnings" == *"runtime not available"* ]]; then
+        # No Java capability at all - skip everything
+        log_debug "JKS/BKS creation skipped - Java not available"
         return 0
     fi
     
     local pkcs12_file="$cert_dir/$cn.pkcs12.p12"
     local pkcs12_nopass_file="$cert_dir/$cn.nopass.pkcs12.p12"
     
-    # JKS KeyStore
+    # JKS KeyStore - available if keytool + Java runtime available
     ((STATS_TOTAL_FILES++))
     if keytool -importkeystore -deststorepass "$password" -destkeypass "$password" \
         -destkeystore "$cert_dir/$cn.keystore.jks" \
@@ -688,6 +690,13 @@ generate_java_keystores() {
             ((STATS_FAILED_FILES++))
             FAILED_OPERATIONS+=("Java KeyStore (JKS)")
         fi
+    fi
+    
+    # BKS KeyStore - only if Bouncy Castle is also available
+    if [[ "$java_warnings" == *"BKS support requires"* ]]; then
+        # BKS not available - skip BKS creation
+        log_debug "BKS creation skipped - Bouncy Castle provider not available"
+        return 0
     fi
     
     # BKS KeyStore (with password)
@@ -883,6 +892,7 @@ generate_summary_report() {
 }
 
 display_file_inventory() {
+    local java_warnings=$(check_java_tools_by_os)
     local cn="$1"
     local cert_dir="$2"
     
@@ -914,17 +924,20 @@ display_file_inventory() {
     check_and_display_file "$cert_dir/$cn.nopass.pkcs12.p12" "PKCS#12 (no password)"
     check_and_display_file "$cert_dir/$cn.pfx" "PFX (Windows)"
     
-    echo "Checking for Java KeyStores... $(check_java_tools)"
-    # Only show Java keystores if Java is available
-    if command -v keytool >/dev/null 2>&1; then
+    if [[ -z "$java_warnings" ]]; then
+        # No warnings = keytool + Java + BKS all available
         check_and_display_file "$cert_dir/$cn.keystore.jks" "Java KeyStore (JKS)"
         check_and_display_file "$cert_dir/$cn.keystore.bks" "BKS KeyStore (with pass)"
         check_and_display_file "$cert_dir/$cn.nopass.keystore.bks" "BKS KeyStore (no pass)"
-    else
+    elif [[ "$java_warnings" == *"keytool not available"* ]] || [[ "$java_warnings" == *"runtime not available"* ]]; then
+        # Either keytool or Java runtime missing = skip everything
         echo "   ⚠️  Java KeyStore (JKS):     Skipped (Java not available)"
         echo "   ⚠️  BKS KeyStore formats:    Skipped (Java not available)"
+    elif [[ "$java_warnings" == *"BKS support requires"* ]]; then
+        # keytool + Java available, but BKS missing = show JKS only
+        check_and_display_file "$cert_dir/$cn.keystore.jks" "Java KeyStore (JKS)"
+        echo "   ⚠️  BKS KeyStore formats:    Skipped (Bouncy Castle not available)"
     fi
-    
     echo ""
     
     # Other Files

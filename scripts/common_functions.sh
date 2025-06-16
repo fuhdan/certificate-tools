@@ -16,7 +16,7 @@ readonly _COMMON_FUNCTIONS_LOADED=true
 # OS DETECTION AND PLATFORM-SPECIFIC SETTINGS
 # =============================================================================
 
-# Detect operating system
+# Detect operating system and SSL implementation
 detect_os() {
     case "$(uname -s)" in
         Darwin*)    OS_TYPE="macos" ;;
@@ -25,9 +25,23 @@ detect_os() {
         *)          OS_TYPE="unknown" ;;
     esac
     
+    # Detect SSL implementation
+    if command -v openssl >/dev/null 2>&1; then
+        if openssl version | grep -q "LibreSSL"; then
+            SSL_TYPE="libressl"
+            SSL_VERSION=$(openssl version | cut -d' ' -f2)
+        else
+            SSL_TYPE="openssl"
+            SSL_VERSION=$(openssl version | cut -d' ' -f2)
+        fi
+    else
+        SSL_TYPE="none"
+        SSL_VERSION="not installed"
+    fi
+    
     # Export for use in other functions
-    export OS_TYPE
-    log_debug "Detected OS: $OS_TYPE"
+    export OS_TYPE SSL_TYPE SSL_VERSION
+    log_debug "Detected OS: $OS_TYPE, SSL: $SSL_TYPE $SSL_VERSION"
 }
 
 # Platform-specific file size function
@@ -96,23 +110,26 @@ validate_openssl_by_os() {
         return 1
     fi
     
-    local openssl_version openssl_variant
-    openssl_version=$(openssl version | cut -d' ' -f2)
-    openssl_variant=$(openssl version | cut -d' ' -f1)
+    log_info "SSL Implementation: $SSL_TYPE version $SSL_VERSION"
     
-    log_info "OpenSSL version: $openssl_version ($openssl_variant)"
-    
-    # Check for LibreSSL on macOS
-    if [[ "$OS_TYPE" == "macos" && "$openssl_variant" == "LibreSSL" ]]; then
-        log_warning "LibreSSL detected on macOS. Consider installing OpenSSL via Homebrew for full compatibility:"
-        log_warning "  brew install openssl"
-        log_warning "  export PATH=\"/opt/homebrew/bin:\$PATH\"  # for Apple Silicon"
-        log_warning "  export PATH=\"/usr/local/bin:\$PATH\"     # for Intel"
+    # Check for LibreSSL and provide recommendations
+    if [[ "$SSL_TYPE" == "libressl" ]]; then
+        log_warning "LibreSSL detected. For best compatibility, consider installing OpenSSL via Homebrew:"
+        case "$OS_TYPE" in
+            macos)
+                log_warning "  brew install openssl"
+                log_warning "  export PATH=\"/opt/homebrew/bin:\$PATH\"  # for Apple Silicon"
+                log_warning "  export PATH=\"/usr/local/bin:\$PATH\"     # for Intel"
+                ;;
+            *)
+                log_warning "  Consider installing OpenSSL for better compatibility"
+                ;;
+        esac
     fi
     
     # Simple version comparison (works for both OpenSSL and LibreSSL)
-    if [[ "$(printf '%s\n' "$min_version" "$openssl_version" | sort -V | head -n1)" != "$min_version" ]]; then
-        log_warning "OpenSSL/LibreSSL version $openssl_version is older than recommended $min_version"
+    if [[ "$(printf '%s\n' "$min_version" "$SSL_VERSION" | sort -V | head -n1)" != "$min_version" ]]; then
+        log_warning "$SSL_TYPE version $SSL_VERSION is older than recommended $min_version"
     fi
     
     return 0
@@ -216,6 +233,8 @@ if [[ ${BASH_VERSION%%.*} -ge 4 ]]; then
     declare -g TOTAL_STEPS=0
     declare -g PROGRESS_RESERVED=false
     declare -g OS_TYPE=""
+    declare -g SSL_TYPE=""
+    declare -g SSL_VERSION=""
 else
     declare LOG_FILE
     declare LOG_LEVEL="INFO"
@@ -224,6 +243,8 @@ else
     declare TOTAL_STEPS=0
     declare PROGRESS_RESERVED=false
     declare OS_TYPE=""
+    declare SSL_TYPE=""
+    declare SSL_VERSION=""
     # Initialize arrays separately for older Bash
     TEMP_FILES=()
 fi

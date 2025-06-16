@@ -491,9 +491,32 @@ create_ca_certificate() {
         # Root CA - self-signed
         log_info "Creating self-signed root certificate"
         
+        # Platform-specific root certificate creation
+        local root_cert_cmd
+        if [[ "$SSL_TYPE" == "libressl" ]]; then
+            # LibreSSL needs explicit extension file approach
+            log_debug "Using LibreSSL-compatible root certificate creation"
+            
+            # Create a temporary extensions file for LibreSSL
+            local ext_file="$ca_dir/v3_ca.ext"
+            cat > "$ext_file" << EOF
+basicConstraints = critical, CA:true
+keyUsage = critical, digitalSignature, cRLSign, keyCertSign
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid:always,issuer
+EOF
+            add_temp_file "$ext_file"
+            
+            root_cert_cmd="openssl req -config '$ca_dir/openssl.cnf' -key '$key_file' -new -x509 -days $validity_days -sha256 -extfile '$ext_file' -out '$cert_file'"
+        else
+            # Standard OpenSSL approach
+            log_debug "Using OpenSSL-compatible root certificate creation"
+            root_cert_cmd="openssl req -config '$ca_dir/openssl.cnf' -key '$key_file' -new -x509 -days $validity_days -sha256 -extensions v3_ca -out '$cert_file'"
+        fi
+        
         if atomic_file_operation \
             "Root certificate creation" \
-            "openssl req -config '$ca_dir/openssl.cnf' -key '$key_file' -new -x509 -days $validity_days -sha256 -extensions v3_ca -out '$cert_file'" \
+            "$root_cert_cmd" \
             "$cert_file"; then
             
             # Validate the created certificate
@@ -504,10 +527,12 @@ create_ca_certificate() {
                 return 0
             else
                 log_error "Root certificate validation failed"
+                log_debug "Certificate creation command used: $root_cert_cmd"
                 return 1
             fi
         else
             log_error "Failed to create root certificate"
+            log_error "Command that failed: $root_cert_cmd"
             return 1
         fi
     else
@@ -534,25 +559,15 @@ create_ca_certificate() {
             
             # Platform-specific OpenSSL CA command
             local openssl_ca_cmd
-            case "$OS_TYPE" in
-                macos)
-                    # LibreSSL on macOS sometimes needs different flags
-                    if openssl version | grep -q "LibreSSL"; then
-                        # LibreSSL variant - may need different approach
-                        openssl_ca_cmd="openssl ca -config '$parent_ca_dir/openssl.cnf' -extensions $extension -days $validity_days -notext -md sha256 -in '$csr_file' -out '$cert_file' -batch -passin pass:"
-                        log_debug "Using LibreSSL-compatible command"
-                    else
-                        # Homebrew OpenSSL on macOS
-                        openssl_ca_cmd="openssl ca -config '$parent_ca_dir/openssl.cnf' -extensions $extension -days $validity_days -notext -md sha256 -in '$csr_file' -out '$cert_file' -batch"
-                        log_debug "Using OpenSSL command on macOS"
-                    fi
-                    ;;
-                linux|*)
-                    # Standard OpenSSL command for Linux and other platforms
-                    openssl_ca_cmd="openssl ca -config '$parent_ca_dir/openssl.cnf' -extensions $extension -days $validity_days -notext -md sha256 -in '$csr_file' -out '$cert_file' -batch"
-                    log_debug "Using standard OpenSSL command"
-                    ;;
-            esac
+            if [[ "$SSL_TYPE" == "libressl" ]]; then
+                # LibreSSL variant - may need different approach
+                openssl_ca_cmd="openssl ca -config '$parent_ca_dir/openssl.cnf' -extensions $extension -days $validity_days -notext -md sha256 -in '$csr_file' -out '$cert_file' -batch -passin pass:"
+                log_debug "Using LibreSSL-compatible CA signing command"
+            else
+                # Standard OpenSSL command
+                openssl_ca_cmd="openssl ca -config '$parent_ca_dir/openssl.cnf' -extensions $extension -days $validity_days -notext -md sha256 -in '$csr_file' -out '$cert_file' -batch"
+                log_debug "Using OpenSSL CA signing command"
+            fi
             
             # Sign with parent CA
             if atomic_file_operation \

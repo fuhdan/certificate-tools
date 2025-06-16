@@ -35,18 +35,38 @@ else
 fi
 
 # Global variables
-declare -g OPERATION_START_TIME
-declare -g CONFIG_LOADED=false
-declare -g STATS_TOTAL_FILES=0
-declare -g STATS_SUCCESS_FILES=0
-declare -g STATS_FAILED_FILES=0
-declare -g STATS_WARNINGS=0
-declare -g FAILED_OPERATIONS=()
-declare -g WARNING_MESSAGES=()
+if [[ ${BASH_VERSION%%.*} -ge 4 ]]; then
+    declare -g OPERATION_START_TIME
+    declare -g CONFIG_LOADED=false
+    declare -g STATS_TOTAL_FILES=0
+    declare -g STATS_SUCCESS_FILES=0
+    declare -g STATS_FAILED_FILES=0
+    declare -g STATS_WARNINGS=0
+    declare -g FAILED_OPERATIONS=()
+    declare -g WARNING_MESSAGES=()
+else
+    declare OPERATION_START_TIME
+    declare CONFIG_LOADED=false
+    declare STATS_TOTAL_FILES=0
+    declare STATS_SUCCESS_FILES=0
+    declare STATS_FAILED_FILES=0
+    declare STATS_WARNINGS=0
+    declare FAILED_OPERATIONS
+    declare WARNING_MESSAGES
+    FAILED_OPERATIONS=()
+    WARNING_MESSAGES=()
+fi
 
 # Progress tracking variables (also declared in common_functions.sh)
-declare -g CURRENT_STEP=0
-declare -g TOTAL_STEPS=0
+if [[ ${BASH_VERSION%%.*} -ge 4 ]]; then
+    declare -g CURRENT_STEP=0
+    declare -g TOTAL_STEPS=0
+else
+    declare CURRENT_STEP
+    declare TOTAL_STEPS
+    CURRENT_STEP=0
+    TOTAL_STEPS=0
+fi
 
 # =============================================================================
 # CONFIGURATION MANAGEMENT

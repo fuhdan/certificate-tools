@@ -36,9 +36,16 @@ else
 fi
 
 # Global state
-declare -g CREATED_CAS=()
-declare -g OPERATION_START_TIME
-declare -g CONFIG_LOADED=false
+if [[ ${BASH_VERSION%%.*} -ge 4 ]]; then
+    declare -g CREATED_CAS=()
+    declare -g OPERATION_START_TIME
+    declare -g CONFIG_LOADED=false
+else
+    declare CREATED_CAS
+    declare OPERATION_START_TIME
+    declare CONFIG_LOADED=false
+    CREATED_CAS=()
+fi
 
 # =============================================================================
 # CONFIGURATION MANAGEMENT

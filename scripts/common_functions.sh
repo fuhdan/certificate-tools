@@ -455,6 +455,18 @@ add_temp_file() {
 cleanup_temp_files() {
     if [[ ${#TEMP_FILES[@]} -gt 0 ]]; then
         log_info "Cleaning up ${#TEMP_FILES[@]} temporary files"
+
+        log_debug "=== FINAL STATE DEBUG ==="
+        log_debug "STATS_FAILED_FILES: $STATS_FAILED_FILES"
+        log_debug "STATS_SUCCESS_FILES: $STATS_SUCCESS_FILES"
+        log_debug "STATS_WARNINGS: $STATS_WARNINGS"
+        log_debug "FAILED_OPERATIONS array length: ${#FAILED_OPERATIONS[@]}"
+        log_debug "FAILED_OPERATIONS contents: ${FAILED_OPERATIONS[*]:-}"
+        log_debug "WARNING_MESSAGES array length: ${#WARNING_MESSAGES[@]}"
+        log_debug "WARNING_MESSAGES contents: ${WARNING_MESSAGES[*]:-}"
+        log_debug "SSL_TYPE: $SSL_TYPE"
+        log_debug "=========================="
+
         for temp_file in "${TEMP_FILES[@]}"; do
             [[ -f "$temp_file" ]] && rm -f "$temp_file" 2>/dev/null
         done

@@ -841,7 +841,7 @@ generate_summary_report() {
     local cert_dir="$2"
     local password="$3"
     local duration="$4"
-    
+    echo "Before Report: FAILED_OPERATIONS=${#FAILED_OPERATIONS[@]}"
     echo ""
     echo -e "${GREEN}${BOLD}📊 CERTIFICATE GENERATION SUMMARY${NC}"
     echo "=================================="
@@ -854,7 +854,7 @@ generate_summary_report() {
     echo "   ❌ Failed to create: $STATS_FAILED_FILES"
     echo "   ⚠️  Warnings: $STATS_WARNINGS"
     echo ""
-    
+    echo "After Report: FAILED_OPERATIONS=${#FAILED_OPERATIONS[@]}"
     # Show failed operations if any
     if [[ ${#FAILED_OPERATIONS[@]} -gt 0 ]]; then
         echo -e "${RED}❌ Failed Operations:${NC}"
@@ -863,7 +863,7 @@ generate_summary_report() {
         done
         echo ""
     fi
-    
+    echo "After List ERROR Files: FAILED_OPERATIONS=${#FAILED_OPERATIONS[@]}"
     # Show warnings if any
     if [[ ${#WARNING_MESSAGES[@]} -gt 0 ]]; then
         echo -e "${YELLOW}⚠️  Warnings:${NC}"
@@ -872,12 +872,15 @@ generate_summary_report() {
         done
         echo ""
     fi
+    echo "After List WARNING Files: FAILED_OPERATIONS=${#FAILED_OPERATIONS[@]}"
     
     # Display file inventory
     display_file_inventory "$cn" "$cert_dir"
+    echo "After Display inventory: FAILED_OPERATIONS=${#FAILED_OPERATIONS[@]}"
     
     # Display usage guidelines
     display_usage_guidelines "$cn" "$cert_dir" "$password"
+    echo "After Display usage: FAILED_OPERATIONS=${#FAILED_OPERATIONS[@]}"
 }
 
 display_file_inventory() {
@@ -1167,10 +1170,8 @@ main() {
     display_certificate_details "$cert_dir/$cn.cert.pem"
 
     # Generate and display summary report
-    echo "calling summary report: $STATS_FAILED_FILES"
     generate_summary_report "$cn" "$cert_dir" "$password" "$duration"
     
-    echo "calling final state: $STATS_FAILED_FILES"
     # Final status
     if [[ $STATS_FAILED_FILES -eq 0 ]]; then
         echo -e "${GREEN}${BOLD}🎉 Certificate generation completed successfully!${NC}"

@@ -1169,6 +1169,18 @@ main() {
     # Generate and display summary report
     generate_summary_report "$cn" "$cert_dir" "$password" "$duration"
     
+    # DEBUG: Check final state before exit decision
+    log_debug "=== FINAL STATE DEBUG ==="
+    log_debug "STATS_FAILED_FILES: $STATS_FAILED_FILES"
+    log_debug "STATS_SUCCESS_FILES: $STATS_SUCCESS_FILES"
+    log_debug "STATS_WARNINGS: $STATS_WARNINGS"
+    log_debug "FAILED_OPERATIONS array length: ${#FAILED_OPERATIONS[@]}"
+    log_debug "FAILED_OPERATIONS contents: ${FAILED_OPERATIONS[*]}"
+    log_debug "WARNING_MESSAGES array length: ${#WARNING_MESSAGES[@]}"
+    log_debug "WARNING_MESSAGES contents: ${WARNING_MESSAGES[*]}"
+    log_debug "SSL_TYPE: $SSL_TYPE"
+    log_debug "=========================="
+    
     # Final status
     if [[ $STATS_FAILED_FILES -eq 0 ]]; then
         echo -e "${GREEN}${BOLD}🎉 Certificate generation completed successfully!${NC}"

@@ -27,12 +27,24 @@ readonly NC='\033[0m'
 readonly BOLD='\033[1m'
 
 # Global state variables (will be set by importing scripts)
-declare -g LOG_FILE
-declare -g LOG_LEVEL="INFO"
-declare -g TEMP_FILES=()
-declare -g CURRENT_STEP=0
-declare -g TOTAL_STEPS=0
-declare -g PROGRESS_RESERVED=false
+# Ensure compatibility with older Bash versions
+if [[ ${BASH_VERSION%%.*} -ge 4 ]]; then
+    declare -g LOG_FILE
+    declare -g LOG_LEVEL="INFO"
+    declare -g TEMP_FILES=()
+    declare -g CURRENT_STEP=0
+    declare -g TOTAL_STEPS=0
+    declare -g PROGRESS_RESERVED=false
+else
+    declare LOG_FILE
+    declare LOG_LEVEL="INFO"
+    declare TEMP_FILES
+    declare CURRENT_STEP=0
+    declare TOTAL_STEPS=0
+    declare PROGRESS_RESERVED=false
+    # Initialize arrays separately for older Bash
+    TEMP_FILES=()
+fi
 
 # =============================================================================
 # LOGGING SYSTEM

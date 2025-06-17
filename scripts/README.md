@@ -80,6 +80,21 @@ chmod +x *.sh
 ./create_ca.sh --help
 ```
 
+## ✅ Tested Platforms
+
+This script has been thoroughly tested on the following platforms:
+
+| Platform | Version | OpenSSL/LibreSSL | Status |
+|----------|---------|------------------|---------|
+| **macOS** | Latest | LibreSSL (system) | ✅ Fully supported |
+| **RHEL** | 9 | OpenSSL 3.x | ✅ Fully supported |
+| **Ubuntu** | 24.04 LTS | OpenSSL 3.x | ✅ Fully supported |
+
+**Notes:**
+- macOS: Includes LibreSSL compatibility fixes and Homebrew OpenSSL support
+- Linux: Native OpenSSL integration with distribution package managers
+- All Java keystore features tested with OpenJDK 21+
+
 ## 📖 Detailed Usage
 
 ### Creating Certificate Authorities

@@ -65,9 +65,6 @@ openssl >= 1.1.1
 # Optional (for Java keystores)
 java >= 8
 keytool (included with Java)
-
-# Optional (for BKS keystores)
-Bouncy Castle provider JAR
 ```
 
 ### Installation
@@ -232,8 +229,6 @@ Each certificate generation creates multiple formats for maximum compatibility:
 
 ### Java Keystores (if Java available)
 - `server.keystore.jks` - Java KeyStore
-- `server.keystore.bks` - BKS KeyStore (with password)
-- `server.nopass.keystore.bks` - BKS KeyStore (no password)
 
 ### Other Files
 - `server.csr.pem` - Certificate Signing Request
@@ -245,7 +240,6 @@ Each certificate generation creates multiple formats for maximum compatibility:
 | **Apache/Nginx Web Server** | `*.chain.cert.pem` + `*.key.pem` |
 | **Windows IIS** | `*.pfx` or `*.pkcs12.p12` |
 | **Java Applications** | `*.keystore.jks` or `*.pkcs12.p12` |
-| **Android Apps** | `*.keystore.bks` |
 | **Email/S-MIME** | `*.pkcs12.p12` or `*.pfx` |
 | **Legacy/Binary Systems** | `*.cert.der` + `*.key.der` |
 | **Load Balancers** | `*.chain.cert.pem` + `*.key.pem` |
@@ -324,16 +318,6 @@ openssl rsa -in certificate/server.local/server.local.key.pem -noout -modulus | 
 # Ubuntu/Debian: apt-get install openjdk-11-jdk
 # CentOS/RHEL: yum install java-11-openjdk-devel
 # macOS: brew install openjdk@11
-```
-
-#### "BKS KeyStore creation failed"
-```bash
-# Install Bouncy Castle provider
-wget https://repo1.maven.org/maven2/org/bouncycastle/bcprov-jdk15on/1.70/bcprov-jdk15on-1.70.jar
-sudo mv bcprov-jdk15on-1.70.jar /usr/share/java/bcprov.jar
-
-# Update cert_config.conf
-BOUNCY_CASTLE_JAR="/usr/share/java/bcprov.jar"
 ```
 
 #### "Permission denied"

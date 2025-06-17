@@ -175,19 +175,19 @@ check_java_tools_by_os() {
     if ! command -v keytool >/dev/null 2>&1; then
         case "$OS_TYPE" in
             macos)
-                warnings+=("Java keytool not available - JKS/BKS formats skipped")
+                warnings+=("Java keytool not available - JKS formats skipped")
                 warnings+=("Install Java: brew install openjdk")
                 ;;
             ubuntu|debian)
-                warnings+=("Java keytool not available - JKS/BKS formats skipped")
+                warnings+=("Java keytool not available - JKS formats skipped")
                 warnings+=("Install Java: sudo apt-get install openjdk-11-jdk (Ubuntu/Debian)")
                 ;;
             rhel|centos|fedora|redhat)
-                warnings+=("Java keytool not available - JKS/BKS formats skipped")
+                warnings+=("Java keytool not available - JKS formats skipped")
                 warnings+=("Install Java: sudo dnf install java-21-openjdk-devel (Red/Debian)")
                 ;;
             *)
-                warnings+=("Java keytool not available - JKS/BKS formats skipped")
+                warnings+=("Java keytool not available - JKS formats skipped")
                 ;;
         esac
         # If keytool is not available, we can't do anything
@@ -199,19 +199,19 @@ check_java_tools_by_os() {
     if ! java -version >/dev/null 2>&1; then
         case "$OS_TYPE" in
             macos)
-                warnings+=("Java runtime not available - JKS/BKS formats skipped")
+                warnings+=("Java runtime not available - JKS formats skipped")
                 warnings+=("Install Java runtime: brew install openjdk")
                 ;;
             rhel|centos|fedora|redhat|ubuntu|debian)
-                warnings+=("Java runtime not available - JKS/BKS formats skipped")
+                warnings+=("Java runtime not available - JKS formats skipped")
                 warnings+=("Install Java runtime: sudo apt-get install openjdk-11-jre (Ubuntu/Debian)")
                 ;;
             rhel|centos|fedora|redhat|ubuntu|debian)
-                warnings+=("Java runtime not available - JKS/BKS formats skipped")
+                warnings+=("Java runtime not available - JKS formats skipped")
                 warnings+=("Install Java runtime: sudo dnf install openjdk-21-jre (Red/Debian)")
                 ;;
             *)
-                warnings+=("Java runtime not available - JKS/BKS formats skipped")
+                warnings+=("Java runtime not available - JKS formats skipped")
                 ;;
         esac
         # If Java runtime is not available, we can't do anything
@@ -223,53 +223,6 @@ check_java_tools_by_os() {
     local java_version
     java_version=$(java -version 2>&1 | head -n1)
     log_debug "Java version: $java_version"
-    
-    # Step 4: Check for Bouncy Castle provider (needed for BKS)
-    local bc_jar_paths=()
-    case "$OS_TYPE" in
-        macos)
-            bc_jar_paths=(
-                "/opt/homebrew/share/java/bcprov.jar"  # Homebrew Apple Silicon
-                "/usr/local/share/java/bcprov.jar"    # Homebrew Intel
-                "/usr/share/java/bcprov.jar"          # Standard location
-            )
-            ;;
-        rhel|centos|fedora|redhat|ubuntu|debian)
-            bc_jar_paths=(
-                "/usr/share/java/bcprov.jar"
-                "/usr/share/java/bcprov-jdk15on.jar"
-                "/usr/share/java/bcprov-jdk18on-1.81.jar"
-            )
-            ;;
-        *)
-            bc_jar_paths=("/usr/share/java/bcprov.jar")
-            ;;
-    esac
-    
-    local bc_found=false
-    for bc_jar in "${bc_jar_paths[@]}"; do
-        if [[ -f "$bc_jar" ]]; then
-            bc_found=true
-            log_debug "Found Bouncy Castle provider: $bc_jar"
-            break
-        fi
-    done
-    
-    if ! $bc_found; then
-        case "$OS_TYPE" in
-            macos)
-                warnings+=("BKS support requires Bouncy Castle provider")
-                warnings+=("Install with: brew install bouncy-castle")
-                ;;
-            rhel|centos|fedora|redhat|ubuntu|debian)
-                warnings+=("BKS support requires Bouncy Castle provider")
-                warnings+=("Install with: sudo apt-get install libbcprov-java (Ubuntu/Debian)")
-                ;;
-            *)
-                warnings+=("BKS support requires Bouncy Castle provider")
-                ;;
-        esac
-    fi
     
     # Return warnings (empty if everything is available)
     printf '%s\n' "${warnings[@]}"

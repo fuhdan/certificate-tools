@@ -664,7 +664,7 @@ generate_java_keystores() {
     # Check what Java capabilities are available
     if [[ "$java_warnings" == *"keytool not available"* ]] || [[ "$java_warnings" == *"runtime not available"* ]]; then
         # No Java capability at all - skip everything
-        log_debug "JKS/BKS creation skipped - Java not available"
+        log_debug "JKS creation skipped - Java not available"
         return 0
     fi
     
@@ -689,57 +689,6 @@ generate_java_keystores() {
         else
             ((STATS_FAILED_FILES++))
             FAILED_OPERATIONS+=("Java KeyStore (JKS)")
-        fi
-    fi
-    
-    # BKS KeyStore - only if Bouncy Castle is also available
-    if [[ "$java_warnings" == *"BKS support requires"* ]]; then
-        # BKS not available - skip BKS creation
-        log_debug "BKS creation skipped - Bouncy Castle provider not available"
-        return 0
-    fi
-    
-    # BKS KeyStore (with password)
-    ((STATS_TOTAL_FILES++))
-    if keytool -importkeystore -deststorepass "$password" -destkeypass "$password" \
-        -deststoretype BKS -destkeystore "$cert_dir/$cn.keystore.bks" \
-        -srckeystore "$pkcs12_file" -srcstoretype PKCS12 -srcstorepass "$password" \
-        -alias "$cn" -provider org.bouncycastle.jce.provider.BouncyCastleProvider \
-        -providerpath /usr/share/java/bcprov.jar >/dev/null 2>>"$LOG_FILE"; then
-        log_success "BKS KeyStore (with password) created successfully"
-        ((STATS_SUCCESS_FILES++))
-        update_progress
-    else
-        log_warning "BKS KeyStore creation failed - Bouncy Castle provider may not be available"
-        # LibreSSL compatibility: treat Java failures as warnings, not critical failures
-        if [[ "$SSL_TYPE" == "libressl" ]]; then
-            ((STATS_WARNINGS++))
-            WARNING_MESSAGES+=("BKS KeyStore creation failed - Bouncy Castle provider not available")
-        else
-            ((STATS_FAILED_FILES++))
-            FAILED_OPERATIONS+=("BKS KeyStore (with password)")
-        fi
-    fi
-    
-    # BKS KeyStore (without password)
-    ((STATS_TOTAL_FILES++))
-    if keytool -importkeystore -deststorepass "" -destkeypass "" \
-        -deststoretype BKS -destkeystore "$cert_dir/$cn.nopass.keystore.bks" \
-        -srckeystore "$pkcs12_nopass_file" -srcstoretype PKCS12 -srcstorepass "" \
-        -alias "$cn" -provider org.bouncycastle.jce.provider.BouncyCastleProvider \
-        -providerpath /usr/share/java/bcprov.jar >/dev/null 2>>"$LOG_FILE"; then
-        log_success "BKS KeyStore (without password) created successfully"
-        ((STATS_SUCCESS_FILES++))
-        update_progress
-    else
-        log_warning "BKS KeyStore (no password) creation failed"
-        # LibreSSL compatibility: treat Java failures as warnings, not critical failures
-        if [[ "$SSL_TYPE" == "libressl" ]]; then
-            ((STATS_WARNINGS++))
-            WARNING_MESSAGES+=("BKS KeyStore (no password) creation failed")
-        else
-            ((STATS_FAILED_FILES++))
-            FAILED_OPERATIONS+=("BKS KeyStore (without password)")
         fi
     fi
 }
@@ -925,18 +874,11 @@ display_file_inventory() {
     check_and_display_file "$cert_dir/$cn.pfx" "PFX (Windows)"
     
     if [[ -z "$java_warnings" ]]; then
-        # No warnings = keytool + Java + BKS all available
+        # No warnings = keytool + Java all available
         check_and_display_file "$cert_dir/$cn.keystore.jks" "Java KeyStore (JKS)"
-        check_and_display_file "$cert_dir/$cn.keystore.bks" "BKS KeyStore (with pass)"
-        check_and_display_file "$cert_dir/$cn.nopass.keystore.bks" "BKS KeyStore (no pass)"
     elif [[ "$java_warnings" == *"keytool not available"* ]] || [[ "$java_warnings" == *"runtime not available"* ]]; then
         # Either keytool or Java runtime missing = skip everything
         echo "   ⚠️  Java KeyStore (JKS):     Skipped (Java not available)"
-        echo "   ⚠️  BKS KeyStore formats:    Skipped (Java not available)"
-    elif [[ "$java_warnings" == *"BKS support requires"* ]]; then
-        # keytool + Java available, but BKS missing = show JKS only
-        check_and_display_file "$cert_dir/$cn.keystore.jks" "Java KeyStore (JKS)"
-        echo "   ⚠️  BKS KeyStore formats:    Skipped (Bouncy Castle not available)"
     fi
     echo ""
     
@@ -956,7 +898,6 @@ display_usage_guidelines() {
     echo "   🌐 Web servers (Apache/Nginx):    Use $cert_dir/$cn.chain.cert.pem + $cert_dir/$cn.key.pem"
     echo "   🪟 Windows Certificate Store:     Import $cert_dir/$cn.pfx or $cert_dir/$cn.pkcs7.p7b"
     echo "   ☕ Java applications:             Use $cert_dir/$cn.keystore.jks or $cert_dir/$cn.pkcs12.p12"
-    echo "   📱 Android applications:          Use $cert_dir/$cn.keystore.bks"
     echo "   📧 Email/S-MIME:                  Use $cert_dir/$cn.pkcs12.p12 or $cert_dir/$cn.pfx"
     echo "   🔧 Legacy/Binary systems:         Use $cert_dir/$cn.cert.der + $cert_dir/$cn.key.der"
     echo "   🧪 Testing purposes:              Use appropriate format for your test environment"

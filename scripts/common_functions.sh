@@ -19,10 +19,44 @@ readonly _COMMON_FUNCTIONS_LOADED=true
 # Detect operating system and SSL implementation
 detect_os() {
     case "$(uname -s)" in
-        Darwin*)    OS_TYPE="macos" ;;
-        Linux*)     OS_TYPE="linux" ;;
-        CYGWIN*|MINGW*|MSYS*)  OS_TYPE="windows" ;;
-        *)          OS_TYPE="unknown" ;;
+        Darwin*)    
+            OS_TYPE="macos" 
+            ;;
+        Linux*)     
+            # Detect specific Linux distribution
+            if [[ -f /etc/redhat-release ]]; then
+                if grep -q "Red Hat Enterprise Linux" /etc/redhat-release; then
+                    OS_TYPE="rhel"
+                elif grep -q "CentOS" /etc/redhat-release; then
+                    OS_TYPE="centos"
+                elif grep -q "Fedora" /etc/redhat-release; then
+                    OS_TYPE="fedora"
+                else
+                    OS_TYPE="redhat"  # Generic Red Hat family
+                fi
+            elif [[ -f /etc/debian_version ]]; then
+                if [[ -f /etc/lsb-release ]] && grep -q "Ubuntu" /etc/lsb-release; then
+                    OS_TYPE="ubuntu"
+                else
+                    OS_TYPE="debian"
+                fi
+            else
+                OS_TYPE="linux"  # Generic Linux
+            fi
+            ;;
+        CYGWIN*|MINGW*|MSYS*)  
+            echo "❌ ERROR: Windows is not supported by this script"
+            echo "This script requires a Unix-like environment (macOS or Linux)"
+            echo "Consider using WSL (Windows Subsystem for Linux) or a Linux VM"
+            exit 1
+            ;;
+        *)          
+            OS_TYPE="unknown" 
+            echo "❌ ERROR: Unknown operating system detected: $(uname -s)"
+            echo "This script supports macOS and Linux distributions only"
+            echo "Supported: macOS, Ubuntu, Debian, RHEL, CentOS, Fedora"
+            exit 1
+            ;;
     esac
     
     # Detect SSL implementation
@@ -56,7 +90,7 @@ get_file_size_by_os() {
         macos)
             stat -f%z "$file_path" 2>/dev/null || echo "unknown"
             ;;
-        linux)
+        rhel|centos|fedora|redhat|ubuntu|debian)
             stat -c%s "$file_path" 2>/dev/null || echo "unknown"
             ;;
         *)
@@ -82,7 +116,7 @@ check_disk_space_by_os() {
             # macOS df uses 512-byte blocks by default, -m for MB
             available_mb=$(df -m "$(dirname "$target_dir")" | awk 'NR==2 {print $4}')
             ;;
-        linux)
+        rhel|centos|fedora|redhat|ubuntu|debian)
             # Linux df, -BM for MB
             available_mb=$(df -BM "$(dirname "$target_dir")" | awk 'NR==2 {print $4}' | sed 's/M//')
             ;;
@@ -144,7 +178,7 @@ check_java_tools_by_os() {
                 warnings+=("Java keytool not available - JKS/BKS formats skipped")
                 warnings+=("Install Java: brew install openjdk")
                 ;;
-            linux)
+            rhel|centos|fedora|redhat|ubuntu|debian)
                 warnings+=("Java keytool not available - JKS/BKS formats skipped")
                 warnings+=("Install Java: sudo apt-get install openjdk-11-jdk (Ubuntu/Debian)")
                 ;;
@@ -164,7 +198,7 @@ check_java_tools_by_os() {
                 warnings+=("Java runtime not available - JKS/BKS formats skipped")
                 warnings+=("Install Java runtime: brew install openjdk")
                 ;;
-            linux)
+            rhel|centos|fedora|redhat|ubuntu|debian)
                 warnings+=("Java runtime not available - JKS/BKS formats skipped")
                 warnings+=("Install Java runtime: sudo apt-get install openjdk-11-jre (Ubuntu/Debian)")
                 ;;
@@ -192,7 +226,7 @@ check_java_tools_by_os() {
                 "/usr/share/java/bcprov.jar"          # Standard location
             )
             ;;
-        linux)
+        rhel|centos|fedora|redhat|ubuntu|debian)
             bc_jar_paths=(
                 "/usr/share/java/bcprov.jar"
                 "/usr/share/java/bcprov-jdk15on.jar"
@@ -218,7 +252,7 @@ check_java_tools_by_os() {
                 warnings+=("BKS support requires Bouncy Castle provider")
                 warnings+=("Install with: brew install bouncy-castle")
                 ;;
-            linux)
+            rhel|centos|fedora|redhat|ubuntu|debian)
                 warnings+=("BKS support requires Bouncy Castle provider")
                 warnings+=("Install with: sudo apt-get install libbcprov-java (Ubuntu/Debian)")
                 ;;

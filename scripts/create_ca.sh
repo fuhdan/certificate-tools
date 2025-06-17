@@ -174,7 +174,7 @@ validate_prerequisites() {
                 log_warning "  export PATH=\"/usr/local/bin:\$PATH\"     # Intel"
             fi
             ;;
-        linux)
+        rhel|centos|fedora|redhat|ubuntu|debian)
             log_debug "Linux system detected - using native tools"
             ;;
         *)
@@ -856,11 +856,23 @@ main() {
             echo "  🍺 If you encounter Java/OpenSSL issues, consider Homebrew:"
             echo "     brew install openssl openjdk bouncy-castle"
             ;;
-        linux)
+        ubuntu|debian)
             echo ""
             echo -e "${YELLOW}${BOLD}Linux Notes:${NC}"
             echo "  📦 For Java keystore support, ensure Java is installed:"
             echo "     sudo apt-get install openjdk-11-jdk libbcprov-java"
+            ;;
+        rhel|centos|fedora|redhat)
+            echo ""
+            echo -e "${YELLOW}${BOLD}Linux Notes:${NC}"
+            echo "  📦 For Java keystore support, ensure Java is installed:"
+            echo "     Install Java: sudo dnf install java-11-openjdk-devel"
+            ;;
+        linux)
+            echo ""
+            echo -e "${YELLOW}${BOLD}Linux Notes:${NC}"
+            echo "  📦 For Java keystore support, ensure Java is installed:"
+            echo "     Install Java: (distribution-specific command)"
             ;;
     esac
     echo ""

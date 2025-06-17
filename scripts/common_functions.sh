@@ -178,9 +178,13 @@ check_java_tools_by_os() {
                 warnings+=("Java keytool not available - JKS/BKS formats skipped")
                 warnings+=("Install Java: brew install openjdk")
                 ;;
-            rhel|centos|fedora|redhat|ubuntu|debian)
+            ubuntu|debian)
                 warnings+=("Java keytool not available - JKS/BKS formats skipped")
                 warnings+=("Install Java: sudo apt-get install openjdk-11-jdk (Ubuntu/Debian)")
+                ;;
+            rhel|centos|fedora|redhat)
+                warnings+=("Java keytool not available - JKS/BKS formats skipped")
+                warnings+=("Install Java: sudo dnf install java-21-openjdk-devel (Red/Debian)")
                 ;;
             *)
                 warnings+=("Java keytool not available - JKS/BKS formats skipped")
@@ -201,6 +205,10 @@ check_java_tools_by_os() {
             rhel|centos|fedora|redhat|ubuntu|debian)
                 warnings+=("Java runtime not available - JKS/BKS formats skipped")
                 warnings+=("Install Java runtime: sudo apt-get install openjdk-11-jre (Ubuntu/Debian)")
+                ;;
+            rhel|centos|fedora|redhat|ubuntu|debian)
+                warnings+=("Java runtime not available - JKS/BKS formats skipped")
+                warnings+=("Install Java runtime: sudo dnf install openjdk-21-jre (Red/Debian)")
                 ;;
             *)
                 warnings+=("Java runtime not available - JKS/BKS formats skipped")
@@ -230,6 +238,7 @@ check_java_tools_by_os() {
             bc_jar_paths=(
                 "/usr/share/java/bcprov.jar"
                 "/usr/share/java/bcprov-jdk15on.jar"
+                "/usr/share/java/bcprov-jdk18on-1.81.jar"
             )
             ;;
         *)

@@ -1,0 +1,72 @@
+=== Enhanced cert_issuance Log - Tue Jun 17 19:31:47 UTC 2025 ===
+Log Level: DEBUG
+Operating System: ubuntu
+=========================================
+[19:31:47] [DEBUG] Loading configuration from: /home/daniel/certificate-tools/scripts/cert_config.conf
+[19:31:47] [INFO] Input parameters validation passed
+[19:31:47] [INFO] SANs validation passed
+[19:31:49] [INFO] Using default password
+[19:31:49] [INFO] Starting operation with 17 steps
+[19:31:49] [INFO] Validating prerequisites
+[19:31:49] [INFO] SSL Implementation: openssl version 3.0.13
+[19:31:49] [INFO] Prerequisites validation completed
+[19:31:49] [INFO] Validating CA structure for 'IssuingCA1'
+[19:31:49] [INFO] CA structure validation passed for 'IssuingCA1'
+[19:31:49] [INFO] Setting up output directory
+[19:31:49] [INFO] Backing up existing directory to: ./certificate/server1.local.backup.20250617_193149
+[19:31:49] [INFO] Backup created successfully
+[19:31:49] [INFO] Starting certificate generation process
+[19:31:49] [INFO] Unencrypted private key (PEM) completed successfully
+writing RSA key
+[19:31:49] [INFO] Unencrypted private key (DER) completed successfully
+writing RSA key
+[19:31:49] [INFO] Encrypted private key (PEM) completed successfully
+writing RSA key
+[19:31:49] [INFO] Encrypted private key (DER) completed successfully
+[19:31:49] [INFO] Creating certificate signing request configuration
+[19:31:49] [INFO] Certificate signing request completed successfully
+[19:31:49] [INFO] Using OpenSSL ca command for certificate signing
+Using configuration from ./CertificateAuthority/IssuingCA1/temp_openssl.cnf
+Check that the request matches the signature
+Signature ok
+Certificate Details:
+        Serial Number: 4097 (0x1001)
+        Validity
+            Not Before: Jun 17 19:31:49 2025 GMT
+            Not After : Sep 20 19:31:49 2027 GMT
+        Subject:
+            countryName               = CH
+            stateOrProvinceName       = BE
+            organizationName          = DanielF
+            organizationalUnitName    = IT Infrastructure
+            commonName                = server1.local
+        X509v3 extensions:
+            X509v3 Basic Constraints: 
+                CA:FALSE
+            X509v3 Key Usage: 
+                Digital Signature, Key Encipherment
+            X509v3 Extended Key Usage: 
+                TLS Web Server Authentication, TLS Web Client Authentication
+            X509v3 Subject Key Identifier: 
+                72:81:73:8F:D2:21:B3:BE:C4:8F:15:19:80:8E:F9:6A:D2:DA:E0:16
+            X509v3 Authority Key Identifier: 
+                30:0A:F5:78:DB:B8:90:16:F3:D7:79:F2:D3:71:C8:EA:D8:03:5C:3D
+            X509v3 Subject Alternative Name: 
+                DNS:server1.local, DNS:www.server1.local, IP Address:172.16.94.90
+Certificate is to be certified until Sep 20 19:31:49 2027 GMT (825 days)
+
+Write out database with 1 new entries
+Database updated
+[19:31:49] [INFO] Signed certificate completed successfully
+[19:31:49] [INFO] Building certificate chain (PEM)
+[19:31:49] [INFO] Certificate chain (PEM) created successfully
+[19:31:49] [INFO] Certificate (DER) completed successfully
+[19:31:49] [INFO] Certificate chain (DER) completed successfully
+[19:31:49] [INFO] PKCS#7 bundle (PEM) completed successfully
+[19:31:50] [INFO] PKCS#7 bundle (DER) completed successfully
+[19:31:50] [INFO] PKCS#12 bundle (with password) completed successfully
+[19:31:50] [INFO] PKCS#12 bundle (without password) completed successfully
+[19:31:50] [INFO] PFX bundle (Windows) completed successfully
+[19:31:50] [INFO] All steps completed successfully
+[19:31:50] [INFO] Cleaning up 16 temporary files
+[19:31:50] [INFO] Script completed successfully

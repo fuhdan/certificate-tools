@@ -1,0 +1,71 @@
+[ ca ]
+default_ca = CA_default
+
+[ CA_default ]
+dir               = ./CertificateAuthority/IssuingCA2
+certs             = $dir/certs
+crl_dir           = $dir/crl
+new_certs_dir     = $dir/newcerts
+database          = $dir/index.txt
+serial            = $dir/serial
+RANDFILE          = $dir/private/.rand
+private_key       = $dir/private/ca.key.pem
+certificate       = $dir/certs/ca.cert.pem
+crlnumber         = $dir/crlnumber
+crl               = $dir/crl/ca.crl.pem
+crl_extensions    = crl_ext
+default_crl_days  = 30
+default_md        = sha256
+name_opt          = ca_default
+cert_opt          = ca_default
+default_days      = 825
+preserve          = no
+policy            = policy_loose
+email_in_dn       = no
+unique_subject    = no
+
+[ policy_loose ]
+countryName             = optional
+stateOrProvinceName     = optional
+organizationName        = optional
+organizationalUnitName  = optional
+commonName              = supplied
+
+[ req ]
+default_bits        = 4096
+prompt              = no
+default_md          = sha256
+distinguished_name  = dn
+x509_extensions     = v3_ca
+
+[ dn ]
+C  = CH
+ST = BE
+O  = DanielF
+OU = IT Infrastructure
+CN = DanielF Issuing CA 2
+
+[ v3_ca ]
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid:always,issuer
+basicConstraints = critical, CA:true
+keyUsage = critical, digitalSignature, cRLSign, keyCertSign
+
+[ v3_intermediate_ca ]
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid:always,issuer
+basicConstraints = critical, CA:true, pathlen:1
+keyUsage = critical, digitalSignature, cRLSign, keyCertSign
+
+[ v3_issuing_ca ]
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid:always,issuer
+basicConstraints = critical, CA:true, pathlen:0
+keyUsage = critical, digitalSignature, cRLSign, keyCertSign
+
+[ v3_usr ]
+basicConstraints = CA:FALSE
+keyUsage = digitalSignature, keyEncipherment
+extendedKeyUsage = serverAuth, clientAuth
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid,issuer

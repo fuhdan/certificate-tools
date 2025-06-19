@@ -1,21 +1,22 @@
+version: '3.8'
+
 services:
-  backend:
-    build: ./backend
+  certificate-tools-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
     ports:
-      - "3001:3001"
+      - "3000:3000"
     environment:
       - NODE_ENV=production
-      - PORT=3001
+    env_file:
+      - ./frontend/.env
     volumes:
-      - ./backend/logs:/app/logs
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
     restart: unless-stopped
+    container_name: certificate-tools-frontend
 
-  frontend:
-    build: ./frontend
-    ports:
-      - "3000:80"
-    depends_on:
-      - backend
-    environment:
-      - REACT_APP_API_URL=http://localhost:3001
-    restart: unless-stopped
+networks:
+  default:
+    name: certificate-tools-network

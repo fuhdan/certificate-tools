@@ -1,0 +1,223 @@
+=== Enhanced ca_creation Log - Tue Jun 17 19:31:31 UTC 2025 ===
+Log Level: INFO
+Operating System: ubuntu
+=========================================
+[19:31:31] [INFO] Starting CA hierarchy creation
+[19:31:31] [INFO] Operating System: ubuntu
+[19:31:31] [INFO] Configuration: /home/daniel/certificate-tools/scripts/ca_config.conf
+[19:31:31] [INFO] Base directory: ./CertificateAuthority
+[19:31:31] [INFO] Starting operation with 22 steps
+[19:31:31] [INFO] Validating prerequisites...
+[19:31:31] [INFO] SSL Implementation: openssl version 3.0.13
+[19:31:31] [INFO] Prerequisites validation completed
+[19:31:31] [INFO] Creating CA hierarchy...
+[19:31:31] [INFO] Creating CA: RootCA
+[19:31:31] [INFO] Setting up directory structure for RootCA
+[19:31:31] [INFO] Directory structure created for RootCA
+[19:31:31] [INFO] Generating private key for RootCA (4096 bits)
+[19:31:32] [INFO] Private key generation completed successfully
+[19:31:32] [INFO] Private key generated and secured
+[19:31:32] [INFO] Creating certificate for RootCA
+[19:31:32] [INFO] Creating self-signed root certificate
+[19:31:32] [INFO] Root CA CSR creation completed successfully
+Certificate request self-signature ok
+subject=C = CH, ST = BE, O = DanielF, OU = IT Infrastructure, CN = DanielF Root CA
+[19:31:32] [INFO] Root certificate creation completed successfully
+[19:31:32] [INFO] Certificate extensions validation passed
+[19:31:32] [INFO] Root certificate created and validated
+[19:31:32] [INFO] CA 'RootCA' created successfully
+[19:31:32] [INFO] Creating CA: IntermediateCA1
+[19:31:32] [INFO] Setting up directory structure for IntermediateCA1
+[19:31:32] [INFO] Directory structure created for IntermediateCA1
+[19:31:32] [INFO] Generating private key for IntermediateCA1 (3072 bits)
+[19:31:33] [INFO] Private key generation completed successfully
+[19:31:33] [INFO] Private key generated and secured
+[19:31:33] [INFO] Creating certificate for IntermediateCA1
+[19:31:33] [INFO] Creating certificate signing request
+[19:31:33] [INFO] CSR creation completed successfully
+[19:31:33] [INFO] Signing certificate with parent CA
+Using configuration from ./CertificateAuthority/RootCA/openssl.cnf
+Check that the request matches the signature
+Signature ok
+Certificate Details:
+        Serial Number: 4096 (0x1000)
+        Validity
+            Not Before: Jun 17 19:31:33 2025 GMT
+            Not After : Jun 16 19:31:33 2030 GMT
+        Subject:
+            countryName               = CH
+            stateOrProvinceName       = BE
+            organizationName          = DanielF
+            organizationalUnitName    = IT Infrastructure
+            commonName                = DanielF Intermediate CA 1
+        X509v3 extensions:
+            X509v3 Subject Key Identifier: 
+                E8:99:D2:87:09:2C:91:CF:EB:1C:90:ED:2E:C6:35:B5:2E:0A:F9:79
+            X509v3 Authority Key Identifier: 
+                76:E6:9B:04:E3:6A:F0:31:05:2E:E9:0F:19:54:24:97:32:AE:16:4A
+            X509v3 Basic Constraints: critical
+                CA:TRUE, pathlen:1
+            X509v3 Key Usage: critical
+                Digital Signature, Certificate Sign, CRL Sign
+Certificate is to be certified until Jun 16 19:31:33 2030 GMT (1825 days)
+
+Write out database with 1 new entries
+Database updated
+[19:31:33] [INFO] Certificate signing completed successfully
+[19:31:33] [INFO] Certificate extensions validation passed
+[19:31:33] [INFO] Certificate created and validated
+[19:31:33] [INFO] CA 'IntermediateCA1' created successfully
+[19:31:33] [INFO] Creating CA: IssuingCA1
+[19:31:33] [INFO] Setting up directory structure for IssuingCA1
+[19:31:33] [INFO] Directory structure created for IssuingCA1
+[19:31:33] [INFO] Generating private key for IssuingCA1 (3072 bits)
+[19:31:33] [INFO] Private key generation completed successfully
+[19:31:34] [INFO] Private key generated and secured
+[19:31:34] [INFO] Creating certificate for IssuingCA1
+[19:31:34] [INFO] Creating certificate signing request
+[19:31:34] [INFO] CSR creation completed successfully
+[19:31:34] [INFO] Signing certificate with parent CA
+Using configuration from ./CertificateAuthority/IntermediateCA1/openssl.cnf
+Check that the request matches the signature
+Signature ok
+Certificate Details:
+        Serial Number: 4096 (0x1000)
+        Validity
+            Not Before: Jun 17 19:31:34 2025 GMT
+            Not After : Sep 20 19:31:34 2027 GMT
+        Subject:
+            countryName               = CH
+            stateOrProvinceName       = BE
+            organizationName          = DanielF
+            organizationalUnitName    = IT Infrastructure
+            commonName                = DanielF Issuing CA 1
+        X509v3 extensions:
+            X509v3 Subject Key Identifier: 
+                30:0A:F5:78:DB:B8:90:16:F3:D7:79:F2:D3:71:C8:EA:D8:03:5C:3D
+            X509v3 Authority Key Identifier: 
+                E8:99:D2:87:09:2C:91:CF:EB:1C:90:ED:2E:C6:35:B5:2E:0A:F9:79
+            X509v3 Basic Constraints: critical
+                CA:TRUE, pathlen:0
+            X509v3 Key Usage: critical
+                Digital Signature, Certificate Sign, CRL Sign
+Certificate is to be certified until Sep 20 19:31:34 2027 GMT (825 days)
+
+Write out database with 1 new entries
+Database updated
+[19:31:34] [INFO] Certificate signing completed successfully
+[19:31:34] [INFO] Certificate extensions validation passed
+[19:31:34] [INFO] Certificate created and validated
+[19:31:34] [INFO] CA 'IssuingCA1' created successfully
+[19:31:34] [INFO] Creating CA: IssuingCA2
+[19:31:34] [INFO] Setting up directory structure for IssuingCA2
+[19:31:34] [INFO] Directory structure created for IssuingCA2
+[19:31:34] [INFO] Generating private key for IssuingCA2 (3072 bits)
+[19:31:34] [INFO] Private key generation completed successfully
+[19:31:34] [INFO] Private key generated and secured
+[19:31:34] [INFO] Creating certificate for IssuingCA2
+[19:31:34] [INFO] Creating certificate signing request
+[19:31:34] [INFO] CSR creation completed successfully
+[19:31:34] [INFO] Signing certificate with parent CA
+Using configuration from ./CertificateAuthority/RootCA/openssl.cnf
+Check that the request matches the signature
+Signature ok
+Certificate Details:
+        Serial Number: 4097 (0x1001)
+        Validity
+            Not Before: Jun 17 19:31:34 2025 GMT
+            Not After : Sep 20 19:31:34 2027 GMT
+        Subject:
+            countryName               = CH
+            stateOrProvinceName       = BE
+            organizationName          = DanielF
+            organizationalUnitName    = IT Infrastructure
+            commonName                = DanielF Issuing CA 2
+        X509v3 extensions:
+            X509v3 Subject Key Identifier: 
+                EA:45:FD:74:1A:7D:9A:99:01:C2:0B:82:1C:16:E5:29:EE:F6:DC:40
+            X509v3 Authority Key Identifier: 
+                76:E6:9B:04:E3:6A:F0:31:05:2E:E9:0F:19:54:24:97:32:AE:16:4A
+            X509v3 Basic Constraints: critical
+                CA:TRUE, pathlen:0
+            X509v3 Key Usage: critical
+                Digital Signature, Certificate Sign, CRL Sign
+Certificate is to be certified until Sep 20 19:31:34 2027 GMT (825 days)
+
+Write out database with 1 new entries
+Database updated
+[19:31:34] [INFO] Certificate signing completed successfully
+[19:31:34] [INFO] Certificate extensions validation passed
+[19:31:34] [INFO] Certificate created and validated
+[19:31:34] [INFO] CA 'IssuingCA2' created successfully
+[19:31:34] [INFO] Created 4 Certificate Authorities in 3s
+[19:31:34] [INFO] Location: ./CertificateAuthority
+[19:31:34] [INFO] Running comprehensive tests...
+[19:31:34] [INFO] Starting comprehensive testing of CA hierarchy...
+[19:31:34] [INFO] Testing CA: RootCA
+[19:31:34] [INFO] Testing CA certificate: RootCA
+[19:31:35] [INFO] Certificate extensions validation passed
+[19:31:35] [INFO] Self-signed certificate validation passed
+[19:31:35] [INFO] All tests passed for CA: RootCA
+[19:31:35] [INFO] Testing CA: IntermediateCA1
+[19:31:35] [INFO] Testing CA certificate: IntermediateCA1
+[19:31:35] [INFO] Certificate extensions validation passed
+[19:31:35] [INFO] Certificate chain validation passed
+[19:31:35] [INFO] All tests passed for CA: IntermediateCA1
+[19:31:35] [INFO] Testing CA: IssuingCA1
+[19:31:35] [INFO] Testing CA certificate: IssuingCA1
+[19:31:35] [INFO] Certificate extensions validation passed
+[19:31:35] [INFO] Certificate chain validation passed
+[19:31:36] [INFO] All tests passed for CA: IssuingCA1
+[19:31:36] [INFO] Testing CA functionality: IssuingCA1
+Using configuration from ./CertificateAuthority/IssuingCA1/openssl.cnf
+Check that the request matches the signature
+Signature ok
+Certificate Details:
+        Serial Number: 4096 (0x1000)
+        Validity
+            Not Before: Jun 17 19:31:36 2025 GMT
+            Not After : Jul 17 19:31:36 2025 GMT
+        Subject:
+            countryName               = CH
+            stateOrProvinceName       = BE
+            organizationName          = DanielF
+            organizationalUnitName    = Testing
+            commonName                = test.example.com
+Certificate is to be certified until Jul 17 19:31:36 2025 GMT (30 days)
+
+Write out database with 1 new entries
+Database updated
+[19:31:36] [INFO] CA functionality test passed for: IssuingCA1
+[19:31:36] [INFO] Testing CA: IssuingCA2
+[19:31:36] [INFO] Testing CA certificate: IssuingCA2
+[19:31:36] [INFO] Certificate extensions validation passed
+[19:31:36] [INFO] Certificate chain validation passed
+[19:31:36] [INFO] All tests passed for CA: IssuingCA2
+[19:31:36] [INFO] Testing CA functionality: IssuingCA2
+Using configuration from ./CertificateAuthority/IssuingCA2/openssl.cnf
+Check that the request matches the signature
+Signature ok
+Certificate Details:
+        Serial Number: 4096 (0x1000)
+        Validity
+            Not Before: Jun 17 19:31:36 2025 GMT
+            Not After : Jul 17 19:31:36 2025 GMT
+        Subject:
+            countryName               = CH
+            stateOrProvinceName       = BE
+            organizationName          = DanielF
+            organizationalUnitName    = Testing
+            commonName                = test.example.com
+Certificate is to be certified until Jul 17 19:31:36 2025 GMT (30 days)
+
+Write out database with 1 new entries
+Database updated
+[19:31:36] [INFO] CA functionality test passed for: IssuingCA2
+[19:31:36] [INFO] Testing hierarchy integrity...
+[19:31:36] [INFO] Hierarchy integrity test passed
+[19:31:36] [INFO] All steps completed successfully
+[19:31:36] [INFO] TEST SUMMARY
+[19:31:36] [INFO] All tests passed! (7/7)
+[19:31:36] [INFO] All tests passed - CA hierarchy is ready for use!
+[19:31:36] [INFO] Cleaning up 25 temporary files
+[19:31:36] [INFO] Script completed successfully

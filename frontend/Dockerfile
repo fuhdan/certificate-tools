@@ -1,11 +1,12 @@
-FROM node:22.16.0-slim AS build
+# Build stage
+FROM node:18-alpine AS build
 
 WORKDIR /app
 
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies
+# Install dependencies (use npm install since we don't have package-lock.json)
 RUN npm install
 
 # Copy source code
@@ -18,11 +19,13 @@ RUN npm run build
 FROM nginx:alpine
 
 # Copy built app to nginx
-COPY --from=build /app/build /usr/share/nginx/html
+COPY --from=build /app/dist /usr/share/nginx/html
 
-# Copy nginx config
-COPY nginx.conf /etc/nginx/nginx.conf
+# Copy custom nginx config
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 
-EXPOSE 80
+# Expose port
+EXPOSE 3000
 
+# Start nginx
 CMD ["nginx", "-g", "daemon off;"]

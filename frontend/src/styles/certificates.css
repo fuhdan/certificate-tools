@@ -1,0 +1,11 @@
+.cert_status.due {
+  background-color: rgb(164, 00, 29);
+  color: white;
+  font-weight: bold;
+}
+
+.cert_status.soon {
+  background-color: orange;
+  color: white;
+  font-weight: bold;
+}

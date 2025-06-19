@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  certificate-tools-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+    env_file:
+      - ./frontend/.env
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+    restart: unless-stopped
+    container_name: certificate-tools-frontend
+
+networks:
+  default:
+    name: certificate-tools-network

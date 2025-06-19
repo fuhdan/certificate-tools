@@ -16,6 +16,19 @@ services:
       - ./frontend/public:/app/public
     restart: unless-stopped
     container_name: certificate-tools-frontend
+    depends_on:
+      - certificate-tools-backend
+
+  certificate-tools-backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONPATH=/app
+    restart: unless-stopped
+    container_name: certificate-tools-backend
 
 networks:
   default:

@@ -3,11 +3,13 @@ import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
 import TextField from "@mui/material/TextField";
 import {CloudUpload} from "@mui/icons-material";
+import apiService from "../services/api.js";
 
-const InputSection = forwardRef(({ onDataReceived }, ref) => {
+const InputSection = forwardRef(({ onDataReceived, onCertificateData }, ref) => {
     const [inputText, setInputText] = useState('');
     const [isDragOver, setIsDragOver] = useState(false);
     const [fileName, setFileName] = useState('');
+    const [isUploading, setIsUploading] = useState(false);
     const fileInputRef = useRef(null);
 
     // Expose clearAll method to parent
@@ -16,8 +18,12 @@ const InputSection = forwardRef(({ onDataReceived }, ref) => {
             console.log("InputSection: clearAll called");
             setInputText('');
             setFileName('');
+            setIsUploading(false);
             if (onDataReceived) {
                 onDataReceived('', 'clear');
+            }
+            if (onCertificateData) {
+                onCertificateData(null);
             }
         }
     }));
@@ -31,19 +37,45 @@ const InputSection = forwardRef(({ onDataReceived }, ref) => {
         }
     };
 
-    const handleFileUpload = (file) => {
+    const handleFileUpload = async (file) => {
         if (file) {
             setFileName(file.name);
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                const content = e.target.result;
-                console.log("InputSection: file uploaded, content:", content, "size:", file.size);
-                setInputText(content);
-                if (onDataReceived) {
-                    onDataReceived(content, 'file', file.name, file.size);
+            setIsUploading(true);
+            
+            console.log("InputSection: uploading file to API:", file.name);
+            
+            try {
+                // Send file to API
+                const result = await apiService.uploadFile(file);
+                
+                if (result.success) {
+                    console.log("InputSection: file processed successfully:", result.data);
+                    
+                    // Update text area with file content for display
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        setInputText(e.target.result);
+                    };
+                    reader.readAsText(file);
+                    
+                    // Notify parent components
+                    if (onDataReceived) {
+                        onDataReceived(file.name, 'file', file.name, file.size);
+                    }
+                    
+                    // Send certificate data to parent for table population
+                    if (onCertificateData) {
+                        onCertificateData(result.data);
+                    }
+                } else {
+                    console.error("InputSection: file upload failed:", result.error);
+                    // You could show an error message here
                 }
-            };
-            reader.readAsText(file);
+            } catch (error) {
+                console.error("InputSection: file upload error:", error);
+            } finally {
+                setIsUploading(false);
+            }
         }
     };
 
@@ -101,9 +133,10 @@ const InputSection = forwardRef(({ onDataReceived }, ref) => {
                 multiline
                 rows={3}
                 variant="outlined"
-                placeholder="Paste your text here..."
+                placeholder="Paste your text here or upload a file below..."
                 value={inputText}
                 onChange={handleTextChange}
+                disabled={isUploading}
                 sx={{
                     width: '100%',
                     marginBottom: '15px',
@@ -130,13 +163,14 @@ const InputSection = forwardRef(({ onDataReceived }, ref) => {
                     padding: '15px',
                     textAlign: 'center',
                     backgroundColor: isDragOver ? 'rgba(1, 111, 157, 0.1)' : 'rgba(0, 0, 0, 0.02)',
-                    cursor: 'pointer',
+                    cursor: isUploading ? 'not-allowed' : 'pointer',
                     transition: 'all 0.3s ease',
                     height: '80px',
                     display: 'flex',
                     flexDirection: 'column',
                     alignItems: 'center',
                     justifyContent: 'center',
+                    opacity: isUploading ? 0.6 : 1,
                 }}
             >
                 <CloudUpload sx={{ 
@@ -145,7 +179,9 @@ const InputSection = forwardRef(({ onDataReceived }, ref) => {
                     marginBottom: '5px',
                 }} />
                 <Typography variant="body2" sx={{ color: '#666' }}>
-                    {fileName ? `File: ${fileName}` : 'Drag & drop file or click to browse'}
+                    {isUploading ? 'Processing file...' : 
+                     fileName ? `File: ${fileName}` : 
+                     'Drag & drop certificate file or click to browse'}
                 </Typography>
             </Box>
 
@@ -154,8 +190,9 @@ const InputSection = forwardRef(({ onDataReceived }, ref) => {
                 type="file"
                 ref={fileInputRef}
                 onChange={handleFileSelect}
-                accept=".txt,.csv,.json"
+                accept=".csr,.crt,.pem,.der,.p7b,.p12,.pfx"
                 style={{ display: 'none' }}
+                disabled={isUploading}
             />
         </Box>
     );

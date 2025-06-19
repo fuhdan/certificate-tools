@@ -1,36 +1,45 @@
 import Box from "@mui/material/Box"
 import ypsomedLogo1 from '../assets/ypsomedLogo1.png'
 import Button from "@mui/material/Button";
-import {useEffect, useState} from "react";
+import {useState} from "react";
 
 const Header = ({parentCallback}) => {
     const [isSignedIn, setIsSignedIn] = useState(false);
     const [userName, setUserName] = useState("Demo User");
 
-    useEffect(() => {
-        // Mock authentication state for demo
-        const roleDataJson = {
-            isSuperuser: false,
-            isAuthorized: true, // Set to true for demo
-        }
-        
-        // Set demo session storage
-        sessionStorage.setItem("isAuthorized", String(true));
-        sessionStorage.setItem("isSuperuser", String(false));
-        
-        parentCallback(roleDataJson);
-    }, [parentCallback]);
-
     const handleSignIn = () => {
-        console.log("Demo sign in clicked");
+        console.log("Demo sign in clicked - making user superuser");
         setIsSignedIn(true);
-        setUserName("Demo User");
+        setUserName("Demo User (Superuser)");
+        
+        // Set as superuser
+        sessionStorage.setItem("isAuthorized", String(false));
+        sessionStorage.setItem("isSuperuser", String(true));
+        
+        // Notify parent
+        const roleDataJson = {
+            isSuperuser: true,
+            isAuthorized: false,
+        }
+        console.log("HEADER: Calling parentCallback with", roleDataJson);
+        parentCallback(roleDataJson);
     };
 
     const handleSignOut = () => {
         console.log("Demo sign out clicked");
         setIsSignedIn(false);
         setUserName("Demo User");
+        
+        // Clear session storage
+        sessionStorage.setItem("isAuthorized", String(false));
+        sessionStorage.setItem("isSuperuser", String(false));
+        
+        // Notify parent
+        const roleDataJson = {
+            isSuperuser: false,
+            isAuthorized: false,
+        }
+        parentCallback(roleDataJson);
     };
 
     return (
@@ -92,7 +101,7 @@ const Header = ({parentCallback}) => {
                             variant="contained"
                             onClick={handleSignOut}
                             sx={{
-                                backgroundColor: 'white',
+                                backgroundColor: 'gold',
                                 color: 'black',
                                 m: 1,
                                 borderRadius: '100px',

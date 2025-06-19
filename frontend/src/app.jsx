@@ -26,10 +26,7 @@ function App() {
     const handleCallback = (parentCallback) => {
         console.debug("APP", "roleDataJson", roleDataJson);
         console.debug("APP", "parentCallback", parentCallback);
-        if (roleDataJson.isSuperuser !== parentCallback.isSuperuser ||
-            roleDataJson.isAuthorized !== parentCallback.isAuthorized) {
-            setRoleDataJson(parentCallback);
-        }
+        setRoleDataJson(parentCallback);
     };
 
     return (
@@ -46,9 +43,9 @@ function App() {
                     flex: 1,
                     paddingBottom: '60px', // Space for fixed footer
                 }}>
-                    <Home/>
+                    <Home isSuperuser={roleDataJson.isSuperuser} />
                 </Box>
-                <Footer value="home" />
+                <Footer value="1" />
             </Box>
         </>
     );

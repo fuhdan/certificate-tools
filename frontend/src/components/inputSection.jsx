@@ -51,12 +51,38 @@ const InputSection = forwardRef(({ onDataReceived, onCertificateData }, ref) => 
                 if (result.success) {
                     console.log("InputSection: file processed successfully:", result.data);
                     
-                    // Update text area with file content for display
-                    const reader = new FileReader();
-                    reader.onload = (e) => {
-                        setInputText(e.target.result);
-                    };
-                    reader.readAsText(file);
+                    // Check if it's a DER format file that needs conversion to PEM for display
+                    if (result.data.fileformat === 'DER') {
+                        // For DER files, show PEM format in text area
+                        const arrayBuffer = await file.arrayBuffer();
+                        const base64String = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+                        
+                        // Format as PEM based on file type
+                        let pemHeader, pemFooter;
+                        if (result.data.filetype === 'certificate') {
+                            pemHeader = '-----BEGIN CERTIFICATE-----';
+                            pemFooter = '-----END CERTIFICATE-----';
+                        } else if (result.data.filetype === 'csr') {
+                            pemHeader = '-----BEGIN CERTIFICATE REQUEST-----';
+                            pemFooter = '-----END CERTIFICATE REQUEST-----';
+                        } else {
+                            pemHeader = '-----BEGIN CERTIFICATE-----';
+                            pemFooter = '-----END CERTIFICATE-----';
+                        }
+                        
+                        // Format base64 with line breaks every 64 characters
+                        const formattedBase64 = base64String.match(/.{1,64}/g).join('\n');
+                        const pemContent = `${pemHeader}\n${formattedBase64}\n${pemFooter}`;
+                        
+                        setInputText(pemContent);
+                    } else {
+                        // For PEM and other text formats, display file content as-is
+                        const reader = new FileReader();
+                        reader.onload = (e) => {
+                            setInputText(e.target.result);
+                        };
+                        reader.readAsText(file);
+                    }
                     
                     // Notify parent components
                     if (onDataReceived) {

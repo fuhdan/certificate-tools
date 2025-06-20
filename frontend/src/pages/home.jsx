@@ -37,6 +37,15 @@ function Home({ isSuperuser }) {
     const handleCertificateData = (certData) => {
         console.log("HOME: Certificate data received:", certData);
         setCertificateData(certData);
+        
+        // Update file info with certificate metadata
+        if (certData) {
+            setFileInfo(prev => ({
+                ...prev,
+                fileType: certData.filetype,
+                fileFormat: certData.fileformat
+            }));
+        }
     };
 
     const handleClearAll = () => {
@@ -61,29 +70,7 @@ function Home({ isSuperuser }) {
         const rows = [];
         let id = 1;
 
-        // File information
-        rows.push({
-            id: id++,
-            property: 'Filename',
-            value: certificateData.filename || 'Unknown',
-            comment: 'Original uploaded filename'
-        });
-
-        rows.push({
-            id: id++,
-            property: 'File Type',
-            value: certificateData.filetype || 'Unknown',
-            comment: 'Type of certificate file'
-        });
-
-        rows.push({
-            id: id++,
-            property: 'File Format',
-            value: certificateData.fileformat || 'Unknown',
-            comment: 'Encoding format of the file'
-        });
-
-        // Certificate properties
+        // Certificate properties only (file info moved to options panel)
         Object.entries(certificateData.certificate).forEach(([key, value]) => {
             rows.push({
                 id: id++,

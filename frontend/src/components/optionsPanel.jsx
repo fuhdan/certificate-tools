@@ -377,6 +377,48 @@ const OptionsPanel = ({ onClearAll, fileInfo }) => {
                                 {fileInfo.fileName}
                             </Typography>
                         </Box>
+                        {fileInfo.fileType && (
+                            <Box sx={{
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                            }}>
+                                <Typography variant="caption" sx={{ 
+                                    fontWeight: 'normal',
+                                    color: 'rgba(0, 0, 0, 0.5)',
+                                    fontSize: '10px',
+                                }}>
+                                    File Type:
+                                </Typography>
+                                <Typography variant="caption" sx={{ 
+                                    color: 'rgba(0, 0, 0, 0.4)',
+                                    fontSize: '10px',
+                                }}>
+                                    {fileInfo.fileType}
+                                </Typography>
+                            </Box>
+                        )}
+                        {fileInfo.fileFormat && (
+                            <Box sx={{
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                            }}>
+                                <Typography variant="caption" sx={{ 
+                                    fontWeight: 'normal',
+                                    color: 'rgba(0, 0, 0, 0.5)',
+                                    fontSize: '10px',
+                                }}>
+                                    File Format:
+                                </Typography>
+                                <Typography variant="caption" sx={{ 
+                                    color: 'rgba(0, 0, 0, 0.4)',
+                                    fontSize: '10px',
+                                }}>
+                                    {fileInfo.fileFormat}
+                                </Typography>
+                            </Box>
+                        )}
                         <Box sx={{
                             display: 'flex',
                             justifyContent: 'space-between',

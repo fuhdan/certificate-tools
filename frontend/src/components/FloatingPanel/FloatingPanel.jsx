@@ -1,9 +1,17 @@
 import React from 'react'
 import ConnectionStatus from './ConnectionStatus'
 import FileManager from './FileManager'
+import { Trash2 } from 'lucide-react'
 import styles from './FloatingPanel.module.css'
 
 const FloatingPanel = () => {
+  const clearAllFiles = () => {
+    // Call the global clear function from FileUpload
+    if (window.clearAllFiles) {
+      window.clearAllFiles()
+    }
+  }
+
   return (
     <div className={styles.panel}>
       <div className={styles.header}>
@@ -11,6 +19,15 @@ const FloatingPanel = () => {
       </div>
       <div className={styles.content}>
         <ConnectionStatus />
+        
+        <button 
+          className={styles.clearAllButton}
+          onClick={clearAllFiles}
+        >
+          <Trash2 size={16} />
+          Clear All Files
+        </button>
+        
         <FileManager />
       </div>
     </div>

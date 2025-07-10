@@ -58,7 +58,6 @@ const ConnectionStatus = () => {
 
   return (
     <div className={styles.statusSection}>
-      <h4>Backend Status</h4>
       <div 
         className={styles.statusCard}
         style={{ 
@@ -80,7 +79,6 @@ const ConnectionStatus = () => {
           </div>
         )}
       </div>
-
     </div>
   )
 }

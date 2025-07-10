@@ -8,11 +8,6 @@ const Header = () => {
         <img src="./logo.png" alt="Certificate Tools" className={styles.logoImage} />
         <span className={styles.logoText}>Certificate Tools</span>
       </div>
-      <div className={styles.user}>
-        <button className={styles.userButton}>
-          Administrator
-        </button>
-      </div>
     </header>
   )
 }

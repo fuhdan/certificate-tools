@@ -1,0 +1,28 @@
+.layout {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background-color: whitesmoke;
+}
+
+.main {
+  flex: 1;
+  padding: 2rem;
+  padding-bottom: 5rem;
+}
+
+.content {
+  max-width: 1200px;
+  margin: 0 auto;
+  background-color: white;
+  border-radius: 10px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  padding: 2rem;
+  min-height: 400px;
+  text-align: center;
+}
+
+.content h1 {
+  color: rgb(1, 111, 157);
+  margin-bottom: 1rem;
+}

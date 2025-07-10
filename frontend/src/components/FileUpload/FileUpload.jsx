@@ -56,7 +56,10 @@ const FileUpload = () => {
           type: cert.analysis.type,
           format: cert.analysis.format,
           isValid: cert.analysis.isValid,
-          analyzed: true
+          analyzed: true,
+          analysis: cert.analysis,  // Include full analysis with details
+          filename: cert.filename,  // Ensure filename is available
+          uploadedAt: cert.uploadedAt
         }))
         
         setFiles(backendFiles)

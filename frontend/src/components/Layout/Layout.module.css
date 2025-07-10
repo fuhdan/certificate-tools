@@ -25,4 +25,27 @@
 .content h1 {
   color: rgb(1, 111, 157);
   margin-bottom: 1rem;
+  font-size: 2.5rem;
+  font-weight: 700;
+}
+
+.content p {
+  color: #6b7280;
+  margin-bottom: 2rem;
+  font-size: 1.125rem;
+}
+
+.certificatesSection {
+  margin-top: 3rem;
+  text-align: left;
+}
+
+.certificatesSection h2 {
+  color: rgb(1, 111, 157);
+  margin-bottom: 2rem;
+  font-size: 1.875rem;
+  font-weight: 600;
+  text-align: center;
+  border-bottom: 2px solid #e5e7eb;
+  padding-bottom: 1rem;
 }

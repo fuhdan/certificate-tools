@@ -21,7 +21,36 @@ router.post('/analyze-certificate', upload.single('certificate'), (req, res) => 
       return res.status(400).json({ error: 'No file uploaded' })
     }
     
-    const analysis = analyzeCertificate(req.file.buffer, req.file.originalname)
+    // Get password from request body if provided
+    const password = req.body.password || null
+    
+    const analysis = analyzeCertificate(req.file.buffer, req.file.originalname, password)
+    
+    // Handle unsupported PKCS#8 files - don't add to storage, just return message
+    if (analysis.type === 'Private Key (Encrypted PKCS#8 - Not Supported)') {
+      return res.json({
+        success: false,
+        isUnsupported: true,
+        filename: req.file.originalname,
+        message: `${req.file.originalname}: Encrypted binary PKCS#8 keys are not supported. Please convert to PEM format first using: openssl pkcs8 -in encrypted.p8 -out encrypted.pem`,
+        timestamp: new Date().toISOString()
+      })
+    }
+    
+    // If this is a successfully decrypted private key, remove any "Password Required" versions
+    if (analysis.type === 'Private Key' && analysis.isValid && password) {
+      const allCerts = CertificateStorage.getAll()
+      const passwordRequiredVersions = allCerts.filter(cert => 
+        cert.analysis.type.includes('Password Required') && 
+        cert.filename === req.file.originalname
+      )
+      
+      // Remove password required versions of the same file
+      passwordRequiredVersions.forEach(cert => {
+        CertificateStorage.remove(cert.id)
+        console.log(`Removed password required version: ${cert.filename}`)
+      })
+    }
     
     // Check for duplicates based on actual certificate content hash
     let existingCert = null
@@ -37,26 +66,88 @@ router.post('/analyze-certificate', upload.single('certificate'), (req, res) => 
       uploadedAt: new Date().toISOString()
     }
     
+    // Add main certificate/file
+    let addedCertificates = []
+    
     if (existingCert) {
       // Same certificate content - automatically replace the existing one
       const replacedCert = CertificateStorage.replace(existingCert, certificateData)
+      addedCertificates.push(replacedCert)
+    } else {
+      // No duplicate, add to storage
+      const newCert = CertificateStorage.add(certificateData)
+      addedCertificates.push(newCert)
+    }
+    
+    // Add additional items (like private keys from PKCS#12)
+    if (analysis.additionalItems && analysis.additionalItems.length > 0) {
+      analysis.additionalItems.forEach((item, index) => {
+        // Check for existing duplicate of this additional item
+        let existingAdditionalItem = null
+        if (item.hash) {
+          existingAdditionalItem = CertificateStorage.findByHash(item.hash)
+        }
+        
+        const additionalData = {
+          id: Date.now() + Math.random() + index,
+          filename: `${req.file.originalname} (Private Key)`,
+          analysis: item,
+          uploadedAt: new Date().toISOString()
+        }
+        
+        if (existingAdditionalItem) {
+          // Replace existing private key
+          const replacedItem = CertificateStorage.replace(existingAdditionalItem, additionalData)
+          addedCertificates.push(replacedItem)
+          console.log(`Replaced duplicate private key: ${existingAdditionalItem.filename} -> ${additionalData.filename}`)
+        } else {
+          // Add new private key
+          const addedItem = CertificateStorage.add(additionalData)
+          addedCertificates.push(addedItem)
+        }
+      })
+    }
+    
+    // AFTER everything is processed, clean up any remaining "Password Required" versions
+    if (analysis.type === 'Private Key' && analysis.isValid && password) {
+      console.log(`Checking for cleanup of password required versions for: ${req.file.originalname}`)
+      const allCertsAfter = CertificateStorage.getAll()
+      console.log(`Total certificates after processing: ${allCertsAfter.length}`)
       
+      const remainingPasswordRequired = allCertsAfter.filter(cert => {
+        const isPasswordRequired = cert.analysis.type.includes('Password Required') || cert.analysis.type.includes('Invalid Password')
+        const sameFilename = cert.filename === req.file.originalname
+        console.log(`Cert: ${cert.filename}, Type: ${cert.analysis.type}, IsPasswordRequired: ${isPasswordRequired}, SameFilename: ${sameFilename}`)
+        return isPasswordRequired && sameFilename
+      })
+      
+      console.log(`Found ${remainingPasswordRequired.length} password required versions to clean up`)
+      
+      // Remove any remaining password required versions
+      remainingPasswordRequired.forEach(cert => {
+        CertificateStorage.remove(cert.id)
+        console.log(`Cleaned up remaining password required version: ${cert.filename}`)
+      })
+    }
+    
+    if (existingCert) {
       res.json({
         success: true,
         isDuplicate: true,
         replaced: true,
-        certificate: replacedCert,
+        certificate: addedCertificates[0],
+        additionalItems: addedCertificates.slice(1),
         replacedCertificate: existingCert,
+        clearSystemMessages: analysis.type === 'Private Key' && analysis.isValid,
         message: `Automatically replaced ${existingCert.filename} with ${req.file.originalname} (identical content)`
       })
     } else {
-      // No duplicate, add to storage
-      const newCert = CertificateStorage.add(certificateData)
-      
       res.json({
         success: true,
         isDuplicate: false,
-        certificate: newCert,
+        certificate: addedCertificates[0],
+        additionalItems: addedCertificates.slice(1),
+        clearSystemMessages: analysis.type === 'Private Key' && analysis.isValid,
         timestamp: new Date().toISOString()
       })
     }
@@ -77,8 +168,9 @@ router.post('/analyze-certificates', upload.array('certificates', 10), (req, res
       return res.status(400).json({ error: 'No files uploaded' })
     }
     
+    const password = req.body.password || null
     const results = req.files.map(file => {
-      const analysis = analyzeCertificate(file.buffer, file.originalname)
+      const analysis = analyzeCertificate(file.buffer, file.originalname, password)
       return {
         filename: file.originalname,
         analysis: analysis

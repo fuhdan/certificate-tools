@@ -134,3 +134,110 @@
   font-size: 0.75rem;
   font-weight: 500;
 }
+
+.passwordSection {
+  margin-top: 1.5rem;
+  padding: 1rem;
+  background-color: rgb(249, 250, 251);
+  border: 1px solid rgb(229, 231, 235);
+  border-radius: 8px;
+}
+
+.passwordField {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.keyIcon {
+  color: rgb(107, 114, 128);
+  flex-shrink: 0;
+}
+
+.passwordInput {
+  flex: 1;
+  padding: 0.75rem 1rem;
+  border: 1px solid rgb(209, 213, 219);
+  border-radius: 6px;
+  font-size: 0.875rem;
+  outline: none;
+  transition: border-color 0.2s ease;
+}
+
+.passwordInput:focus {
+  border-color: rgb(1, 111, 157);
+  box-shadow: 0 0 0 3px rgba(1, 111, 157, 0.1);
+}
+
+.passwordHint {
+  font-size: 0.75rem;
+  color: rgb(107, 114, 128);
+  margin: 0;
+  text-align: center;
+}
+
+.disabled {
+  opacity: 0.5;
+  cursor: not-allowed !important;
+  background-color: #f3f4f6 !important;
+  border-color: #d1d5db !important;
+}
+
+.disabled:hover {
+  border-color: #d1d5db !important;
+  background-color: #f3f4f6 !important;
+}
+
+.disabled .uploadIcon {
+  color: #9ca3af !important;
+}
+
+.disabled .dropContent h3,
+.disabled .dropContent p {
+  color: #6b7280 !important;
+}
+
+.passwordSection {
+  margin-top: 1.5rem;
+  padding: 1rem;
+  background-color: #fef3c7;
+  border: 2px solid #f59e0b;
+  border-radius: 8px;
+}
+
+.passwordField {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.keyIcon {
+  color: #f59e0b;
+  flex-shrink: 0;
+}
+
+.passwordInput {
+  flex: 1;
+  padding: 0.75rem 1rem;
+  border: 2px solid #f59e0b;
+  border-radius: 6px;
+  font-size: 0.875rem;
+  outline: none;
+  transition: border-color 0.2s ease;
+  background-color: white;
+}
+
+.passwordInput:focus {
+  border-color: #d97706;
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.1);
+}
+
+.passwordHint {
+  font-size: 0.75rem;
+  color: #92400e;
+  margin: 0;
+  text-align: center;
+  font-weight: 500;
+}

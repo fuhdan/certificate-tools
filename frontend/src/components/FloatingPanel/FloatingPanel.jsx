@@ -1,5 +1,6 @@
 import React from 'react'
 import ConnectionStatus from './ConnectionStatus'
+import SystemMessages from './SystemMessages'
 import FileManager from './FileManager'
 import { Trash2 } from 'lucide-react'
 import styles from './FloatingPanel.module.css'
@@ -19,6 +20,8 @@ const FloatingPanel = () => {
       </div>
       <div className={styles.content}>
         <ConnectionStatus />
+        
+        <SystemMessages />
         
         <button 
           className={styles.clearAllButton}

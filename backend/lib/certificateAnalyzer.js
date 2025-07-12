@@ -19,6 +19,9 @@ function getFileFormat(filename) {
       return 'Private Key'
     case 'csr':
       return 'CSR'
+    case 'p8':
+    case 'pk8':
+      return 'PKCS8'
     default:
       return extension.toUpperCase()
   }
@@ -256,8 +259,19 @@ function extractCSRDetails(csr) {
 
     // Signature algorithm
     details.signature = {
-      algorithm: csr.siginfo?.algorithmOid || 'Unknown',
-      hashAlgorithm: csr.md?.algorithm || 'Unknown'
+      algorithm: getAlgorithmName(csr.siginfo?.algorithmOid) || 'Unknown',
+      algorithmOid: csr.siginfo?.algorithmOid || 'Unknown',
+      hashAlgorithm: 'Unknown'
+    }
+
+    // Determine hash algorithm from signature OID
+    if (csr.siginfo?.algorithmOid) {
+      const sigAlg = csr.siginfo.algorithmOid;
+      if (sigAlg === '1.2.840.113549.1.1.11') {
+        details.signature.hashAlgorithm = 'SHA256';
+      } else if (sigAlg === '1.2.840.113549.1.1.5') {
+        details.signature.hashAlgorithm = 'SHA1';
+      }
     }
 
     // Process attributes (extensions requested)
@@ -377,6 +391,13 @@ function extractPrivateKeyDetails(privateKey) {
   }
 
   try {
+    if (!privateKey) {
+      console.log('Private key is null or undefined')
+      return details
+    }
+
+    console.log('Private key object:', Object.keys(privateKey))
+    
     if (privateKey.n) {
       // RSA key
       details.algorithm = 'RSA'
@@ -386,6 +407,8 @@ function extractPrivateKeyDetails(privateKey) {
       // EC key
       details.algorithm = 'EC'
       details.curve = privateKey.curve || 'Unknown'
+    } else {
+      console.log('Unknown private key structure')
     }
   } catch (error) {
     console.error('Error extracting private key details:', error)
@@ -393,12 +416,16 @@ function extractPrivateKeyDetails(privateKey) {
 
   return details
 }
-function analyzeCertificate(buffer, filename) {
+
+function analyzeCertificate(buffer, filename, password = null) {
   let certificateType = 'Unknown'
   let format = getFileFormat(filename)
   let isValid = false
   let certificateHash = null
   let details = null
+  let additionalItems = [] // For PKCS#12 private keys
+  
+  console.log(`Analyzing ${filename}, password provided: ${password ? 'YES' : 'NO'}`)
   
   try {
     // Try to determine if this is a text (PEM) or binary (DER) file
@@ -466,35 +493,90 @@ function analyzeCertificate(buffer, filename) {
         
       } else if (content.includes('-----BEGIN PRIVATE KEY-----') || 
                  content.includes('-----BEGIN RSA PRIVATE KEY-----') ||
-                 content.includes('-----BEGIN EC PRIVATE KEY-----')) {
+                 content.includes('-----BEGIN EC PRIVATE KEY-----') ||
+                 content.includes('-----BEGIN ENCRYPTED PRIVATE KEY-----')) {
         try {
-          // Parse the private key to get consistent representation
-          let privateKey
-          if (content.includes('-----BEGIN RSA PRIVATE KEY-----')) {
-            privateKey = forge.pki.privateKeyFromPem(content)
-          } else if (content.includes('-----BEGIN EC PRIVATE KEY-----')) {
-            privateKey = forge.pki.privateKeyFromPem(content)
+          // Check if the private key is encrypted
+          const isEncrypted = content.includes('-----BEGIN ENCRYPTED PRIVATE KEY-----') ||
+                             content.includes('Proc-Type: 4,ENCRYPTED') ||
+                             content.includes('DEK-Info:')
+
+          console.log(`Private key encrypted: ${isEncrypted}, password: ${password ? 'provided' : 'not provided'}`)
+
+          if (isEncrypted && !password) {
+            // Encrypted private key without password
+            certificateType = 'Private Key (Password Required)'
+            isValid = false
+            // Use the raw file content for hash - this will be replaced when decrypted
+            certificateHash = crypto.createHash('sha256').update(buffer).digest('hex')
+            console.log('No password provided for encrypted key')
+          } else if (isEncrypted && password) {
+            // Try to decrypt with password
+            console.log('Attempting to decrypt with provided password')
+            try {
+              let privateKey
+              
+              if (content.includes('-----BEGIN RSA PRIVATE KEY-----') && content.includes('Proc-Type: 4,ENCRYPTED')) {
+                // Encrypted PKCS#1 RSA key
+                console.log('Using decryptRsaPrivateKey for PKCS#1')
+                privateKey = forge.pki.decryptRsaPrivateKey(content, password)
+                console.log('decryptRsaPrivateKey returned:', privateKey ? 'object' : 'null')
+              } else if (content.includes('-----BEGIN ENCRYPTED PRIVATE KEY-----')) {
+                // Encrypted PKCS#8 key
+                console.log('Using privateKeyFromPem for PKCS#8')
+                privateKey = forge.pki.privateKeyFromPem(content, password)
+              } else {
+                // Try generic approach
+                console.log('Using generic privateKeyFromPem')
+                privateKey = forge.pki.privateKeyFromPem(content, password)
+              }
+              
+              if (!privateKey) {
+                throw new Error('Decryption returned null - wrong password')
+              }
+              
+              certificateType = 'Private Key'
+              isValid = true
+
+              // Use consistent DER-based hash for key material
+              const der = forge.asn1.toDer(forge.pki.privateKeyToAsn1(privateKey))
+              certificateHash = crypto.createHash('sha256').update(der.data, 'binary').digest('hex')
+              console.log(`Decrypted PEM private key hash: ${certificateHash.substring(0, 8)}...`)
+
+              // Extract detailed information
+              details = extractPrivateKeyDetails(privateKey)
+              console.log('Successfully decrypted private key')
+            } catch (decryptErr) {
+              console.error('Password decryption failed:', decryptErr.message)
+              // Wrong password
+              certificateType = 'Private Key (Invalid Password)'
+              isValid = false
+              // Use the raw file content for hash to ensure consistency
+              certificateHash = crypto.createHash('sha256').update(buffer).digest('hex')
+            }
           } else {
-            privateKey = forge.pki.privateKeyFromPem(content)
+            // Unencrypted private key
+            console.log('Processing unencrypted private key')
+            const privateKey = forge.pki.privateKeyFromPem(content)
+            certificateType = 'Private Key'
+            isValid = true
+
+            // Convert to DER format for consistent comparison
+            const der = forge.asn1.toDer(forge.pki.privateKeyToAsn1(privateKey))
+            certificateHash = crypto.createHash('sha256').update(der.data, 'binary').digest('hex')
+            console.log(`Standalone private key hash: ${certificateHash.substring(0, 8)}...`)
+
+            // Extract detailed information
+            details = extractPrivateKeyDetails(privateKey)
           }
-          
-          certificateType = 'Private Key'
-          isValid = true
-          
-          // Convert to DER format for consistent comparison
-          const der = forge.asn1.toDer(forge.pki.privateKeyToAsn1(privateKey))
-          certificateHash = crypto.createHash('sha256').update(der.data, 'binary').digest('hex')
-          
-          // Extract detailed information
-          details = extractPrivateKeyDetails(privateKey)
-          
+
         } catch (err) {
           console.error('Error parsing PEM private key:', err.message)
           // Fallback: hash the cleaned PEM content
           const keyContent = content.replace(/\s/g, '')
           certificateHash = crypto.createHash('sha256').update(keyContent).digest('hex')
-          certificateType = 'Private Key'
-          isValid = true
+          certificateType = 'Private Key (Parse Error)'
+          isValid = false
         }
         
       } else if (content.includes('-----BEGIN PUBLIC KEY-----')) {
@@ -507,56 +589,90 @@ function analyzeCertificate(buffer, filename) {
       
     } else {
       // Handle binary formats (DER, PKCS12, etc.)
-      if (format === 'DER') {
+      if (format === 'DER' || format === 'PKCS8') {
         try {
           // First try to parse as DER certificate
           const asn1 = forge.asn1.fromDer(buffer.toString('binary'))
           
-          try {
-            const cert = forge.pki.certificateFromAsn1(asn1)
-            certificateType = 'Certificate'
-            isValid = true
-            certificateHash = crypto.createHash('sha256').update(buffer).digest('hex')
-            
-            // Extract detailed information
-            details = extractCertificateDetails(cert)
-            
-            // Check if it's a CA certificate
-            const basicConstraints = cert.getExtension('basicConstraints')
-            if (basicConstraints && basicConstraints.cA) {
-              certificateType = 'CA Certificate'
-            } else {
-              certificateType = 'Certificate'
-            }
-          } catch (certErr) {
-            // Not a certificate, try parsing as private key
+          // For PKCS#8 files, check if it's encrypted first
+          if (format === 'PKCS8') {
             try {
+              // Try to parse as unencrypted private key first
               const privateKey = forge.pki.privateKeyFromAsn1(asn1)
               certificateType = 'Private Key'
               isValid = true
               
-              // Convert back to DER for consistent hash generation with PEM
+              // Use consistent DER-based hash for key material
               const der = forge.asn1.toDer(forge.pki.privateKeyToAsn1(privateKey))
               certificateHash = crypto.createHash('sha256').update(der.data, 'binary').digest('hex')
+              console.log(`Unencrypted PKCS#8 private key hash: ${certificateHash.substring(0, 8)}...`)
+              
+              details = extractPrivateKeyDetails(privateKey)
+              console.log('Successfully parsed unencrypted PKCS#8 binary key')
+            } catch (pkcs8Err) {
+              console.log('PKCS#8 parsing failed, assuming encrypted binary PKCS#8:', pkcs8Err.message)
+              
+              // If parsing fails, assume it's encrypted PKCS#8 (not supported)
+              certificateType = 'Private Key (Encrypted PKCS#8 - Not Supported)'
+              isValid = false
+              certificateHash = crypto.createHash('sha256').update(buffer).digest('hex')
+              details = {
+                algorithm: 'Unknown',
+                keySize: 0,
+                error: 'Encrypted binary PKCS#8 keys are not supported by node-forge. Please convert to PEM format first using: openssl pkcs8 -in encrypted.p8 -out encrypted.pem'
+              }
+              console.log('Detected encrypted PKCS#8 binary key - not supported')
+            }
+          } else {
+            // Handle DER certificates and other formats
+            try {
+              const cert = forge.pki.certificateFromAsn1(asn1)
+              certificateType = 'Certificate'
+              isValid = true
+              certificateHash = crypto.createHash('sha256').update(buffer).digest('hex')
               
               // Extract detailed information
-              details = extractPrivateKeyDetails(privateKey)
+              details = extractCertificateDetails(cert)
               
-            } catch (keyErr) {
-              // Not a private key either, try CSR
+              // Check if it's a CA certificate
+              const basicConstraints = cert.getExtension('basicConstraints')
+              if (basicConstraints && basicConstraints.cA) {
+                certificateType = 'CA Certificate'
+              } else {
+                certificateType = 'Certificate'
+              }
+            } catch (certErr) {
+              // Not a certificate, try parsing as private key
               try {
-                const csr = forge.pki.certificationRequestFromAsn1(asn1)
-                certificateType = 'CSR'
+                const privateKey = forge.pki.privateKeyFromAsn1(asn1)
+                certificateType = 'Private Key'
                 isValid = true
                 certificateHash = crypto.createHash('sha256').update(buffer).digest('hex')
                 
-                // Extract detailed information
-                details = extractCSRDetails(csr)
-              } catch (csrErr) {
-                // Unknown DER format
-                certificateType = 'Unknown DER'
-                isValid = false
-                certificateHash = crypto.createHash('sha256').update(buffer).digest('hex')
+                // For consistency, also generate DER-based hash
+                const der = forge.asn1.toDer(forge.pki.privateKeyToAsn1(privateKey))
+                const keyMaterialHash = crypto.createHash('sha256').update(der.data, 'binary').digest('hex')
+                certificateHash = keyMaterialHash
+                console.log(`DER private key hash: ${certificateHash.substring(0, 8)}...`)
+                
+                details = extractPrivateKeyDetails(privateKey)
+                
+              } catch (keyErr) {
+                // Not a private key either, try CSR
+                try {
+                  const csr = forge.pki.certificationRequestFromAsn1(asn1)
+                  certificateType = 'CSR'
+                  isValid = true
+                  certificateHash = crypto.createHash('sha256').update(buffer).digest('hex')
+                  
+                  // Extract detailed information
+                  details = extractCSRDetails(csr)
+                } catch (csrErr) {
+                  // Unknown DER format
+                  certificateType = 'Unknown DER'
+                  isValid = false
+                  certificateHash = crypto.createHash('sha256').update(buffer).digest('hex')
+                }
               }
             }
           }
@@ -570,9 +686,83 @@ function analyzeCertificate(buffer, filename) {
         }
         
       } else if (format === 'PKCS12') {
-        certificateType = 'PKCS12 Certificate'
-        isValid = true
-        certificateHash = crypto.createHash('sha256').update(buffer).digest('hex')
+        try {
+          if (password) {
+            // Try to parse PKCS12 with password
+            const p12Asn1 = forge.asn1.fromDer(buffer.toString('binary'))
+            const p12 = forge.pkcs12.pkcs12FromAsn1(p12Asn1, password)
+            
+            certificateType = 'PKCS12 Certificate'
+            isValid = true
+            certificateHash = crypto.createHash('sha256').update(buffer).digest('hex')
+            
+            // Extract certificate details from PKCS12
+            const certBags = p12.getBags({ bagType: forge.pki.oids.certBag })
+            if (certBags[forge.pki.oids.certBag] && certBags[forge.pki.oids.certBag].length > 0) {
+              const cert = certBags[forge.pki.oids.certBag][0].cert
+              details = extractCertificateDetails(cert)
+              
+              // Check if it's a CA certificate
+              const basicConstraints = cert.getExtension('basicConstraints')
+              if (basicConstraints && basicConstraints.cA) {
+                certificateType = 'PKCS12 CA Certificate'
+              }
+            }
+            
+            // Extract private key details from PKCS12
+            const keyBags = p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag })
+            if (keyBags[forge.pki.oids.pkcs8ShroudedKeyBag] && keyBags[forge.pki.oids.pkcs8ShroudedKeyBag].length > 0) {
+              const privateKey = keyBags[forge.pki.oids.pkcs8ShroudedKeyBag][0].key
+              if (privateKey) {
+                // Create a separate private key entry
+                const privateKeyDetails = extractPrivateKeyDetails(privateKey)
+                
+                // Generate hash based on the actual key material for consistency
+                try {
+                  const der = forge.asn1.toDer(forge.pki.privateKeyToAsn1(privateKey))
+                  const keyHash = crypto.createHash('sha256').update(der.data, 'binary').digest('hex')
+                  console.log(`PKCS12 private key hash: ${keyHash.substring(0, 8)}...`)
+                  
+                  additionalItems.push({
+                    type: 'Private Key',
+                    format: 'PKCS12',
+                    isValid: true,
+                    size: 0, // Size is part of the PKCS12 container
+                    hash: keyHash, // Use consistent hash based on key material
+                    details: privateKeyDetails
+                  })
+                  console.log('Extracted private key from PKCS12')
+                } catch (hashErr) {
+                  console.error('Error generating private key hash:', hashErr.message)
+                  // Fallback to unique hash
+                  additionalItems.push({
+                    type: 'Private Key',
+                    format: 'PKCS12',
+                    isValid: true,
+                    size: 0,
+                    hash: certificateHash + '_key',
+                    details: privateKeyDetails
+                  })
+                }
+              }
+            }
+            
+          } else {
+            // No password provided for PKCS12
+            certificateType = 'PKCS12 Certificate (Password Required)'
+            isValid = false
+            certificateHash = crypto.createHash('sha256').update(buffer).digest('hex')
+          }
+        } catch (err) {
+          console.error('Error parsing PKCS12 file:', err.message)
+          if (password) {
+            certificateType = 'PKCS12 Certificate (Invalid Password)'
+          } else {
+            certificateType = 'PKCS12 Certificate (Password Required)'
+          }
+          isValid = false
+          certificateHash = crypto.createHash('sha256').update(buffer).digest('hex')
+        }
         
       } else {
         // Unknown binary format
@@ -593,7 +783,8 @@ function analyzeCertificate(buffer, filename) {
     isValid: isValid,
     size: buffer.length,
     hash: certificateHash,
-    details: details
+    details: details,
+    additionalItems: additionalItems
   }
 }
 

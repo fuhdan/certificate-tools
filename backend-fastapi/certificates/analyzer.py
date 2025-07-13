@@ -11,6 +11,7 @@ from .formats.pem import (
 )
 from .formats.der import analyze_der_formats
 from .formats.pkcs12 import analyze_pkcs12
+from .formats.pkcs7 import analyze_pkcs7
 from .utils.hashing import generate_file_hash
 
 logger = logging.getLogger(__name__)
@@ -25,6 +26,9 @@ def get_file_format(filename: str) -> str:
         'der': 'DER',
         'p12': 'PKCS12',
         'pfx': 'PKCS12',
+        'p7b': 'PKCS7',
+        'p7c': 'PKCS7', 
+        'p7s': 'PKCS7',
         'jks': 'JKS',
         'key': 'Private Key',
         'csr': 'CSR',
@@ -84,7 +88,17 @@ def analyze_uploaded_certificate(file_content: bytes, filename: str, password: O
 def _analyze_pem_content(content_str: str, file_content: bytes, password: Optional[str]) -> Dict[str, Any]:
     """Route PEM content to appropriate analyzer"""
     if '-----BEGIN CERTIFICATE-----' in content_str:
-        return analyze_pem_certificate(content_str, file_content)
+        # Check if this might be PKCS7 (multiple certificates or .p7b extension)
+        cert_count = content_str.count('-----BEGIN CERTIFICATE-----')
+        if cert_count > 1:
+            # Multiple certificates - could be PKCS7 chain
+            from .formats.pkcs7 import analyze_pkcs7
+            return analyze_pkcs7(file_content, password)
+        else:
+            return analyze_pem_certificate(content_str, file_content)
+    elif '-----BEGIN PKCS7-----' in content_str:
+        from .formats.pkcs7 import analyze_pkcs7  
+        return analyze_pkcs7(file_content, password)
     elif '-----BEGIN CERTIFICATE REQUEST-----' in content_str:
         return analyze_pem_csr(file_content)
     elif ('-----BEGIN PRIVATE KEY-----' in content_str or 
@@ -107,6 +121,8 @@ def _analyze_binary_content(file_content: bytes, file_format: str, password: Opt
         return analyze_der_formats(file_content, password)
     elif file_format == 'PKCS12':
         return analyze_pkcs12(file_content, password)
+    elif file_format == 'PKCS7':
+        return analyze_pkcs7(file_content, password)
     else:
         return {
             "type": "Unknown Binary",

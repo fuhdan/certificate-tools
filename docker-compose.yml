@@ -6,7 +6,7 @@ services:
       - "443:443"
     depends_on:
       - frontend
-      - backend
+      - backend-fastapi  # Updated to match service name
     networks:
       - app-network
     restart: unless-stopped
@@ -19,11 +19,12 @@ services:
       - app-network
     restart: unless-stopped
 
-  backend:
-    build: ./backend
+  # Updated backend service to use FastAPI instead of Node.js
+  backend-fastapi:  # Changed service name for clarity
+    build: ./backend-fastapi
     environment:
-      - NODE_ENV=production
-      - PORT=8000
+      - PYTHONPATH=/app
+      - DEBUG=OFF
     networks:
       - app-network
     restart: unless-stopped

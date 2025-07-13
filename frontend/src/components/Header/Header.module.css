@@ -1,10 +1,12 @@
+/* frontend/src/components/Header/Header.module.css */
 .header {
   display: flex;
-  justify-content: flex-start;
+  justify-content: space-between;
   align-items: center;
   padding: 1rem 2rem;
   background-color: rgb(1, 111, 157);
   color: white;
+  position: relative;
 }
 
 .logo {
@@ -28,4 +30,177 @@
 .logoText {
   font-weight: bold;
   font-size: 1.125rem;
+}
+
+.authSection {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.userMenu {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.userInfo {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: white;
+  font-size: 0.875rem;
+}
+
+.logoutButton {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: rgba(255, 255, 255, 0.1);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.875rem;
+  transition: background-color 0.2s;
+}
+
+.logoutButton:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.loginContainer {
+  position: relative;
+}
+
+.loginTrigger {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: rgba(255, 255, 255, 0.1);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.875rem;
+  transition: all 0.2s;
+}
+
+.loginTrigger:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.chevronUp {
+  transform: rotate(180deg);
+}
+
+.loginDropdown {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  right: 0;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+  border: 1px solid #e5e7eb;
+  width: 280px;
+  z-index: 1000;
+  animation: dropdownSlide 0.2s ease-out;
+}
+
+@keyframes dropdownSlide {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.dropdownHeader {
+  padding: 1rem 1rem 0.5rem 1rem;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.dropdownHeader h3 {
+  margin: 0;
+  color: rgb(1, 111, 157);
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.loginForm {
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.formGroup {
+  display: flex;
+  flex-direction: column;
+}
+
+.input {
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 0.875rem;
+  transition: border-color 0.2s;
+}
+
+.input:focus {
+  outline: none;
+  border-color: rgb(1, 111, 157);
+  box-shadow: 0 0 0 3px rgba(1, 111, 157, 0.1);
+}
+
+.input:disabled {
+  background-color: #f9fafb;
+  color: #6b7280;
+}
+
+.submitButton {
+  background-color: rgb(1, 111, 157);
+  color: white;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.submitButton:hover:not(:disabled) {
+  background-color: rgb(0, 90, 130);
+}
+
+.submitButton:disabled {
+  background-color: #9ca3af;
+  cursor: not-allowed;
+}
+
+.error {
+  background-color: #fef2f2;
+  color: #dc2626;
+  padding: 0.5rem;
+  border-radius: 4px;
+  border: 1px solid #fecaca;
+  font-size: 0.75rem;
+  text-align: center;
+}
+
+.defaultHint {
+  padding: 0.5rem 1rem 1rem 1rem;
+  text-align: center;
+  border-top: 1px solid #f3f4f6;
+}
+
+.defaultHint small {
+  color: #6b7280;
+  font-size: 0.75rem;
 }

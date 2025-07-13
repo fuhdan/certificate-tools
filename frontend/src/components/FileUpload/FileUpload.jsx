@@ -71,31 +71,12 @@ const FileUpload = () => {
         })
         
         if (response.data.success) {
-          const analysis = response.data.certificate.analysis
-          
-          // Clear system messages if this is a successful private key upload
-          if (response.data.clearSystemMessages) {
-            window.dispatchEvent(new CustomEvent('clearSystemMessages'))
-          }
-          
-          // Check if the file was successfully analyzed with valid details
-          if (analysis.isValid && 
-              !analysis.type.includes('Password Required') && 
-              !analysis.type.includes('Invalid Password')) {
-            await refreshFileList()
-          } else {
-            allSuccessful = false
-          }
-        } else if (response.data.isUnsupported) {
-          // Handle unsupported files - show system message
-          window.dispatchEvent(new CustomEvent('systemMessage', {
-            detail: {
-              message: response.data.message,
-              type: 'warning',
-              id: Date.now()
-            }
-          }))
+          // Successfully analyzed with password
+          await refreshFileList()
+        } else if (response.data.requiresPassword) {
+          // Still requires password (probably wrong password)
           allSuccessful = false
+          console.log('Invalid password for:', file.filename)
         } else {
           allSuccessful = false
         }
@@ -141,6 +122,12 @@ const FileUpload = () => {
         }))
       }
     } catch (error) {
+      // Handle 401 authentication errors properly
+      if (error.response && error.response.status === 401) {
+        console.error('Authentication expired - please refresh the page')
+        // Don't retry on 401 - just stop
+        return
+      }
       console.error('Error refreshing file list:', error)
     }
   }
@@ -161,35 +148,21 @@ const FileUpload = () => {
         })
         
         if (response.data.success) {
-          const analysis = response.data.certificate.analysis
-          
-          // Clear system messages if this is a successful private key upload
-          if (response.data.clearSystemMessages) {
-            window.dispatchEvent(new CustomEvent('clearSystemMessages'))
+          // Successfully analyzed without password
+          if (response.data.isDuplicate && response.data.replaced) {
+            console.log(`Automatically replaced: ${response.data.replacedCertificate.filename} -> ${response.data.certificate.filename}`)
           }
-          
-          // Check if file requires password
-          if (analysis.type.includes('Password Required') || 
-              analysis.type.includes('Invalid Password') ||
-              (analysis.type.includes('PKCS12') && !analysis.isValid) ||
-              (analysis.type.includes('Private Key') && analysis.type.includes('Password Required'))) {
-            passwordRequiredFilesList.push({
-              fileObject: file,
-              filename: file.name,
-              type: analysis.type
-            })
-          } else {
-            await refreshFileList()
-          }
-        } else if (response.data.isUnsupported) {
-          // Handle unsupported files - show system message instead of adding to list
-          window.dispatchEvent(new CustomEvent('systemMessage', {
-            detail: {
-              message: response.data.message,
-              type: 'warning',
-              id: Date.now()
-            }
-          }))
+          await refreshFileList()
+        } else if (response.data.requiresPassword) {
+          // File requires password - add to password required list
+          passwordRequiredFilesList.push({
+            fileObject: file,
+            filename: file.name,
+            type: response.data.certificate?.analysis?.type || 'Encrypted File'
+          })
+          console.log('Password required for:', file.name)
+        } else {
+          console.error('Unexpected response:', response.data)
         }
       } catch (error) {
         console.error('Error analyzing file:', error)
@@ -216,8 +189,6 @@ const FileUpload = () => {
       setPassword('')
       setNeedsPassword(false)
       setPasswordRequiredFiles([])
-      // Also clear system messages
-      window.dispatchEvent(new CustomEvent('clearSystemMessages'))
     } catch (error) {
       console.error('Error clearing files:', error)
     }
@@ -232,11 +203,16 @@ const FileUpload = () => {
         await api.delete(`/certificates/${fileId}`)
         await refreshFileList()
       } catch (error) {
+        if (error.response && error.response.status === 401) {
+          console.error('Authentication expired - please refresh the page')
+          return
+        }
         console.error('Error deleting file:', error)
       }
     }
     
-    refreshFileList()
+    // DON'T automatically refresh on mount - only when explicitly needed
+    // refreshFileList()
   }, [])
 
   return (
@@ -260,20 +236,22 @@ const FileUpload = () => {
         />
         
         <div className={styles.dropContent}>
-          <Upload size={48} className={styles.uploadIcon} />
-          <h3>
-            {isAnalyzing ? 'Analyzing certificates...' : 
-             needsPassword ? 'Enter password to continue' : 
-             'Drop certificate files here'}
-          </h3>
-          <p>
-            {isAnalyzing ? 'Please wait while we analyze your files' : 
-             needsPassword ? `Password required for: ${passwordRequiredFiles.map(f => f.filename).join(', ')}` : 
-             'or click to select files'}
-          </p>
-          <span className={styles.supportedFormats}>
-            Supported: PEM, DER, PKCS12, PKCS8, JKS, CSR
-          </span>
+          {needsPassword ? (
+            <>
+              <Key size={48} className={styles.lockIcon} />
+              <h3>Enter password to continue</h3>
+              <p>Password required for: {passwordRequiredFiles.map(f => f.filename).join(', ')}</p>
+            </>
+          ) : (
+            <>
+              <Upload size={48} className={styles.uploadIcon} />
+              <h3>{isAnalyzing ? 'Analyzing certificates...' : 'Drop certificate files here'}</h3>
+              <p>{isAnalyzing ? 'Please wait while we analyze your files' : 'or click to select files'}</p>
+              <span className={styles.supportedFormats}>
+                Supported: PEM, DER, PKCS12, PKCS8, JKS, CSR
+              </span>
+            </>
+          )}
         </div>
       </div>
 

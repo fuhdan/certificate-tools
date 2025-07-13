@@ -1,5 +1,5 @@
 # certificates/formats/pem.py
-# PEM format analysis functions
+# PEM format analysis functions with comprehensive debugging
 
 import hashlib
 import logging
@@ -22,72 +22,163 @@ logger.debug("formats/pem.py initialized")
 
 def analyze_pem_certificate(content_str: str, file_content: bytes) -> Dict[str, Any]:
     """Analyze PEM certificate content"""
+    logger.info(f"=== PEM CERTIFICATE ANALYSIS ===")
+    logger.debug(f"Content string length: {len(content_str)} characters")
+    logger.debug(f"File content length: {len(file_content)} bytes")
+    
     cert_blocks = content_str.count('-----BEGIN CERTIFICATE-----')
+    logger.debug(f"Certificate blocks found: {cert_blocks}")
     
     if cert_blocks > 1:
+        logger.info(f"Multiple certificates detected ({cert_blocks}), treating as certificate chain")
         # Certificate chain
+        chain_hash = hashlib.sha256(content_str.encode()).hexdigest()
+        logger.debug(f"Certificate chain hash: {chain_hash[:16]}...")
+        
         return {
             "type": "Certificate Chain",
             "isValid": True,
-            "content_hash": hashlib.sha256(content_str.encode()).hexdigest(),
+            "content_hash": chain_hash,
             "details": {"certificateCount": cert_blocks}
         }
     else:
+        logger.info("Single certificate detected, processing as individual certificate")
         # Single certificate
-        cert = x509.load_pem_x509_certificate(file_content)
-        content_hash = generate_certificate_hash(cert)
-        
-        # Determine certificate type
-        cert_type = "CA Certificate" if is_ca_certificate(cert) else "Certificate"
-        details = extract_x509_details(cert)
-        
-        logger.debug("Certificate details:\n%s", json.dumps(details, indent=2))
+        try:
+            logger.debug("Loading PEM certificate with cryptography...")
+            cert = x509.load_pem_x509_certificate(file_content)
+            logger.debug(f"Certificate loaded successfully: {type(cert)}")
+            
+            content_hash = generate_certificate_hash(cert)
+            logger.debug(f"Certificate content hash: {content_hash[:16]}...")
+            
+            # Determine certificate type
+            is_ca = is_ca_certificate(cert)
+            cert_type = "CA Certificate" if is_ca else "Certificate"
+            logger.debug(f"Certificate type determined: {cert_type} (CA: {is_ca})")
+            
+            logger.debug("Extracting certificate details...")
+            details = extract_x509_details(cert)
+            logger.debug(f"Certificate details extracted, keys: {list(details.keys())}")
+            
+            logger.debug("Certificate details:\n%s", json.dumps(details, indent=2, default=str))
 
-        return {
-            "type": cert_type,
+            result = {
+                "type": cert_type,
+                "isValid": True,
+                "content_hash": content_hash,
+                "details": details
+            }
+            
+            logger.info(f"PEM certificate analysis complete: {cert_type}")
+            return result
+            
+        except Exception as cert_error:
+            logger.error(f"Error processing PEM certificate: {cert_error}")
+            logger.error(f"Certificate content preview: {content_str[:200]}...")
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
+            
+            return {
+                "type": "Certificate",
+                "isValid": False,
+                "content_hash": generate_file_hash(file_content),
+                "error": str(cert_error)
+            }
+
+def analyze_pem_csr(file_content: bytes) -> Dict[str, Any]:
+    """Analyze PEM CSR content"""
+    logger.info(f"=== PEM CSR ANALYSIS ===")
+    logger.debug(f"File content length: {len(file_content)} bytes")
+    
+    try:
+        logger.debug("Loading PEM CSR with cryptography...")
+        csr = x509.load_pem_x509_csr(file_content)
+        logger.debug(f"CSR loaded successfully: {type(csr)}")
+        
+        content_hash = generate_csr_hash(csr)
+        logger.debug(f"CSR content hash: {content_hash[:16]}...")
+        
+        logger.debug("Extracting CSR details...")
+        details = extract_csr_details(csr)
+        logger.debug(f"CSR details extracted, keys: {list(details.keys())}")
+        
+        result = {
+            "type": "CSR",
             "isValid": True,
             "content_hash": content_hash,
             "details": details
         }
-
-def analyze_pem_csr(file_content: bytes) -> Dict[str, Any]:
-    """Analyze PEM CSR content"""
-    csr = x509.load_pem_x509_csr(file_content)
-    content_hash = generate_csr_hash(csr)
-    details = extract_csr_details(csr)
-    
-    return {
-        "type": "CSR",
-        "isValid": True,
-        "content_hash": content_hash,
-        "details": details
-    }
+        
+        logger.info(f"PEM CSR analysis complete")
+        return result
+        
+    except Exception as csr_error:
+        logger.error(f"Error processing PEM CSR: {csr_error}")
+        logger.error(f"CSR content preview: {file_content[:200]}...")
+        import traceback
+        logger.error(f"Full traceback: {traceback.format_exc()}")
+        
+        return {
+            "type": "CSR",
+            "isValid": False,
+            "content_hash": generate_file_hash(file_content),
+            "error": str(csr_error)
+        }
 
 def analyze_pem_private_key(file_content: bytes, password: Optional[str]) -> Dict[str, Any]:
     """Analyze PEM private key content"""
+    logger.info(f"=== PEM PRIVATE KEY ANALYSIS ===")
+    logger.debug(f"File content length: {len(file_content)} bytes")
+    logger.debug(f"Password provided: {'YES' if password else 'NO'}")
+    
+    # Check for encryption markers
+    content_str = file_content.decode('utf-8', errors='ignore')
+    encrypted_markers = ['-----BEGIN ENCRYPTED PRIVATE KEY-----', 'Proc-Type: 4,ENCRYPTED', 'DEK-Info:']
+    is_encrypted = any(marker in content_str for marker in encrypted_markers)
+    logger.debug(f"Encryption markers detected: {is_encrypted}")
+    
+    if is_encrypted:
+        logger.debug("Encrypted private key markers found:")
+        for marker in encrypted_markers:
+            if marker in content_str:
+                logger.debug(f"  Found: {marker}")
+    
     try:
+        logger.debug("Attempting to load private key without password...")
         # Try to load the private key without password first
         private_key = serialization.load_pem_private_key(file_content, password=None)
         
+        logger.info("Successfully loaded unencrypted PEM private key")
         # Unencrypted private key
         normalized_hash = generate_normalized_private_key_hash(private_key)
-        details = extract_private_key_details(private_key)
+        logger.debug(f"Normalized private key hash: {normalized_hash[:16]}...")
         
-        logger.info(f"Successfully parsed unencrypted PEM private key")
+        logger.debug("Extracting private key details...")
+        details = extract_private_key_details(private_key)
+        logger.debug(f"Private key details: {details}")
 
-        return {
+        result = {
             "type": "Private Key",
             "isValid": True,
             "content_hash": normalized_hash,
             "details": details
         }
         
+        logger.info(f"PEM private key analysis complete: {details.get('algorithm', 'Unknown')} {details.get('keySize', 0)} bits")
+        return result
+        
     except Exception as e:
         # Failed to load without password - check if it's encrypted
         error_str = str(e).lower()
+        logger.debug(f"Private key loading without password failed: {e}")
+        logger.debug(f"Error string analysis: {error_str}")
+        
         if any(keyword in error_str for keyword in ['password', 'decrypt', 'encrypted', 'bad decrypt']):
+            logger.info("Private key is encrypted, checking password...")
             # It's encrypted
             if not password:
+                logger.info("No password provided for encrypted private key")
                 return {
                     "type": "Private Key - Password Required",
                     "isValid": False,
@@ -102,25 +193,35 @@ def analyze_pem_private_key(file_content: bytes, password: Optional[str]) -> Dic
                     }
                 }
             else:
+                logger.debug("Attempting to decrypt with provided password...")
                 # Try with provided password
                 try:
                     password_bytes = password.encode('utf-8')
+                    logger.debug(f"Password encoded to {len(password_bytes)} bytes")
+                    
                     private_key = serialization.load_pem_private_key(file_content, password=password_bytes)
+                    logger.info("Successfully decrypted PEM private key with password")
                     
                     # Success with password
                     normalized_hash = generate_normalized_private_key_hash(private_key)
-                    details = extract_private_key_details(private_key)
+                    logger.debug(f"Decrypted private key hash: {normalized_hash[:16]}...")
                     
-                    logger.info(f"Successfully decrypted PEM private key with password")
-                    return {
+                    details = extract_private_key_details(private_key)
+                    logger.debug(f"Decrypted private key details: {details}")
+                    
+                    result = {
                         "type": "Private Key",
                         "isValid": True,
                         "content_hash": normalized_hash,
                         "details": details
                     }
+                    
+                    logger.info(f"Encrypted PEM private key analysis complete: {details.get('algorithm', 'Unknown')} {details.get('keySize', 0)} bits")
+                    return result
+                    
                 except Exception as pwd_error:
+                    logger.error(f"Password decryption failed: {pwd_error}")
                     # Wrong password
-                    logger.info(f"Invalid password for encrypted PEM private key")
                     return {
                         "type": "Private Key - Invalid Password",
                         "isValid": False,
@@ -136,7 +237,10 @@ def analyze_pem_private_key(file_content: bytes, password: Optional[str]) -> Dic
                     }
         else:
             # Some other parsing error
-            logger.info(f"PEM private key parsing failed: {e}")
+            logger.error(f"PEM private key parsing failed with non-password error: {e}")
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
+            
             return {
                 "type": "Private Key",
                 "isValid": False,
@@ -146,18 +250,37 @@ def analyze_pem_private_key(file_content: bytes, password: Optional[str]) -> Dic
 
 def analyze_pem_public_key(file_content: bytes) -> Dict[str, Any]:
     """Analyze PEM public key content"""
+    logger.info(f"=== PEM PUBLIC KEY ANALYSIS ===")
+    logger.debug(f"File content length: {len(file_content)} bytes")
+    
     try:
+        logger.debug("Loading PEM public key with cryptography...")
         public_key = serialization.load_pem_public_key(file_content)
-        content_hash = generate_public_key_hash(public_key)
-        details = extract_public_key_details(public_key)
+        logger.debug(f"Public key loaded successfully: {type(public_key)}")
         
-        return {
+        content_hash = generate_public_key_hash(public_key)
+        logger.debug(f"Public key content hash: {content_hash[:16]}...")
+        
+        logger.debug("Extracting public key details...")
+        details = extract_public_key_details(public_key)
+        logger.debug(f"Public key details: {details}")
+        
+        result = {
             "type": "Public Key",
             "isValid": True,
             "content_hash": content_hash,
             "details": details
         }
+        
+        logger.info(f"PEM public key analysis complete: {details.get('algorithm', 'Unknown')} {details.get('keySize', 0)} bits")
+        return result
+        
     except Exception as e:
+        logger.error(f"Error processing PEM public key: {e}")
+        logger.error(f"Public key content preview: {file_content[:200]}...")
+        import traceback
+        logger.error(f"Full traceback: {traceback.format_exc()}")
+        
         return {
             "type": "Public Key",
             "isValid": False,

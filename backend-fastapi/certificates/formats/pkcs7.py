@@ -5,9 +5,12 @@ import logging
 import re
 import base64
 import hashlib
+import json
 from typing import Dict, Any, Optional, List
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
+
+from ..extractors.certificate import extract_x509_details
 
 logger = logging.getLogger(__name__)
 
@@ -142,7 +145,7 @@ def _process_certificate_chain(certificates: List, source_format: str) -> Dict[s
         content_hash = _generate_certificate_hash(main_cert)
         
         # Extract certificate details
-        details = _extract_certificate_details(main_cert)
+        details = extract_x509_details(main_cert)
         
         logger.info(f"Successfully parsed {source_format} PKCS7 with {len(certificates)} certificates")
         
@@ -159,7 +162,7 @@ def _process_certificate_chain(certificates: List, source_format: str) -> Dict[s
             for i, cert in enumerate(certificates[1:], 1):
                 try:
                     cert_hash = _generate_certificate_hash(cert)
-                    cert_details = _extract_certificate_details(cert)
+                    cert_details = extract_x509_details(cert)
                     cert_type_additional = _determine_certificate_type(cert)
                     
                     additional_items.append({
@@ -259,106 +262,3 @@ def _generate_certificate_hash(cert) -> str:
 def _generate_file_hash(file_content: bytes) -> str:
     """Generate hash from file content"""
     return hashlib.sha256(file_content).hexdigest()
-
-def _extract_certificate_details(cert) -> Dict[str, Any]:
-    """Extract details from X.509 certificate - simplified version"""
-    details = {
-        "subject": {},
-        "issuer": {},
-        "validity": {},
-        "publicKey": {},
-        "signature": {},
-        "extensions": {},
-        "serialNumber": str(cert.serial_number)
-    }
-    
-    try:
-        # Subject information
-        subject_attrs = {}
-        for attribute in cert.subject:
-            subject_attrs[attribute.oid._name] = attribute.value
-        
-        details["subject"] = {
-            "commonName": subject_attrs.get("commonName", "N/A"),
-            "organization": subject_attrs.get("organizationName", "N/A"),
-            "organizationalUnit": subject_attrs.get("organizationalUnitName", "N/A"),
-            "country": subject_attrs.get("countryName", "N/A"),
-            "state": subject_attrs.get("stateOrProvinceName", "N/A"),
-            "locality": subject_attrs.get("localityName", "N/A"),
-            "emailAddress": subject_attrs.get("emailAddress", "N/A")
-        }
-        
-        # Issuer information
-        issuer_attrs = {}
-        for attribute in cert.issuer:
-            issuer_attrs[attribute.oid._name] = attribute.value
-        
-        details["issuer"] = {
-            "commonName": issuer_attrs.get("commonName", "N/A"),
-            "organization": issuer_attrs.get("organizationName", "N/A"),
-            "organizationalUnit": issuer_attrs.get("organizationalUnitName", "N/A"),
-            "country": issuer_attrs.get("countryName", "N/A")
-        }
-        
-        # Validity period
-        import datetime
-        not_before = cert.not_valid_before_utc.isoformat()
-        not_after = cert.not_valid_after_utc.isoformat()
-        is_expired = cert.not_valid_after_utc < datetime.datetime.now(datetime.timezone.utc)
-        days_until_expiry = (cert.not_valid_after_utc - datetime.datetime.now(datetime.timezone.utc)).days
-        
-        details["validity"] = {
-            "notBefore": not_before,
-            "notAfter": not_after,
-            "isExpired": is_expired,
-            "daysUntilExpiry": days_until_expiry
-        }
-        
-        # Public key information
-        public_key = cert.public_key()
-        details["publicKey"] = {
-            "algorithm": "Unknown",
-            "keySize": 0,
-            "curve": "N/A"
-        }
-        
-        from cryptography.hazmat.primitives.asymmetric import rsa, ec
-        if isinstance(public_key, rsa.RSAPublicKey):
-            details["publicKey"]["algorithm"] = "RSA"
-            details["publicKey"]["keySize"] = public_key.key_size
-            details["publicKey"]["exponent"] = str(public_key.public_numbers().e)
-        elif isinstance(public_key, ec.EllipticCurvePublicKey):
-            details["publicKey"]["algorithm"] = "EC"
-            details["publicKey"]["curve"] = public_key.curve.name
-        
-        # Signature algorithm
-        details["signature"] = {
-            "algorithm": cert.signature_algorithm_oid._name,
-            "algorithmOid": cert.signature_algorithm_oid.dotted_string
-        }
-        
-        # Extensions
-        extensions = {}
-        for ext in cert.extensions:
-            if isinstance(ext.value, x509.SubjectAlternativeName):
-                san_list = []
-                for name in ext.value:
-                    if isinstance(name, x509.DNSName):
-                        san_list.append({"type": 2, "typeName": "DNS", "value": name.value})
-                    elif isinstance(name, x509.IPAddress):
-                        san_list.append({"type": 7, "typeName": "IP", "value": str(name.value)})
-                    elif isinstance(name, x509.RFC822Name):
-                        san_list.append({"type": 1, "typeName": "Email", "value": name.value})
-                extensions["subjectAltName"] = san_list
-            elif isinstance(ext.value, x509.BasicConstraints):
-                extensions["basicConstraints"] = {
-                    "isCA": ext.value.ca,
-                    "pathLength": ext.value.path_length
-                }
-        
-        details["extensions"] = extensions
-        
-    except Exception as e:
-        logger.warning(f"Error extracting certificate details: {e}")
-    
-    return details

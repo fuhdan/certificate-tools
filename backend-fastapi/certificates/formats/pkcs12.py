@@ -2,6 +2,7 @@
 # PKCS12 format analysis functions
 
 import logging
+import json
 from typing import Dict, Any, Optional, List
 from cryptography.hazmat.primitives.serialization import pkcs12
 
@@ -105,6 +106,8 @@ def _process_pkcs12_success(cert, private_key, additional_certs) -> Dict[str, An
     details = None
     if cert:
         details = extract_x509_details(cert)
+
+        logger.debug("Certificate details:\n%s", json.dumps(details, indent=2))
     
     # Prepare main result (certificate)
     result = {

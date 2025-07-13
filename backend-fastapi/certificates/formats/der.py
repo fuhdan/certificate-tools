@@ -16,6 +16,9 @@ from ..utils.hashing import (
 
 logger = logging.getLogger(__name__)
 
+logger.debug("formats/der.py initialized")
+
+
 def analyze_der_certificate(file_content: bytes) -> Dict[str, Any]:
     """Analyze DER certificate content"""
     cert = x509.load_der_x509_certificate(file_content)

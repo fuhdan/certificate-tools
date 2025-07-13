@@ -7,6 +7,8 @@ from cryptography.hazmat.primitives.asymmetric import rsa, ec
 
 logger = logging.getLogger(__name__)
 
+logger.debug("extractors/private_key.py initialized")
+
 def extract_private_key_details(private_key) -> Dict[str, Any]:
     """Extract details from private key"""
     details = {

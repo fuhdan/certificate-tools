@@ -3,6 +3,7 @@
 
 import hashlib
 import logging
+import json
 from typing import Dict, Any, Optional
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
@@ -16,6 +17,8 @@ from ..utils.hashing import (
 )
 
 logger = logging.getLogger(__name__)
+
+logger.debug("formats/pem.py initialized")
 
 def analyze_pem_certificate(content_str: str, file_content: bytes) -> Dict[str, Any]:
     """Analyze PEM certificate content"""
@@ -38,6 +41,8 @@ def analyze_pem_certificate(content_str: str, file_content: bytes) -> Dict[str, 
         cert_type = "CA Certificate" if is_ca_certificate(cert) else "Certificate"
         details = extract_x509_details(cert)
         
+        logger.debug("Certificate details:\n%s", json.dumps(details, indent=2))
+
         return {
             "type": cert_type,
             "isValid": True,
@@ -69,6 +74,7 @@ def analyze_pem_private_key(file_content: bytes, password: Optional[str]) -> Dic
         details = extract_private_key_details(private_key)
         
         logger.info(f"Successfully parsed unencrypted PEM private key")
+
         return {
             "type": "Private Key",
             "isValid": True,

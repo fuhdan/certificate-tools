@@ -14,6 +14,9 @@ from ..utils.hashing import (
 
 logger = logging.getLogger(__name__)
 
+logger.debug("formats/pkcs12.py initialized")
+
+
 def analyze_pkcs12(file_content: bytes, password: Optional[str]) -> Dict[str, Any]:
     """Analyze PKCS12 content"""
     try:

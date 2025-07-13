@@ -206,6 +206,39 @@ const CertificateDetails = ({ certificate }) => {
           </div>
         </div>
       )}
+
+      {/* Extended Key Usage section added here */}
+      {details.extensions.extendedKeyUsage && details.extensions.extendedKeyUsage.length > 0 && (
+        <div className={styles.section}>
+          <h4>Extended Key Usage</h4>
+          <div className={styles.grid}>
+            {details.extensions.extendedKeyUsage.map((usage, index) => (
+              <div key={index} className={styles.field}>
+                <span className={styles.value}>{usage}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Key Usage section added here */}
+      {details.extensions.keyUsage && (
+        <div className={styles.section}>
+          <h4>Key Usage</h4>
+          <div className={styles.grid}>
+            {Object.entries(details.extensions.keyUsage).map(([key, value]) => {
+              if (typeof value === 'boolean' && value === true) {
+                return (
+                  <div key={key} className={styles.field}>
+                    <span className={styles.value}>{key}</span>
+                  </div>
+                )
+              }
+              return null
+            })}
+          </div>
+        </div>
+      )}
     </>
   )
 
@@ -303,7 +336,6 @@ const CertificateDetails = ({ certificate }) => {
           <h4>Requested Key Usage</h4>
           <div className={styles.grid}>
             {Object.entries(details.extensions.keyUsage).map(([key, value]) => {
-              // Skip name, id, etc. - only show usage flags
               if (typeof value === 'boolean' && value === true) {
                 return (
                   <div key={key} className={styles.field}>

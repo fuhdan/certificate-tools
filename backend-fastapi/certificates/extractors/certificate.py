@@ -5,9 +5,12 @@ import datetime
 import logging
 from typing import Dict, Any
 from cryptography import x509
+from cryptography.x509.oid import ExtendedKeyUsageOID
 from cryptography.hazmat.primitives.asymmetric import rsa, ec
 
 logger = logging.getLogger(__name__)
+
+logger.debug("extractors/certificate.py initialized")
 
 def extract_public_key_details(public_key) -> Dict[str, Any]:
     """Extract details from public key"""
@@ -119,6 +122,36 @@ def extract_x509_details(cert: x509.Certificate) -> Dict[str, Any]:
                     "keyCertSign": ext.value.key_cert_sign,
                     "crlSign": ext.value.crl_sign
                 }
+
+            try:
+                eku_ext = cert.extensions.get_extension_for_oid(x509.oid.ExtensionOID.EXTENDED_KEY_USAGE).value
+                eku_usages = []
+                for usage_oid in eku_ext:
+                    if usage_oid == ExtendedKeyUsageOID.SERVER_AUTH:
+                        eku_usages.append("serverAuth")
+                        logger.debug("Extended Key Usage detected: serverAuth")
+                    elif usage_oid == ExtendedKeyUsageOID.CLIENT_AUTH:
+                        eku_usages.append("clientAuth")
+                        logger.debug("Extended Key Usage detected: clientAuth")
+                    elif usage_oid == ExtendedKeyUsageOID.CODE_SIGNING:
+                        eku_usages.append("codeSign")
+                        logger.debug("Extended Key Usage detected: codeSign")
+                    elif usage_oid == ExtendedKeyUsageOID.EMAIL_PROTECTION:
+                        eku_usages.append("emailProtection")
+                        logger.debug("Extended Key Usage detected: emailProtection")
+                    elif usage_oid == ExtendedKeyUsageOID.TIME_STAMPING:
+                        eku_usages.append("timeStamping")
+                        logger.debug("Extended Key Usage detected: timeStamping")
+                    elif usage_oid == ExtendedKeyUsageOID.OCSP_SIGNING:
+                        eku_usages.append("OCSPSigning")
+                        logger.debug("Extended Key Usage detected: OCSPSigning")
+                    else:
+                        eku_usages.append(usage_oid.dotted_string)
+                        logger.debug(f"Extended Key Usage detected: Unknown OID {usage_oid.dotted_string}")
+                extensions["extendedKeyUsage"] = eku_usages
+            except x509.ExtensionNotFound:
+                logger.debug("No Extended Key Usage extension found in certificate")
+                pass
         
         details["extensions"] = extensions
         

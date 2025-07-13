@@ -31,6 +31,13 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+logging.getLogger("certificates.extractors.certificate").setLevel(logging.DEBUG)
+logging.getLogger("certificates.extractors.csr").setLevel(logging.DEBUG)
+logging.getLogger("certificates.extractors.private_key").setLevel(logging.DEBUG)
+logging.getLogger("certificates.formats.der").setLevel(logging.DEBUG)
+logging.getLogger("certificates.formats.pem").setLevel(logging.DEBUG)
+logging.getLogger("certificates.formats.pkcs7").setLevel(logging.DEBUG)
+logging.getLogger("certificates.formats.pkcs12").setLevel(logging.DEBUG)
 
 # Track start time for uptime
 start_time = time.time()

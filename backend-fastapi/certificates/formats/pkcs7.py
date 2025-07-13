@@ -11,6 +11,9 @@ from cryptography.hazmat.primitives import serialization
 
 logger = logging.getLogger(__name__)
 
+logger.debug("formats/pkcs7.py initialized")
+
+
 def analyze_pkcs7(file_content: bytes, password: Optional[str]) -> Dict[str, Any]:
     """Analyze PKCS7 content - main entry point"""
     try:

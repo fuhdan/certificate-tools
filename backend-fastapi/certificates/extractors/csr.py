@@ -9,6 +9,8 @@ from .certificate import extract_public_key_details
 
 logger = logging.getLogger(__name__)
 
+logger.debug("extractors/certificate.py initialized")
+
 def extract_csr_details(csr: x509.CertificateSigningRequest) -> Dict[str, Any]:
     """Extract details from CSR"""
     details = {

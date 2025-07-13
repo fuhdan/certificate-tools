@@ -598,8 +598,17 @@ def analyze_uploaded_certificate(file_content: bytes, filename: str, password: O
                     # Success without password - generate normalized content hash
                     logger.info(f"Successfully parsed PKCS12 without password")
                     
-                    # Generate normalized hash based on certificate content, not file
-                    content_hash = generate_pkcs12_content_hash(cert, private_key, additional_certs)
+                    # Always use the main certificate hash for duplicate detection
+                    # This allows PKCS12 certificates to be detected as duplicates of standalone certificates
+                    if cert:
+                        # Use main certificate hash - same as standalone certificates
+                        der_bytes = cert.public_bytes(serialization.Encoding.DER)
+                        content_hash = hashlib.sha256(der_bytes).hexdigest()
+                        logger.info(f"PKCS12 using main certificate hash for duplicate detection: {content_hash}")
+                    else:
+                        # No main certificate - use combined hash as fallback
+                        content_hash = generate_pkcs12_content_hash(cert, private_key, additional_certs)
+                        logger.info(f"PKCS12 no main certificate, using combined hash: {content_hash}")
                     
                     analysis.update({
                         "type": "PKCS12 Certificate",
@@ -644,8 +653,16 @@ def analyze_uploaded_certificate(file_content: bytes, filename: str, password: O
                                 # Success with password - generate normalized content hash
                                 logger.info(f"Successfully parsed PKCS12 with provided password")
                                 
-                                # Generate normalized hash based on certificate content, not file
-                                content_hash = generate_pkcs12_content_hash(cert, private_key, additional_certs)
+                                # Always use the main certificate hash for duplicate detection
+                                if cert:
+                                    # Use main certificate hash - same as standalone certificates
+                                    der_bytes = cert.public_bytes(serialization.Encoding.DER)
+                                    content_hash = hashlib.sha256(der_bytes).hexdigest()
+                                    logger.info(f"PKCS12 using main certificate hash for duplicate detection: {content_hash}")
+                                else:
+                                    # No main certificate - use combined hash as fallback
+                                    content_hash = generate_pkcs12_content_hash(cert, private_key, additional_certs)
+                                    logger.info(f"PKCS12 no main certificate, using combined hash: {content_hash}")
                                 
                                 analysis.update({
                                     "type": "PKCS12 Certificate",

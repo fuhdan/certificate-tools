@@ -4,6 +4,7 @@
 import datetime
 import logging
 import time
+import uuid
 from typing import Annotated
 
 from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Form
@@ -66,7 +67,6 @@ async def analyze_certificate(
     """Analyze uploaded certificate file with optional password support"""
     from certificates.storage import CertificateStorage
     from certificates.analyzer import analyze_uploaded_certificate
-    import uuid
     
     try:
         file_content = await certificate.read()
@@ -120,25 +120,67 @@ async def analyze_certificate(
             "size": len(file_content)
         }
         
+        # Store main certificate and collect additional items
+        added_certificates = []
+        
         if existing_cert:
             # Replace existing certificate
             replaced_cert = CertificateStorage.replace(existing_cert, certificate_data)
+            added_certificates.append(replaced_cert)
+        else:
+            # Add new certificate
+            new_cert = CertificateStorage.add(certificate_data)
+            added_certificates.append(new_cert)
+        
+        # Handle additional items from PKCS12 (private keys, additional certificates)
+        if analysis.get('additional_items'):
+            logger.info(f"Processing {len(analysis['additional_items'])} additional items from PKCS12")
+            for item in analysis['additional_items']:
+                # Check for existing duplicate of this additional item
+                existing_additional_item = None
+                if item.get('content_hash'):
+                    existing_additional_item = CertificateStorage.find_by_hash(item['content_hash'])
+                
+                # Create filename for additional item
+                item_filename = f"{certificate.filename} ({item['type']})"
+                
+                additional_data = {
+                    "id": str(uuid.uuid4()),
+                    "filename": item_filename,
+                    "analysis": item,
+                    "uploadedAt": datetime.datetime.now().isoformat(),
+                    "size": item.get('size', 0)
+                }
+                
+                if existing_additional_item:
+                    # Replace existing additional item
+                    replaced_item = CertificateStorage.replace(existing_additional_item, additional_data)
+                    added_certificates.append(replaced_item)
+                    logger.info(f"Replaced duplicate {item['type']}: {existing_additional_item.get('filename')} -> {item_filename}")
+                else:
+                    # Add new additional item
+                    added_item = CertificateStorage.add(additional_data)
+                    added_certificates.append(added_item)
+                    logger.info(f"Added new {item['type']} from PKCS12: {item_filename}")
+        
+        # Return response
+        if existing_cert:
             return {
                 "success": True,
                 "isDuplicate": True,
                 "replaced": True,
-                "certificate": replaced_cert,
+                "certificate": added_certificates[0],
+                "additional_items": added_certificates[1:] if len(added_certificates) > 1 else [],
                 "replacedCertificate": existing_cert,
                 "message": f"Automatically replaced {existing_cert.get('filename')} with {certificate.filename} (identical content)",
                 "timestamp": datetime.datetime.now().isoformat()
             }
         else:
-            # Add new certificate
-            new_cert = CertificateStorage.add(certificate_data)
             return {
                 "success": True,
                 "isDuplicate": False,
-                "certificate": new_cert,
+                "certificate": added_certificates[0],
+                "additional_items": added_certificates[1:] if len(added_certificates) > 1 else [],
                 "timestamp": datetime.datetime.now().isoformat()
             }
             

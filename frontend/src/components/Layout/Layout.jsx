@@ -54,6 +54,64 @@ const Layout = () => {
     }
   }, [])
 
+  const getCertificateOrder = (certificate) => {
+    const type = certificate.analysis?.type || ''
+    const details = certificate.analysis?.details || {}
+    
+    // CSR = 1
+    if (type === 'CSR') return 1
+    
+    // Private Key = 2  
+    if (type === 'Private Key') return 2
+    
+    // For certificates, check if it's a CA
+    if (type === 'Certificate' || type === 'CA Certificate' || type === 'PKCS12 Certificate') {
+      const isCA = details.extensions?.basicConstraints?.isCA || false
+      const issuer = details.issuer?.commonName || ''
+      const subject = details.subject?.commonName || ''
+      
+      if (!isCA) {
+        // End-entity certificate = 3
+        return 3
+      } else {
+        // CA certificates - determine hierarchy
+        if (issuer === subject) {
+          // Self-signed = Root CA = 6
+          return 6
+        } else {
+          // Check if it's an issuing CA (likely to issue end-entity certs)
+          const subjectLower = subject.toLowerCase()
+          if (subjectLower.includes('issuing') || subjectLower.includes('leaf')) {
+            // Issuing CA = 4
+            return 4
+          } else {
+            // Intermediate CA = 5
+            return 5
+          }
+        }
+      }
+    }
+    
+    // Certificate Chain = 7 (after all individual certificates)
+    if (type === 'Certificate Chain') return 7
+    
+    // Everything else = 8
+    return 8
+  }
+
+  // Sort certificates according to the logical order
+  const sortedCertificates = [...certificates].sort((a, b) => {
+    const orderA = getCertificateOrder(a)
+    const orderB = getCertificateOrder(b)
+    
+    if (orderA !== orderB) {
+      return orderA - orderB
+    }
+    
+    // If same order, sort by filename
+    return (a.filename || '').localeCompare(b.filename || '')
+  })
+
   const handleLoginSuccess = async () => {
     setIsAuthenticated(true)
     
@@ -99,10 +157,10 @@ const Layout = () => {
           <p>Professional certificate management and conversion platform.</p>
           <FileUpload isAuthenticated={isAuthenticated} />
           
-          {certificates.length > 0 && isAuthenticated && (
+          {sortedCertificates.length > 0 && isAuthenticated && (
             <div className={styles.certificatesSection}>
               <h2>Certificate Details</h2>
-              {certificates.map((certificate) => (
+              {sortedCertificates.map((certificate) => (
                 <CertificateDetails 
                   key={certificate.id} 
                   certificate={certificate} 

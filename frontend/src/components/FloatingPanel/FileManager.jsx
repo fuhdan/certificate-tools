@@ -59,6 +59,63 @@ const FileManager = () => {
     }
   }
 
+  const getCertificateOrder = (file) => {
+    const type = file.type || ''
+    const details = file.analysis?.details || {}
+    
+    // CSR = 1
+    if (type === 'CSR') return 1
+    
+    // Private Key = 2  
+    if (type === 'Private Key') return 2
+    
+    // For certificates, check if it's a CA
+    if (type === 'Certificate' || type === 'CA Certificate' || type === 'PKCS12 Certificate') {
+      const isCA = details.extensions?.basicConstraints?.isCA || false
+      const issuer = details.issuer?.commonName || ''
+      const subject = details.subject?.commonName || ''
+      
+      if (!isCA) {
+        // End-entity certificate = 3
+        return 3
+      } else {
+        // CA certificates - determine hierarchy
+        if (issuer === subject) {
+          // Self-signed = Root CA = 6
+          return 6
+        } else {
+          // Check if it's an issuing CA (likely to issue end-entity certs)
+          const subjectLower = subject.toLowerCase()
+          if (subjectLower.includes('issuing') || subjectLower.includes('leaf')) {
+            // Issuing CA = 4
+            return 4
+          } else {
+            // Intermediate CA = 5
+            return 5
+          }
+        }
+      }
+    }
+    
+    // Certificate Chain = 7 (after all individual certificates)
+    if (type === 'Certificate Chain') return 7
+    
+    // Everything else = 8
+    return 8
+  }
+
+  const sortedFiles = [...files].sort((a, b) => {
+    const orderA = getCertificateOrder(a)
+    const orderB = getCertificateOrder(b)
+    
+    if (orderA !== orderB) {
+      return orderA - orderB
+    }
+    
+    // If same order, sort by filename
+    return (a.name || '').localeCompare(b.name || '')
+  })
+
   const deleteFile = async (fileId) => {
     if (window.deleteFile) {
       await window.deleteFile(fileId)
@@ -93,7 +150,7 @@ const FileManager = () => {
         </div>
         
         <div className={styles.fileDetailsList}>
-          {files.map((file, index) => (
+          {sortedFiles.map((file, index) => (
             <div key={file.id} className={styles.fileDetail}>
               <div className={styles.fileHeader}>
                 <span className={styles.fileNumber}>#{index + 1}</span>
@@ -127,7 +184,7 @@ const FileManager = () => {
                 <span className={styles.fileDetailLabel}>Format:</span>
                 <span className={styles.fileDetailValue}>{file.format}</span>
               </div>
-              {index < files.length - 1 && <div className={styles.fileDivider}></div>}
+              {index < sortedFiles.length - 1 && <div className={styles.fileDivider}></div>}
             </div>
           ))}
         </div>

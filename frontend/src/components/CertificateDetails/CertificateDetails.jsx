@@ -58,6 +58,39 @@ const CertificateDetails = ({ certificate }) => {
     }
   }
 
+  const getEnhancedCertificateType = () => {
+    const type = analysis.type || ''
+    
+    if (type === 'CSR') return { label: 'Certificate Signing Request', color: '#3b82f6' }
+    if (type === 'Private Key') return { label: 'Private Key', color: '#dc2626' }
+    if (type === 'Public Key') return { label: 'Public Key', color: '#059669' }
+    if (type === 'Certificate Chain') return { label: 'Certificate Chain', color: '#2563eb' }
+    
+    // For certificates, determine specific type
+    if (type === 'Certificate' || type === 'CA Certificate' || type === 'PKCS12 Certificate') {
+      const isCA = details.extensions?.basicConstraints?.isCA || false
+      const issuer = details.issuer?.commonName || ''
+      const subject = details.subject?.commonName || ''
+      
+      if (!isCA) {
+        return { label: 'End-Entity Certificate', color: '#1e40af' }
+      } else {
+        if (issuer === subject) {
+          return { label: 'Root Certificate Authority', color: '#7c2d12' }
+        } else {
+          const subjectLower = subject.toLowerCase()
+          if (subjectLower.includes('issuing') || subjectLower.includes('leaf')) {
+            return { label: 'Issuing Certificate Authority', color: '#1d4ed8' }
+          } else {
+            return { label: 'Intermediate Certificate Authority', color: '#1e40af' }
+          }
+        }
+      }
+    }
+    
+    return { label: type, color: '#6b7280' }
+  }
+
   const getTypeColor = (type) => {
     switch (type) {
       case 'Certificate':
@@ -332,16 +365,18 @@ const CertificateDetails = ({ certificate }) => {
     </div>
   )
 
+  const enhancedType = getEnhancedCertificateType()
+
   return (
     <div className={styles.container}>
       <div className={styles.header}>
         <div className={styles.typeInfo}>
-          <span style={{ color: getTypeColor(analysis.type) }}>
+          <span style={{ color: enhancedType.color }}>
             {getTypeIcon(analysis.type)}
           </span>
           <h3>{certificate.filename}</h3>
-          <span className={styles.typeLabel} style={{ backgroundColor: getTypeColor(analysis.type) }}>
-            {analysis.type}
+          <span className={styles.typeLabel} style={{ backgroundColor: enhancedType.color }}>
+            {enhancedType.label}
           </span>
         </div>
         <div className={styles.basicInfo}>

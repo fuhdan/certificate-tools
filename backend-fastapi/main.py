@@ -31,22 +31,12 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
-# logging.getLogger("certificates.analyzer").setLevel(logging.DEBUG)
-# logging.getLogger("certificates.storage").setLevel(logging.DEBUG)
-# logging.getLogger("certificates.extractors.certificate").setLevel(logging.DEBUG)
-# logging.getLogger("certificates.extractors.csr").setLevel(logging.DEBUG)
-# logging.getLogger("certificates.extractors.private_key").setLevel(logging.DEBUG)
-# logging.getLogger("certificates.formats.der").setLevel(logging.DEBUG)
-# logging.getLogger("certificates.formats.pem").setLevel(logging.DEBUG)
-# logging.getLogger("certificates.formats.pkcs7").setLevel(logging.DEBUG)
-# logging.getLogger("certificates.formats.pkcs12").setLevel(logging.DEBUG)
-# logging.getLogger("certificates.utils.hashing").setLevel(logging.DEBUG)
 
 # Track start time for uptime
 start_time = time.time()
 
 # ============================================================================
-# FASTAPI APPLICATION SETUP (EXISTING - NO MERGE NEEDED)
+# FASTAPI APPLICATION SETUP
 # ============================================================================
 
 app = FastAPI(
@@ -65,7 +55,7 @@ app.add_middleware(
 )
 
 # ============================================================================
-# CERTIFICATE ENDPOINTS - DIRECT IN MAIN (SAME AS HEALTH)
+# CERTIFICATE ENDPOINTS WITH FIXED PKCS12 CRYPTO OBJECT STORAGE
 # ============================================================================
 
 @app.post("/analyze-certificate", tags=["certificates"], status_code=201)
@@ -81,7 +71,7 @@ async def analyze_certificate(
     try:
         file_content = await certificate.read()
         
-        # Analyze the certificate - NEW: returns both analysis and crypto objects
+        # Analyze the certificate - returns both analysis and crypto objects
         result = analyze_uploaded_certificate(file_content, certificate.filename, password)
         
         # Extract analysis and crypto objects from the result
@@ -153,10 +143,21 @@ async def analyze_certificate(
             if crypto_objects:
                 CertificateStorage.store_crypto_objects(new_cert['id'], crypto_objects)
         
-        # Handle additional items from PKCS12 (private keys, additional certificates)
+        # Handle additional items from PKCS12 (private keys, additional certificates) - FIXED VERSION
         if analysis.get('additional_items'):
             logger.info(f"Processing {len(analysis['additional_items'])} additional items from PKCS12")
-            for item in analysis['additional_items']:
+            
+            # Get all crypto objects from PKCS12
+            pkcs12_private_key = crypto_objects.get('private_key')
+            pkcs12_additional_certs = crypto_objects.get('additional_certificates', [])
+            
+            logger.debug(f"PKCS12 crypto objects available:")
+            logger.debug(f"  Private key: {'YES' if pkcs12_private_key else 'NO'}")
+            logger.debug(f"  Additional certificates: {len(pkcs12_additional_certs)}")
+            
+            additional_cert_index = 0  # Track which additional cert we're processing
+            
+            for item_index, item in enumerate(analysis['additional_items']):
                 # Check for existing duplicate of this additional item
                 existing_additional_item = None
                 if item.get('content_hash'):
@@ -173,15 +174,39 @@ async def analyze_certificate(
                     "size": item.get('size', 0)
                 }
                 
+                # Store crypto objects for additional items - FIXED LOGIC
+                item_crypto_objects = {}
+                
+                if item['type'] == 'Private Key' and pkcs12_private_key:
+                    item_crypto_objects['private_key'] = pkcs12_private_key
+                    logger.info(f"✓ Storing private key crypto object for {item_filename}")
+                    
+                elif item['type'] == 'Certificate' and pkcs12_additional_certs:
+                    # Use the corresponding additional certificate by index
+                    if additional_cert_index < len(pkcs12_additional_certs):
+                        item_crypto_objects['certificate'] = pkcs12_additional_certs[additional_cert_index]
+                        logger.info(f"✓ Storing certificate crypto object for {item_filename} (cert index {additional_cert_index})")
+                        additional_cert_index += 1
+                    else:
+                        logger.warning(f"No additional certificate available for {item_filename} at index {additional_cert_index}")
+                
                 if existing_additional_item:
                     # Replace existing additional item
                     replaced_item = CertificateStorage.replace(existing_additional_item, additional_data)
                     added_certificates.append(replaced_item)
+                    # Store crypto objects for replaced item
+                    if item_crypto_objects:
+                        CertificateStorage.store_crypto_objects(replaced_item['id'], item_crypto_objects)
+                        logger.debug(f"Stored crypto objects for replaced item: {list(item_crypto_objects.keys())}")
                     logger.info(f"Replaced duplicate {item['type']}: {existing_additional_item.get('filename')} -> {item_filename}")
                 else:
                     # Add new additional item
                     added_item = CertificateStorage.add(additional_data)
                     added_certificates.append(added_item)
+                    # Store crypto objects for new item
+                    if item_crypto_objects:
+                        CertificateStorage.store_crypto_objects(added_item['id'], item_crypto_objects)
+                        logger.debug(f"Stored crypto objects for new item: {list(item_crypto_objects.keys())}")
                     logger.info(f"Added new {item['type']} from PKCS12: {item_filename}")
         
         # Return response (no crypto objects in JSON response)
@@ -264,6 +289,15 @@ def validate_certificates(current_user: Annotated[User, Depends(get_current_acti
         certificates = CertificateStorage.get_all()
         logger.info(f"Running cryptographic validations on {len(certificates)} certificates")
         
+        # Enhanced debug logging for validation
+        logger.debug("=== VALIDATION DEBUG ===")
+        for cert in certificates:
+            cert_id = cert.get('id')
+            filename = cert.get('filename', 'NO_FILENAME')
+            cert_type = cert.get('analysis', {}).get('type', 'NO_TYPE')
+            crypto_objects = CertificateStorage.get_crypto_objects(cert_id)
+            logger.debug(f"Cert: {filename} | Type: {cert_type} | Crypto: {list(crypto_objects.keys()) if crypto_objects else 'None'}")
+        
         validations = run_validations(certificates)
         
         return {
@@ -283,7 +317,7 @@ def validate_certificates(current_user: Annotated[User, Depends(get_current_acti
         )
 
 # ============================================================================
-# AUTHENTICATION ENDPOINTS (EXISTING - NO MERGE NEEDED)
+# AUTHENTICATION ENDPOINTS
 # ============================================================================
 
 @app.post("/token", response_model=Token, tags=["authentication"])
@@ -309,7 +343,7 @@ async def read_users_me(current_user: Annotated[User, Depends(get_current_active
     return current_user
 
 # ============================================================================
-# HEALTH CHECK ENDPOINT (EXISTING - NO MERGE NEEDED)
+# HEALTH CHECK ENDPOINTS
 # ============================================================================
 
 @app.get("/health", response_model=HealthResponse, tags=["health"])
@@ -331,7 +365,7 @@ def api_health_check():
     )
 
 # ============================================================================
-# ROOT ENDPOINT (EXISTING - NO MERGE NEEDED)
+# ROOT ENDPOINT
 # ============================================================================
 
 @app.get("/", tags=["root"])
@@ -350,7 +384,7 @@ def read_root():
     }
 
 # ============================================================================
-# ADDITIONAL UTILITY ENDPOINTS (NEW - MERGE NEEDED)
+# ADDITIONAL UTILITY ENDPOINTS
 # ============================================================================
 
 @app.get("/api/stats", tags=["statistics"])
@@ -376,7 +410,7 @@ def get_system_stats(current_user: Annotated[User, Depends(get_current_active_us
     }
 
 # ============================================================================
-# APPLICATION STARTUP/SHUTDOWN (EXISTING - NO MERGE NEEDED)
+# APPLICATION STARTUP/SHUTDOWN
 # ============================================================================
 
 @app.on_event("startup")
@@ -392,7 +426,7 @@ async def shutdown_event():
     logger.info(f"Shutting down {settings.APP_NAME}")
 
 # ============================================================================
-# DEVELOPMENT SERVER (EXISTING - NO MERGE NEEDED)
+# DEVELOPMENT SERVER
 # ============================================================================
 
 if __name__ == "__main__":

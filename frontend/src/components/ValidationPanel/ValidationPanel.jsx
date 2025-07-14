@@ -89,84 +89,117 @@ const ValidationPanel = ({ certificates }) => {
     return (
       <div className={styles.comparisonSection}>
         <h5>Public Key Comparison</h5>
-        {Object.entries(comparison).map(([key, comp]) => (
-          <div key={key} className={styles.comparisonItem}>
+        
+        {/* Direct Match */}
+        {comparison.directMatch !== undefined && (
+          <div className={styles.comparisonItem}>
             <div className={styles.comparisonHeader}>
-              <span className={styles.comparisonLabel}>
-                {key === 'publicPoint' ? 'Public Point' : key.charAt(0).toUpperCase() + key.slice(1)}
-              </span>
-              <span className={`${styles.comparisonResult} ${comp.match ? styles.match : styles.noMatch}`}>
-                {comp.match ? <CheckCircle size={14} /> : <XCircle size={14} />}
-                {comp.match ? 'Match' : 'No Match'}
+              <span className={styles.comparisonLabel}>Direct Match</span>
+              <span className={`${styles.comparisonResult} ${comparison.directMatch ? styles.match : styles.noMatch}`}>
+                {comparison.directMatch ? <CheckCircle size={14} /> : <XCircle size={14} />}
+                {comparison.directMatch ? 'Match' : 'No Match'}
               </span>
             </div>
-            
-            {/* Handle different comparison types */}
-            {comp.privateKey !== undefined && comp.csr !== undefined && (
-              <div className={styles.comparisonValues}>
-                <div className={styles.valueRow}>
-                  <span className={styles.valueLabel}>Private Key:</span>
-                  <span className={styles.valueText}>{comp.privateKey}</span>
-                </div>
-                <div className={styles.valueRow}>
-                  <span className={styles.valueLabel}>CSR:</span>
-                  <span className={styles.valueText}>{comp.csr}</span>
-                </div>
-              </div>
-            )}
-
-            {comp.csr !== undefined && comp.certificate !== undefined && (
-              <div className={styles.comparisonValues}>
-                <div className={styles.valueRow}>
-                  <span className={styles.valueLabel}>CSR:</span>
-                  <span className={styles.valueText}>{comp.csr}</span>
-                </div>
-                <div className={styles.valueRow}>
-                  <span className={styles.valueLabel}>Certificate:</span>
-                  <span className={styles.valueText}>{comp.certificate}</span>
-                </div>
-              </div>
-            )}
-
-            {/* Handle EC point coordinates */}
-            {comp.x && comp.y && (
-              <div className={styles.comparisonValues}>
-                <div className={styles.valueRow}>
-                  <span className={styles.valueLabel}>X Coordinate:</span>
-                  <div className={styles.coordComparison}>
-                    <div className={styles.coordValue}>
-                      <span className={styles.coordLabel}>CSR:</span>
-                      <span className={styles.valueText}>{comp.x.csr}</span>
-                    </div>
-                    <div className={styles.coordValue}>
-                      <span className={styles.coordLabel}>Cert:</span>
-                      <span className={styles.valueText}>{comp.x.certificate}</span>
-                    </div>
-                    <span className={`${styles.coordResult} ${comp.x.match ? styles.match : styles.noMatch}`}>
-                      {comp.x.match ? '✓' : '✗'}
-                    </span>
-                  </div>
-                </div>
-                <div className={styles.valueRow}>
-                  <span className={styles.valueLabel}>Y Coordinate:</span>
-                  <div className={styles.coordComparison}>
-                    <div className={styles.coordValue}>
-                      <span className={styles.coordLabel}>CSR:</span>
-                      <span className={styles.valueText}>{comp.y.csr}</span>
-                    </div>
-                    <div className={styles.coordValue}>
-                      <span className={styles.coordLabel}>Cert:</span>
-                      <span className={styles.valueText}>{comp.y.certificate}</span>
-                    </div>
-                    <span className={`${styles.coordResult} ${comp.y.match ? styles.match : styles.noMatch}`}>
-                      {comp.y.match ? '✓' : '✗'}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
-        ))}
+        )}
+        
+        {/* Fingerprint Match */}
+        {comparison.fingerprintMatch !== undefined && (
+          <div className={styles.comparisonItem}>
+            <div className={styles.comparisonHeader}>
+              <span className={styles.comparisonLabel}>Fingerprint Match</span>
+              <span className={`${styles.comparisonResult} ${comparison.fingerprintMatch ? styles.match : styles.noMatch}`}>
+                {comparison.fingerprintMatch ? <CheckCircle size={14} /> : <XCircle size={14} />}
+                {comparison.fingerprintMatch ? 'Match' : 'No Match'}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* Legacy format support for older validations */}
+        {Object.entries(comparison).map(([key, comp]) => {
+          // Skip the new format fields
+          if (key === 'directMatch' || key === 'fingerprintMatch') return null
+          
+          return (
+            <div key={key} className={styles.comparisonItem}>
+              <div className={styles.comparisonHeader}>
+                <span className={styles.comparisonLabel}>
+                  {key === 'publicPoint' ? 'Public Point' : key.charAt(0).toUpperCase() + key.slice(1)}
+                </span>
+                <span className={`${styles.comparisonResult} ${comp.match ? styles.match : styles.noMatch}`}>
+                  {comp.match ? <CheckCircle size={14} /> : <XCircle size={14} />}
+                  {comp.match ? 'Match' : 'No Match'}
+                </span>
+              </div>
+              
+              {/* Handle different comparison types */}
+              {comp.privateKey !== undefined && comp.csr !== undefined && (
+                <div className={styles.comparisonValues}>
+                  <div className={styles.valueRow}>
+                    <span className={styles.valueLabel}>Private Key:</span>
+                    <span className={styles.valueText}>{comp.privateKey}</span>
+                  </div>
+                  <div className={styles.valueRow}>
+                    <span className={styles.valueLabel}>CSR:</span>
+                    <span className={styles.valueText}>{comp.csr}</span>
+                  </div>
+                </div>
+              )}
+
+              {comp.csr !== undefined && comp.certificate !== undefined && (
+                <div className={styles.comparisonValues}>
+                  <div className={styles.valueRow}>
+                    <span className={styles.valueLabel}>CSR:</span>
+                    <span className={styles.valueText}>{comp.csr}</span>
+                  </div>
+                  <div className={styles.valueRow}>
+                    <span className={styles.valueLabel}>Certificate:</span>
+                    <span className={styles.valueText}>{comp.certificate}</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Handle EC point coordinates */}
+              {comp.x && comp.y && (
+                <div className={styles.comparisonValues}>
+                  <div className={styles.valueRow}>
+                    <span className={styles.valueLabel}>X Coordinate:</span>
+                    <div className={styles.coordComparison}>
+                      <div className={styles.coordValue}>
+                        <span className={styles.coordLabel}>CSR:</span>
+                        <span className={styles.valueText}>{comp.x.csr}</span>
+                      </div>
+                      <div className={styles.coordValue}>
+                        <span className={styles.coordLabel}>Cert:</span>
+                        <span className={styles.valueText}>{comp.x.certificate}</span>
+                      </div>
+                      <span className={`${styles.coordResult} ${comp.x.match ? styles.match : styles.noMatch}`}>
+                        {comp.x.match ? '✓' : '✗'}
+                      </span>
+                    </div>
+                  </div>
+                  <div className={styles.valueRow}>
+                    <span className={styles.valueLabel}>Y Coordinate:</span>
+                    <div className={styles.coordComparison}>
+                      <div className={styles.coordValue}>
+                        <span className={styles.coordLabel}>CSR:</span>
+                        <span className={styles.valueText}>{comp.y.csr}</span>
+                      </div>
+                      <div className={styles.coordValue}>
+                        <span className={styles.coordLabel}>Cert:</span>
+                        <span className={styles.valueText}>{comp.y.certificate}</span>
+                      </div>
+                      <span className={`${styles.coordResult} ${comp.y.match ? styles.match : styles.noMatch}`}>
+                        {comp.y.match ? '✓' : '✗'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )
+        })}
       </div>
     )
   }

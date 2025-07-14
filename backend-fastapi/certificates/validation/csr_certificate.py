@@ -1,5 +1,5 @@
-# backend-fastapi/certificates/validation/csr_certificate.py
-# CSR <-> Certificate validation functions
+# certificates/validation/csr_certificate.py
+# CSR <-> Certificate validation functions - FIXED VERSION
 
 import logging
 import hashlib
@@ -25,40 +25,9 @@ def validate_csr_certificate_match(csr: x509.CertificateSigningRequest, certific
         logger.debug(f"CSR public key type: {type(csr_public_key).__name__}")
         logger.debug(f"Certificate public key type: {type(cert_public_key).__name__}")
         
-        # SIMPLIFIED: Use direct public_numbers() comparison like the example
-        if isinstance(csr_public_key, rsa.RSAPublicKey) and isinstance(cert_public_key, rsa.RSAPublicKey):
-            csr_numbers = csr_public_key.public_numbers()
-            cert_numbers = cert_public_key.public_numbers()
-            
-            # Direct comparison as shown in the example
-            public_keys_match = csr_numbers == cert_numbers
-            
-            logger.debug(f"RSA public_numbers() comparison: {public_keys_match}")
-            
-            details = {
-                "algorithm": "RSA",
-                "keySize": csr_numbers.n.bit_length(),
-                "publicKeyMatch": public_keys_match
-            }
-            
-        elif isinstance(csr_public_key, ec.EllipticCurvePublicKey) and isinstance(cert_public_key, ec.EllipticCurvePublicKey):
-            csr_numbers = csr_public_key.public_numbers()
-            cert_numbers = cert_public_key.public_numbers()
-            
-            # Direct comparison for EC keys
-            public_keys_match = csr_numbers == cert_numbers
-            
-            logger.debug(f"EC public_numbers() comparison: {public_keys_match}")
-            
-            details = {
-                "algorithm": "EC",
-                "curve": csr_public_key.curve.name,
-                "keySize": csr_public_key.curve.key_size,
-                "publicKeyMatch": public_keys_match
-            }
-            
-        else:
-            error_msg = f"Algorithm mismatch or unsupported: CSR has {type(csr_public_key).__name__}, Certificate has {type(cert_public_key).__name__}"
+        # Check algorithm compatibility
+        if type(csr_public_key) != type(cert_public_key):
+            error_msg = f"Algorithm mismatch: CSR has {type(csr_public_key).__name__}, Certificate has {type(cert_public_key).__name__}"
             logger.warning(error_msg)
             return ValidationResult(
                 is_valid=False,
@@ -66,7 +35,7 @@ def validate_csr_certificate_match(csr: x509.CertificateSigningRequest, certific
                 error=error_msg
             )
         
-        # Generate fingerprints for additional verification
+        # Generate fingerprints FIRST (this is the most reliable method)
         csr_pubkey_der = csr_public_key.public_bytes(
             encoding=serialization.Encoding.DER,
             format=serialization.PublicFormat.SubjectPublicKeyInfo
@@ -81,13 +50,58 @@ def validate_csr_certificate_match(csr: x509.CertificateSigningRequest, certific
         fingerprint_match = csr_fingerprint == cert_fingerprint
         
         logger.debug(f"Fingerprint comparison: {fingerprint_match}")
-        logger.debug(f"CSR fingerprint: {csr_fingerprint[:16]}...")
-        logger.debug(f"Certificate fingerprint: {cert_fingerprint[:16]}...")
+        logger.debug(f"CSR fingerprint: {csr_fingerprint}")
+        logger.debug(f"Certificate fingerprint: {cert_fingerprint}")
         
-        # Both methods should agree
-        is_valid = public_keys_match and fingerprint_match
+        # Direct public_numbers() comparison
+        direct_match = False
         
+        if isinstance(csr_public_key, rsa.RSAPublicKey):
+            csr_numbers = csr_public_key.public_numbers()
+            cert_numbers = cert_public_key.public_numbers()
+            direct_match = (csr_numbers.n == cert_numbers.n and csr_numbers.e == cert_numbers.e)
+            
+            logger.debug(f"RSA direct comparison: modulus match = {csr_numbers.n == cert_numbers.n}, exponent match = {csr_numbers.e == cert_numbers.e}")
+            
+            details = {
+                "algorithm": "RSA",
+                "keySize": csr_numbers.n.bit_length()
+            }
+            
+        elif isinstance(csr_public_key, ec.EllipticCurvePublicKey):
+            csr_numbers = csr_public_key.public_numbers()
+            cert_numbers = cert_public_key.public_numbers()
+            direct_match = (csr_numbers.x == cert_numbers.x and 
+                          csr_numbers.y == cert_numbers.y and
+                          csr_public_key.curve.name == cert_public_key.curve.name)
+            
+            logger.debug(f"EC direct comparison: x match = {csr_numbers.x == cert_numbers.x}, y match = {csr_numbers.y == cert_numbers.y}, curve match = {csr_public_key.curve.name == cert_public_key.curve.name}")
+            
+            details = {
+                "algorithm": "EC",
+                "curve": csr_public_key.curve.name,
+                "keySize": csr_public_key.curve.key_size
+            }
+        else:
+            logger.warning(f"Unsupported key type for direct comparison: {type(csr_public_key).__name__}")
+            direct_match = False
+            details = {
+                "algorithm": type(csr_public_key).__name__,
+                "keySize": 0
+            }
+        
+        logger.debug(f"Direct public_numbers() comparison: {direct_match}")
+        
+        # THE KEY FIX: Both methods should agree, use fingerprint as authoritative
+        # If fingerprints match, the keys ARE identical regardless of other comparisons
+        is_valid = fingerprint_match
+        
+        # Add detailed comparison results
         details.update({
+            "publicKeyComparison": {
+                "directMatch": direct_match,
+                "fingerprintMatch": fingerprint_match
+            },
             "fingerprint": {
                 "csr": csr_fingerprint,
                 "certificate": cert_fingerprint,
@@ -104,22 +118,13 @@ def validate_csr_certificate_match(csr: x509.CertificateSigningRequest, certific
         if not san_comparison["match"]:
             details["sanComparison"] = san_comparison
         
-        # Add file information for display
-        details.update({
-            "publicKeyComparison": {
-                "directMatch": public_keys_match,
-                "fingerprintMatch": fingerprint_match
-            }
-        })
-        
+        # Log the final result with explanation
         if is_valid:
-            logger.info("CSR <-> Certificate validation: ✅ MATCH - Public keys are identical")
+            logger.info("CSR <-> Certificate validation: ✅ MATCH - Fingerprints are identical")
+            if not direct_match:
+                logger.warning("Note: Direct comparison failed but fingerprints match - this may indicate a comparison logic issue")
         else:
-            logger.warning("CSR <-> Certificate validation: ❌ NO MATCH - Public keys differ")
-            if not public_keys_match:
-                logger.warning("Direct public_numbers() comparison failed")
-            if not fingerprint_match:
-                logger.warning("Fingerprint comparison failed")
+            logger.warning("CSR <-> Certificate validation: ❌ NO MATCH - Fingerprints differ")
         
         return ValidationResult(
             is_valid=is_valid,

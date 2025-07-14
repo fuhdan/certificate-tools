@@ -1,5 +1,5 @@
 # backend-fastapi/certificates/storage.py
-# Enhanced storage logic with comprehensive debugging and PKI hierarchy enforcement
+# Enhanced storage logic with comprehensive debugging, PKI hierarchy enforcement, and crypto objects
 
 import logging
 from typing import Dict, Any, List, Optional
@@ -9,8 +9,38 @@ logger = logging.getLogger(__name__)
 # In-memory storage
 uploaded_certificates: List[Dict[str, Any]] = []
 
+# Separate storage for crypto objects (not serialized to JSON)
+crypto_objects_storage: Dict[str, Dict[str, Any]] = {}
+
 class CertificateStorage:
-    """Enhanced certificate storage with PKI hierarchy enforcement and comprehensive debugging"""
+    """Enhanced certificate storage with PKI hierarchy enforcement, comprehensive debugging, and crypto objects"""
+    
+    @staticmethod
+    def store_crypto_objects(cert_id: str, crypto_objects: Dict[str, Any]):
+        """Store cryptographic objects separately (not serialized to JSON)"""
+        global crypto_objects_storage
+        crypto_objects_storage[cert_id] = crypto_objects
+        logger.debug(f"Stored crypto objects for cert {cert_id}: {list(crypto_objects.keys())}")
+    
+    @staticmethod
+    def get_crypto_objects(cert_id: str) -> Dict[str, Any]:
+        """Retrieve cryptographic objects for validation"""
+        return crypto_objects_storage.get(cert_id, {})
+    
+    @staticmethod
+    def remove_crypto_objects(cert_id: str):
+        """Remove crypto objects when certificate is deleted"""
+        global crypto_objects_storage
+        if cert_id in crypto_objects_storage:
+            del crypto_objects_storage[cert_id]
+            logger.debug(f"Removed crypto objects for cert {cert_id}")
+    
+    @staticmethod
+    def clear_all_crypto_objects():
+        """Clear all crypto objects"""
+        global crypto_objects_storage
+        crypto_objects_storage = {}
+        logger.debug("Cleared all crypto objects")
     
     @staticmethod
     def get_certificate_order(cert_data: Dict[str, Any]) -> int:
@@ -365,9 +395,12 @@ class CertificateStorage:
     
     @staticmethod
     def remove_by_id(cert_id: str) -> bool:
-        """Remove certificate by ID with comprehensive debugging"""
+        """Remove certificate by ID with crypto objects cleanup"""
         logger.info(f"=== STORAGE REMOVE OPERATION ===")
         logger.info(f"Removing certificate with ID: {cert_id}")
+        
+        # Remove crypto objects first
+        CertificateStorage.remove_crypto_objects(cert_id)
         
         global uploaded_certificates
         initial_count = len(uploaded_certificates)
@@ -403,8 +436,12 @@ class CertificateStorage:
     
     @staticmethod
     def clear_all() -> bool:
-        """Clear all certificates with comprehensive debugging"""
+        """Clear all certificates and crypto objects"""
         logger.info(f"=== STORAGE CLEAR ALL OPERATION ===")
+        
+        # Clear crypto objects first
+        CertificateStorage.clear_all_crypto_objects()
+        
         global uploaded_certificates
         count = len(uploaded_certificates)
         
@@ -413,7 +450,7 @@ class CertificateStorage:
             logger.debug(f"  Clearing [{i}]: {cert.get('filename')} - {cert.get('analysis', {}).get('type')}")
         
         uploaded_certificates = []
-        logger.info(f"All certificates cleared successfully")
+        logger.info(f"All certificates and crypto objects cleared successfully")
         logger.debug(f"Storage is now empty: {len(uploaded_certificates)} certificates")
         return True
     
@@ -428,6 +465,9 @@ class CertificateStorage:
         existing_hash = existing_cert.get('analysis', {}).get('content_hash', 'NO_HASH')
         new_hash = new_cert.get('analysis', {}).get('content_hash', 'NO_HASH')
         logger.debug(f"Content hashes - OLD: {existing_hash[:16]}... NEW: {new_hash[:16]}...")
+        
+        # Remove crypto objects for the old certificate
+        CertificateStorage.remove_crypto_objects(existing_cert.get('id'))
         
         # Find and replace
         for i, cert in enumerate(uploaded_certificates):
@@ -472,12 +512,16 @@ class CertificateStorage:
             types[cert_type] = types.get(cert_type, 0) + 1
             orders[cert_order] = orders.get(cert_order, 0) + 1
         
+        # Add crypto objects info
+        crypto_count = len(crypto_objects_storage)
+        
         summary = {
             "total": total,
             "valid": valid_count,
             "invalid": total - valid_count,
             "types": types,
-            "hierarchy_distribution": orders
+            "hierarchy_distribution": orders,
+            "crypto_objects_stored": crypto_count
         }
         
         logger.debug(f"Storage summary:")
@@ -486,6 +530,7 @@ class CertificateStorage:
         logger.debug(f"  Invalid: {summary['invalid']}")
         logger.debug(f"  Types: {summary['types']}")
         logger.debug(f"  Hierarchy distribution: {summary['hierarchy_distribution']}")
+        logger.debug(f"  Crypto objects stored: {summary['crypto_objects_stored']}")
         
         return summary
     
@@ -494,15 +539,21 @@ class CertificateStorage:
         """Internal method to log current storage state for debugging"""
         logger.debug(f"=== CURRENT STORAGE STATE ===")
         logger.debug(f"Total certificates: {len(uploaded_certificates)}")
+        logger.debug(f"Total crypto objects: {len(crypto_objects_storage)}")
         
         for i, cert in enumerate(uploaded_certificates):
             analysis = cert.get('analysis', {})
             order = CertificateStorage.get_certificate_order(cert)
+            cert_id = cert.get('id', 'NO_ID')
+            has_crypto = cert_id in crypto_objects_storage
+            crypto_types = list(crypto_objects_storage.get(cert_id, {}).keys()) if has_crypto else []
+            
             logger.debug(f"  [{i}] Order {order}: {cert.get('filename', 'NO_FILENAME')}")
-            logger.debug(f"      ID: {cert.get('id', 'NO_ID')}")
+            logger.debug(f"      ID: {cert_id}")
             logger.debug(f"      Type: {analysis.get('type', 'NO_TYPE')}")
             logger.debug(f"      Valid: {analysis.get('isValid', 'NO_VALID')}")
             logger.debug(f"      Hash: {analysis.get('content_hash', 'NO_HASH')[:16] if analysis.get('content_hash') else 'NO_HASH'}...")
+            logger.debug(f"      Crypto objects: {crypto_types if has_crypto else 'None'}")
             logger.debug(f"      Uploaded: {cert.get('uploadedAt', 'NO_TIME')}")
         
         logger.debug(f"=== END STORAGE STATE ===")
@@ -555,3 +606,23 @@ class CertificateStorage:
             logger.info(f"PKI Hierarchy is properly enforced")
         
         logger.info(f"=== END HIERARCHY ENFORCEMENT DEBUG ===")
+    
+    @staticmethod
+    def debug_crypto_objects():
+        """Debug helper for crypto objects storage"""
+        logger.info(f"=== CRYPTO OBJECTS DEBUG ===")
+        logger.info(f"Total crypto objects stored: {len(crypto_objects_storage)}")
+        
+        for cert_id, crypto_objects in crypto_objects_storage.items():
+            # Find corresponding certificate
+            cert = CertificateStorage.find_by_id(cert_id)
+            filename = cert.get('filename', 'UNKNOWN') if cert else 'NOT_FOUND'
+            
+            logger.info(f"  Certificate ID: {cert_id}")
+            logger.info(f"  Filename: {filename}")
+            logger.info(f"  Crypto objects: {list(crypto_objects.keys())}")
+            
+            for obj_type, obj in crypto_objects.items():
+                logger.debug(f"    {obj_type}: {type(obj).__name__}")
+        
+        logger.info(f"=== END CRYPTO OBJECTS DEBUG ===")

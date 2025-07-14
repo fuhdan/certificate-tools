@@ -5,6 +5,7 @@ import Footer from '../Footer/Footer'
 import FloatingPanel from '../FloatingPanel/FloatingPanel'
 import FileUpload from '../FileUpload/FileUpload'
 import CertificateDetails from '../CertificateDetails/CertificateDetails'
+import ValidationPanel from '../ValidationPanel/ValidationPanel'
 import api from '../../services/api'
 import styles from './Layout.module.css'
 
@@ -159,7 +160,11 @@ const Layout = () => {
           
           {sortedCertificates.length > 0 && isAuthenticated && (
             <div className={styles.certificatesSection}>
-              <h2>Certificate Details</h2>
+              <h2>Certificate Analysis</h2>
+              
+              {/* Validation Panel - appears above certificate details */}
+              <ValidationPanel certificates={sortedCertificates} />
+              
               {sortedCertificates.map((certificate) => (
                 <CertificateDetails 
                   key={certificate.id} 

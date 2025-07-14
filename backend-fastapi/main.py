@@ -72,17 +72,27 @@ app.add_middleware(
 async def analyze_certificate(
     current_user: Annotated[User, Depends(get_current_active_user)],
     certificate: UploadFile = File(...),
-    password: str = Form(None)  # Use Form() instead of regular parameter
+    password: str = Form(None)
 ):
-    """Analyze uploaded certificate file with optional password support"""
+    """Analyze uploaded certificate file with crypto object storage"""
     from certificates.storage import CertificateStorage
     from certificates.analyzer import analyze_uploaded_certificate
     
     try:
         file_content = await certificate.read()
         
-        # Analyze the certificate with password support
-        analysis = analyze_uploaded_certificate(file_content, certificate.filename, password)
+        # Analyze the certificate - NEW: returns both analysis and crypto objects
+        result = analyze_uploaded_certificate(file_content, certificate.filename, password)
+        
+        # Extract analysis and crypto objects from the result
+        if isinstance(result, dict) and 'analysis' in result:
+            # NEW FORMAT: {analysis: {...}, crypto_objects: {...}}
+            analysis = result['analysis']
+            crypto_objects = result.get('crypto_objects', {})
+        else:
+            # FALLBACK: old format where result IS the analysis
+            analysis = result
+            crypto_objects = {}
         
         # Check if password is required
         if analysis.get('requiresPassword', False):
@@ -107,7 +117,7 @@ async def analyze_certificate(
                     "message": f"Invalid password for {certificate.filename}"
                 }
         
-        # Check for duplicates based on content hash (normalized)
+        # Check for duplicates based on content hash
         logger.info(f"Checking for duplicates with content_hash: {analysis['content_hash']}")
         existing_cert = CertificateStorage.find_by_hash(analysis["content_hash"])
         
@@ -115,17 +125,12 @@ async def analyze_certificate(
             logger.info(f"Found duplicate: {existing_cert.get('filename')} has same content_hash")
         else:
             logger.info(f"No duplicate found for content_hash: {analysis['content_hash']}")
-            # Debug: show all existing content hashes
-            all_certs = CertificateStorage.get_all()
-            for cert in all_certs:
-                existing_hash = cert.get('analysis', {}).get('content_hash', 'NO_HASH')
-                logger.info(f"  Existing cert: {cert.get('filename')} has content_hash: {existing_hash}")
         
-        # Create certificate data
+        # Create certificate data (without crypto objects)
         certificate_data = {
             "id": str(uuid.uuid4()),
             "filename": certificate.filename,
-            "analysis": analysis,
+            "analysis": analysis,  # Only analysis data, no crypto objects
             "uploadedAt": datetime.datetime.now().isoformat(),
             "size": len(file_content)
         }
@@ -137,10 +142,16 @@ async def analyze_certificate(
             # Replace existing certificate
             replaced_cert = CertificateStorage.replace(existing_cert, certificate_data)
             added_certificates.append(replaced_cert)
+            # Store crypto objects separately for the replaced certificate
+            if crypto_objects:
+                CertificateStorage.store_crypto_objects(replaced_cert['id'], crypto_objects)
         else:
             # Add new certificate
             new_cert = CertificateStorage.add(certificate_data)
             added_certificates.append(new_cert)
+            # Store crypto objects separately for the new certificate
+            if crypto_objects:
+                CertificateStorage.store_crypto_objects(new_cert['id'], crypto_objects)
         
         # Handle additional items from PKCS12 (private keys, additional certificates)
         if analysis.get('additional_items'):
@@ -173,7 +184,7 @@ async def analyze_certificate(
                     added_certificates.append(added_item)
                     logger.info(f"Added new {item['type']} from PKCS12: {item_filename}")
         
-        # Return response
+        # Return response (no crypto objects in JSON response)
         if existing_cert:
             return {
                 "success": True,
@@ -196,6 +207,8 @@ async def analyze_certificate(
             
     except Exception as e:
         logger.error(f"Certificate analysis error: {e}")
+        import traceback
+        logger.error(f"Full traceback: {traceback.format_exc()}")
         raise HTTPException(
             status_code=500,
             detail=f"Failed to analyze certificate: {str(e)}"
@@ -240,6 +253,34 @@ def clear_all_certificates(current_user: Annotated[User, Depends(get_current_act
         "success": True,
         "message": "All certificates cleared"
     }
+
+@app.get("/validate", tags=["validation"])
+def validate_certificates(current_user: Annotated[User, Depends(get_current_active_user)]):
+    """Run validation checks on uploaded certificates using real cryptographic comparison"""
+    from certificates.storage import CertificateStorage
+    from certificates.validation.validator import run_validations
+    
+    try:
+        certificates = CertificateStorage.get_all()
+        logger.info(f"Running cryptographic validations on {len(certificates)} certificates")
+        
+        validations = run_validations(certificates)
+        
+        return {
+            "success": True,
+            "validations": [validation.to_dict() for validation in validations],
+            "count": len(validations),
+            "timestamp": datetime.datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Validation error: {e}")
+        import traceback
+        logger.error(f"Full traceback: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to run validations: {str(e)}"
+        )
 
 # ============================================================================
 # AUTHENTICATION ENDPOINTS (EXISTING - NO MERGE NEEDED)

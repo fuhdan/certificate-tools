@@ -3,7 +3,7 @@
 
 import hashlib
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 from .formats.pem import (
     analyze_pem_certificate, analyze_pem_csr, 
@@ -17,7 +17,7 @@ from .utils.hashing import generate_file_hash
 logger = logging.getLogger(__name__)
 
 def get_file_format(filename: str) -> str:
-    """Determine file format from filename"""
+    """Determine file format from filename - UPDATED with PKCS7 support"""
     extension = filename.split('.')[-1].lower()
     format_map = {
         'pem': 'PEM',
@@ -26,9 +26,10 @@ def get_file_format(filename: str) -> str:
         'der': 'DER',
         'p12': 'PKCS12',
         'pfx': 'PKCS12',
-        'p7b': 'PKCS7',
-        'p7c': 'PKCS7', 
+        'p7b': 'PKCS7',  # Added PKCS7 formats
+        'p7c': 'PKCS7',
         'p7s': 'PKCS7',
+        'spc': 'PKCS7',  # Software Publisher Certificate
         'jks': 'JKS',
         'key': 'Private Key',
         'csr': 'CSR',
@@ -191,7 +192,7 @@ def _analyze_pem_content_with_crypto_extraction(content_str: str, file_content: 
         }
 
 def _analyze_binary_content_with_crypto_extraction(file_content: bytes, file_format: str, password: Optional[str]) -> Dict[str, Any]:
-    """Route binary content to appropriate analyzer with crypto object extraction"""
+    """Route binary content to appropriate analyzer with crypto object extraction - UPDATED"""
     logger.debug("=== BINARY CONTENT ANALYSIS WITH CRYPTO EXTRACTION ===")
     logger.debug(f"File format: {file_format}")
     
@@ -200,7 +201,6 @@ def _analyze_binary_content_with_crypto_extraction(file_content: bytes, file_for
         analysis_result = analyze_der_formats(file_content, password)
         crypto_objects = {}
         
-        # Extract crypto objects for DER formats if valid
         if analysis_result.get('isValid'):
             crypto_objects = _extract_der_crypto_objects(analysis_result, file_content, password)
         
@@ -211,9 +211,18 @@ def _analyze_binary_content_with_crypto_extraction(file_content: bytes, file_for
         analysis_result = analyze_pkcs12(file_content, password)
         crypto_objects = {}
         
-        # Extract crypto objects for PKCS12 if valid
         if analysis_result.get('isValid'):
             crypto_objects = _extract_pkcs12_crypto_objects(analysis_result, file_content, password)
+        
+        return {'analysis': analysis_result, 'crypto_objects': crypto_objects}
+        
+    elif file_format in ['PKCS7', 'P7B', 'P7C']:
+        from .formats.pkcs7 import analyze_pkcs7
+        analysis_result = analyze_pkcs7(file_content, password)
+        crypto_objects = {}
+        
+        if analysis_result.get('isValid'):
+            crypto_objects = _extract_pkcs7_crypto_objects(analysis_result, file_content)
         
         return {'analysis': analysis_result, 'crypto_objects': crypto_objects}
         
@@ -275,16 +284,21 @@ def _extract_der_crypto_objects(analysis_result: Dict[str, Any], file_content: b
     return crypto_objects
 
 def _extract_pkcs12_crypto_objects(analysis_result: Dict[str, Any], file_content: bytes, password: Optional[str]) -> Dict[str, Any]:
-    """Extract crypto objects for PKCS12 formats"""
+    """Extract crypto objects for PKCS12 formats - FIXED VERSION"""
     logger.debug("Extracting PKCS12 crypto objects...")
     crypto_objects = {}
     
     try:
         from cryptography.hazmat.primitives.serialization import pkcs12
         
+        # Use the password as bytes if provided
+        password_bytes = None
+        if password:
+            password_bytes = password.encode('utf-8')
+        
         private_key, cert, additional_certs = pkcs12.load_key_and_certificates(
             file_content, 
-            password=password.encode('utf-8') if password else None
+            password=password_bytes
         )
         
         if cert:
@@ -301,3 +315,116 @@ def _extract_pkcs12_crypto_objects(analysis_result: Dict[str, Any], file_content
         logger.error(f"Error extracting PKCS12 crypto objects: {e}")
     
     return crypto_objects
+
+def _extract_pkcs7_crypto_objects(analysis_result: Dict[str, Any], file_content: bytes) -> Dict[str, Any]:
+    """Extract crypto objects for PKCS7 formats - NEW FUNCTION"""
+    logger.debug("Extracting PKCS7 crypto objects...")
+    crypto_objects = {}
+    
+    try:
+        # For PKCS7, we need to parse the structure manually to extract certificates
+        # Try to decode as text first for PEM format
+        try:
+            content_str = file_content.decode('utf-8')
+            is_pem = '-----BEGIN' in content_str
+        except UnicodeDecodeError:
+            content_str = None
+            is_pem = False
+        
+        certificates = []
+        
+        if is_pem and content_str:
+            # Handle -----BEGIN PKCS7----- format
+            import re
+            import base64
+            
+            if '-----BEGIN PKCS7-----' in content_str:
+                pkcs7_match = re.search(
+                    r'-----BEGIN PKCS7-----\s*(.*?)\s*-----END PKCS7-----',
+                    content_str,
+                    re.DOTALL
+                )
+                
+                if pkcs7_match:
+                    pkcs7_b64 = pkcs7_match.group(1).replace('\n', '').replace('\r', '').replace(' ', '')
+                    pkcs7_der = base64.b64decode(pkcs7_b64)
+                    certificates = _extract_certificates_from_pkcs7_der(pkcs7_der)
+            
+            # Handle multiple -----BEGIN CERTIFICATE----- blocks
+            if not certificates:
+                from cryptography import x509
+                cert_blocks = re.findall(
+                    r'-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----',
+                    content_str,
+                    re.DOTALL
+                )
+                
+                for cert_block in cert_blocks:
+                    try:
+                        cert = x509.load_pem_x509_certificate(cert_block.encode())
+                        certificates.append(cert)
+                    except Exception as cert_err:
+                        logger.warning(f"Failed to parse certificate in PKCS7: {cert_err}")
+                        continue
+        else:
+            # Handle binary PKCS7
+            certificates = _extract_certificates_from_pkcs7_der(file_content)
+        
+        if certificates:
+            if len(certificates) == 1:
+                crypto_objects['certificate'] = certificates[0]
+                logger.debug("Stored single PKCS7 certificate crypto object")
+            else:
+                crypto_objects['certificate'] = certificates[0]  # Main certificate
+                crypto_objects['additional_certificates'] = certificates[1:]  # Additional certificates
+                logger.debug(f"Stored PKCS7 main certificate + {len(certificates)-1} additional certificates")
+            
+    except Exception as e:
+        logger.error(f"Error extracting PKCS7 crypto objects: {e}")
+    
+    return crypto_objects
+
+def _extract_certificates_from_pkcs7_der(der_data: bytes) -> List:
+    """Extract certificates from PKCS7 DER data - helper function"""
+    logger.debug("Extracting certificates from PKCS7 DER data...")
+    certificates = []
+    
+    try:
+        from cryptography import x509
+        
+        # Look for certificate sequences in the DER data
+        data_hex = der_data.hex()
+        i = 0
+        
+        while i < len(data_hex) - 8:
+            if data_hex[i:i+4].lower() == '3082':  # ASN.1 SEQUENCE with long form length
+                try:
+                    # Get the length
+                    length_hex = data_hex[i+4:i+8]
+                    length = int(length_hex, 16)
+                    
+                    # Extract potential certificate
+                    cert_start = i // 2
+                    cert_length = length + 4
+                    
+                    if cert_start + cert_length <= len(der_data):
+                        cert_data = der_data[cert_start:cert_start + cert_length]
+                        
+                        try:
+                            cert = x509.load_der_x509_certificate(cert_data)
+                            certificates.append(cert)
+                            logger.debug(f"Extracted certificate from PKCS7 DER")
+                            i += cert_length * 2
+                            continue
+                        except Exception:
+                            pass
+                
+                except Exception:
+                    pass
+            
+            i += 2
+            
+    except Exception as e:
+        logger.error(f"Error extracting certificates from PKCS7 DER: {e}")
+    
+    return certificates

@@ -343,6 +343,109 @@ async def read_users_me(current_user: Annotated[User, Depends(get_current_active
     return current_user
 
 # ============================================================================
+# PKI BUNDLE ENDPOINTS
+# ============================================================================
+
+@app.get("/pki-bundle", tags=["pki"])
+def generate_pki_bundle(current_user: Annotated[User, Depends(get_current_active_user)]):
+    """Generate comprehensive PKI bundle with PEM content and details"""
+    from certificates.storage import CertificateStorage
+    from certificates.pki_bundle import PKIBundleGenerator
+    
+    try:
+        certificates = CertificateStorage.get_all()
+        
+        if not certificates:
+            raise HTTPException(
+                status_code=404,
+                detail="No certificates found to generate PKI bundle"
+            )
+        
+        bundle = PKIBundleGenerator.generate_pki_bundle(certificates)
+        validation = PKIBundleGenerator.validate_pki_bundle(bundle)
+        
+        return {
+            "success": True,
+            "bundle": bundle,
+            "validation": validation,
+            "timestamp": datetime.datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"PKI bundle generation error: {e}")
+        import traceback
+        logger.error(f"Full traceback: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to generate PKI bundle: {str(e)}"
+        )
+
+@app.get("/pki-bundle/download", tags=["pki"])
+def download_pki_bundle(current_user: Annotated[User, Depends(get_current_active_user)]):
+    """Download PKI bundle as JSON file"""
+    from certificates.storage import CertificateStorage
+    from certificates.pki_bundle import PKIBundleGenerator
+    from fastapi.responses import JSONResponse
+    
+    try:
+        certificates = CertificateStorage.get_all()
+        
+        if not certificates:
+            raise HTTPException(
+                status_code=404,
+                detail="No certificates found to generate PKI bundle"
+            )
+        
+        bundle = PKIBundleGenerator.generate_pki_bundle(certificates)
+        
+        # Return as downloadable JSON
+        return JSONResponse(
+            content=bundle,
+            headers={
+                "Content-Disposition": "attachment; filename=pki-bundle.json",
+                "Content-Type": "application/json"
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"PKI bundle download error: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to download PKI bundle: {str(e)}"
+        )
+
+@app.get("/pki-bundle", tags=["pki"])
+def get_pki_bundle(current_user: Annotated[User, Depends(get_current_active_user)]):
+    """Get current PKI bundle"""
+    from certificates.storage import CertificateStorage
+    
+    try:
+        bundle = CertificateStorage.get_pki_bundle()
+        has_bundle = CertificateStorage.has_pki_bundle()
+        
+        if not has_bundle:
+            return {
+                "success": False,
+                "message": "No PKI bundle available. Upload certificates to generate a bundle.",
+                "bundle": None
+            }
+        
+        return {
+            "success": True,
+            "bundle": bundle,
+            "timestamp": datetime.datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"PKI bundle fetch error: {e}")
+        import traceback
+        logger.error(f"Full traceback: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch PKI bundle: {str(e)}"
+        )
+
+# ============================================================================
 # HEALTH CHECK ENDPOINTS
 # ============================================================================
 

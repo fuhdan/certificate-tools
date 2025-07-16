@@ -1,5 +1,5 @@
-# certificates/validation/validator.py
-# INTELLIGENT validation orchestrator - only validates related components
+# backend-fastapi/certificates/validation/validator.py
+# FIXED validation orchestrator - now with proper PKCS7 chain support and fixed function calls
 
 import logging
 from typing import Dict, Any, List
@@ -12,7 +12,7 @@ from .chain_validation import validate_certificate_chain
 logger = logging.getLogger(__name__)
 
 def run_validations(certificates: List[Dict[str, Any]]) -> List[ValidationResult]:
-    """Run INTELLIGENT validations - now with PKCS7 chain support"""
+    """Run INTELLIGENT validations - FIXED PKCS7 detection"""
     logger.info(f"=== RUNNING INTELLIGENT VALIDATIONS ===")
     logger.debug(f"Total certificates to analyze: {len(certificates)}")
     
@@ -25,7 +25,7 @@ def run_validations(certificates: List[Dict[str, Any]]) -> List[ValidationResult
     csrs = []
     end_entity_certs = []
     ca_certs = []
-    pkcs7_chains = []  # NEW: Dedicated PKCS7 chain handling
+    pkcs7_chains = []
     
     for cert in certificates:
         analysis = cert.get('analysis', {})
@@ -50,8 +50,11 @@ def run_validations(certificates: List[Dict[str, Any]]) -> List[ValidationResult
             })
             logger.info(f"✓ Found CSR: {filename}")
             
-        elif 'Certificate' in cert_type and 'Chain' not in cert_type and analysis.get('isValid') and 'certificate' in crypto_objects:
-            # Determine if this is an end-entity or CA certificate
+        # FIXED: Detect ALL certificate types including "CA Certificate"
+        elif ('Certificate' in cert_type and 'Chain' not in cert_type and 
+              analysis.get('isValid') and 'certificate' in crypto_objects):
+            
+            # Single certificate - determine if CA or end-entity
             details = analysis.get('details', {})
             is_ca = details.get('extensions', {}).get('basicConstraints', {}).get('isCA', False)
             
@@ -69,32 +72,32 @@ def run_validations(certificates: List[Dict[str, Any]]) -> List[ValidationResult
                 end_entity_certs.append(cert_info)
                 logger.info(f"✓ Found end-entity certificate: {filename}")
         
-        # NEW: Handle PKCS7 chains specifically
-        elif ('PKCS7' in cert_type or 'Certificate Chain' in cert_type) and analysis.get('isValid'):
-            # Extract all certificates from PKCS7
+        # Handle explicit certificate chains
+        elif ('Certificate Chain' in cert_type and analysis.get('isValid')):
             main_cert = crypto_objects.get('certificate')
             additional_certs = crypto_objects.get('additional_certificates', [])
             
             if main_cert or additional_certs:
-                all_pkcs7_certs = []
+                all_chain_certs = []
                 if main_cert:
-                    all_pkcs7_certs.append(main_cert)
+                    all_chain_certs.append(main_cert)
                 if additional_certs:
-                    all_pkcs7_certs.extend(additional_certs)
+                    all_chain_certs.extend(additional_certs)
                 
                 pkcs7_chains.append({
                     'cert_data': cert,
-                    'certificates': all_pkcs7_certs,
-                    'filename': filename
+                    'certificates': all_chain_certs,
+                    'filename': filename,
+                    'chain_type': 'Certificate Chain'
                 })
-                logger.info(f"✓ Found PKCS7 chain: {filename} ({len(all_pkcs7_certs)} certificates)")
+                logger.info(f"✓ Found Certificate Chain: {filename} ({len(all_chain_certs)} certificates)")
     
     logger.info(f"VALIDATION CANDIDATES:")
     logger.info(f"  Private Keys: {len(private_keys)}")
     logger.info(f"  CSRs: {len(csrs)}")
     logger.info(f"  End-Entity Certificates: {len(end_entity_certs)}")
     logger.info(f"  CA Certificates: {len(ca_certs)}")
-    logger.info(f"  PKCS7 Chains: {len(pkcs7_chains)}")
+    logger.info(f"  PKCS7/Certificate Chains: {len(pkcs7_chains)}")
     
     # 1. INTELLIGENT: Private Key ↔ CSR (only if both exist)
     if private_keys and csrs:
@@ -120,37 +123,46 @@ def run_validations(certificates: List[Dict[str, Any]]) -> List[ValidationResult
                 validation = _validate_private_key_certificate(pk_item, cert_item)
                 validations.append(validation)
     
-    # 4. ENHANCED: Certificate Chain Validation (individual certificates)
+    # 4. FIXED: Certificate Chain Validation (individual certificates)
     all_certs = end_entity_certs + ca_certs
     if len(all_certs) >= 2:
         logger.info("Running Certificate Chain validations...")
         try:
-            chain_validations = validate_certificate_chain_enhanced(all_certs)
+            # Convert to the format expected by validate_certificate_chain
+            cert_list = []
+            for cert_info in all_certs:
+                cert_list.append(cert_info['cert_data'])
+            
+            chain_validations = validate_certificate_chain(cert_list)
             validations.extend(chain_validations)
             logger.info(f"Completed {len(chain_validations)} certificate chain validations")
         except Exception as e:
             logger.error(f"Error during certificate chain validation: {e}")
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
             validations.append(ValidationResult(
                 is_valid=False,
                 validation_type="Certificate Chain",
                 error=str(e)
             ))
     
-    # 5. NEW: PKCS7 Chain Validation
+    # 5. FIXED: PKCS7/Certificate Chain Validation
     if pkcs7_chains:
-        logger.info("Running PKCS7 Chain validations...")
-        for pkcs7_chain in pkcs7_chains:
+        logger.info("Running PKCS7/Certificate Chain validations...")
+        for chain_item in pkcs7_chains:
             try:
-                pkcs7_validations = _validate_pkcs7_chain(pkcs7_chain)
-                validations.extend(pkcs7_validations)
-                logger.info(f"Completed PKCS7 chain validation for {pkcs7_chain['filename']}")
+                chain_validations = _validate_pkcs7_chain(chain_item)
+                validations.extend(chain_validations)
+                logger.info(f"Completed {chain_item['chain_type']} validation for {chain_item['filename']}")
             except Exception as e:
-                logger.error(f"Error during PKCS7 chain validation: {e}")
+                logger.error(f"Error during {chain_item['chain_type']} validation: {e}")
+                import traceback
+                logger.error(f"Full traceback: {traceback.format_exc()}")
                 validations.append(ValidationResult(
                     is_valid=False,
-                    validation_type="PKCS7 Certificate Chain",
+                    validation_type=f"{chain_item['chain_type']} Validation",
                     error=str(e),
-                    details={"filename": pkcs7_chain['filename']}
+                    details={"filename": chain_item['filename']}
                 ))
     
     logger.info(f"Completed {len(validations)} INTELLIGENT validations")
@@ -246,199 +258,23 @@ def _validate_private_key_certificate(pk_item: Dict, cert_item: Dict) -> Validat
             }
         )
 
-def validate_certificate_chain_enhanced(cert_items: List[Dict]) -> List[ValidationResult]:
-    """Enhanced certificate chain validation with detailed signature verification"""
-    logger.info(f"=== ENHANCED CERTIFICATE CHAIN VALIDATION ===")
+def _validate_pkcs7_chain(chain_item: Dict) -> List[ValidationResult]:
+    """Validate PKCS7/Certificate chain with detailed analysis"""
+    logger.info(f"=== {chain_item['chain_type'].upper()} VALIDATION ===")
     
-    validations = []
+    filename = chain_item['filename']
+    certificates = chain_item['certificates']
+    chain_type = chain_item['chain_type']
     
-    if len(cert_items) < 2:
-        return validations
-    
-    # Separate end-entity and CA certificates
-    end_entity_certs = [c for c in cert_items if not c['is_ca']]
-    ca_certs = [c for c in cert_items if c['is_ca']]
-    
-    logger.info(f"Chain analysis: {len(end_entity_certs)} end-entity, {len(ca_certs)} CA certificates")
-    
-    # For each end-entity certificate, try to build a chain to a CA
-    for ee_cert_info in end_entity_certs:
-        ee_cert = ee_cert_info['certificate_obj']
-        ee_filename = ee_cert_info['cert_data'].get('filename')
-        
-        # Get issuer of end-entity certificate
-        ee_issuer_cn = _get_subject_cn(ee_cert, is_issuer=True)
-        
-        logger.debug(f"Looking for issuer '{ee_issuer_cn}' for end-entity cert '{ee_filename}'")
-        
-        # Find potential issuing CA
-        for ca_cert_info in ca_certs:
-            ca_cert = ca_cert_info['certificate_obj']
-            ca_filename = ca_cert_info['cert_data'].get('filename')
-            ca_subject_cn = _get_subject_cn(ca_cert, is_issuer=False)
-            
-            logger.debug(f"Checking CA '{ca_filename}' with subject '{ca_subject_cn}'")
-            
-            # Check if this CA could be the issuer
-            if ee_issuer_cn == ca_subject_cn:
-                logger.info(f"Found potential issuer relationship: {ee_filename} → {ca_filename}")
-                
-                # Verify the signature
-                signature_valid = _verify_certificate_signature(ee_cert, ca_cert)
-                
-                validation = ValidationResult(
-                    is_valid=signature_valid,
-                    validation_type="Certificate Chain",
-                    details={
-                        "chainType": "End-Entity → Issuing CA",
-                        "endEntityCert": ee_filename,
-                        "issuingCA": ca_filename,
-                        "endEntitySubject": _get_subject_cn(ee_cert),
-                        "issuingCASubject": ca_subject_cn,
-                        "signatureVerification": {
-                            "verified": signature_valid,
-                            "algorithm": ee_cert.signature_algorithm_oid._name,
-                            "issuerPublicKeyAlgorithm": _get_public_key_algorithm(ca_cert.public_key())
-                        },
-                        "certificateFiles": [ee_filename, ca_filename]
-                    }
-                )
-                
-                validations.append(validation)
-                
-                if signature_valid:
-                    logger.info(f"✅ Certificate chain verified: {ee_filename} → {ca_filename}")
-                else:
-                    logger.warning(f"❌ Certificate chain signature invalid: {ee_filename} → {ca_filename}")
-    
-    return validations
-
-# Helper functions (same as before)
-def _get_subject_cn(cert):
-    """Extract subject common name"""
-    try:
-        for attribute in cert.subject:
-            if attribute.oid._name == 'commonName':
-                return attribute.value
-        return "Unknown"
-    except Exception:
-        return "Unknown"
-
-def _get_issuer_cn(cert):
-    """Extract issuer common name"""
-    try:
-        for attribute in cert.issuer:
-            if attribute.oid._name == 'commonName':
-                return attribute.value
-        return "Unknown"
-    except Exception:
-        return "Unknown"
-
-def _is_ca_certificate(cert):
-    """Check if certificate is a CA certificate"""
-    try:
-        from cryptography import x509
-        basic_constraints = cert.extensions.get_extension_for_oid(x509.oid.ExtensionOID.BASIC_CONSTRAINTS).value
-        return basic_constraints.ca
-    except:
-        return False
-
-def _get_certificate_fingerprint(cert):
-    """Get SHA256 fingerprint of certificate"""
-    from cryptography.hazmat.primitives import serialization
-    import hashlib
-    cert_der = cert.public_bytes(serialization.Encoding.DER)
-    return hashlib.sha256(cert_der).hexdigest()
-
-def _verify_certificate_signature_detailed(cert, issuer_cert):
-    """Verify certificate signature with detailed results"""
-    # Same implementation as in chain_validation.py
-    from cryptography.hazmat.primitives import hashes
-    from cryptography.hazmat.primitives.asymmetric import rsa, ec, padding
-    
-    result = {
-        "verified": False,
-        "algorithm": cert.signature_algorithm_oid._name,
-        "algorithmOID": cert.signature_algorithm_oid.dotted_string,
-        "issuerPublicKeyAlgorithm": type(issuer_cert.public_key()).__name__.replace('PublicKey', ''),
-        "error": None
-    }
-    
-    try:
-        issuer_public_key = issuer_cert.public_key()
-        signature = cert.signature
-        tbs_certificate_bytes = cert.tbs_certificate_bytes
-        signature_algorithm = cert.signature_algorithm_oid
-        
-        # Verify signature based on algorithm
-        if signature_algorithm.dotted_string == "1.2.840.113549.1.1.11":  # SHA256withRSA
-            if isinstance(issuer_public_key, rsa.RSAPublicKey):
-                issuer_public_key.verify(signature, tbs_certificate_bytes, padding.PKCS1v15(), hashes.SHA256())
-                result["verified"] = True
-                result["hashAlgorithm"] = "SHA256"
-        elif signature_algorithm.dotted_string == "1.2.840.10045.4.3.2":  # ECDSA with SHA256
-            if isinstance(issuer_public_key, ec.EllipticCurvePublicKey):
-                issuer_public_key.verify(signature, tbs_certificate_bytes, ec.ECDSA(hashes.SHA256()))
-                result["verified"] = True
-                result["hashAlgorithm"] = "SHA256"
-        else:
-            result["error"] = f"Unsupported signature algorithm: {signature_algorithm.dotted_string}"
-        
-    except Exception as e:
-        result["error"] = str(e)
-    
-    return result
-
-def _get_public_key_algorithm(public_key):
-    """Get public key algorithm name"""
-    return type(public_key).__name__.replace('PublicKey', '')
-
-def _verify_certificate_signature(cert, issuer_cert):
-    """Verify certificate signature using issuer's public key"""
-    try:
-        from cryptography.hazmat.primitives import hashes
-        from cryptography.hazmat.primitives.asymmetric import rsa, ec, padding
-        
-        issuer_public_key = issuer_cert.public_key()
-        signature = cert.signature
-        tbs_certificate_bytes = cert.tbs_certificate_bytes
-        
-        # Verify based on signature algorithm
-        sig_alg_oid = cert.signature_algorithm_oid.dotted_string
-        
-        if sig_alg_oid in ["1.2.840.113549.1.1.11", "1.2.840.113549.1.1.5"]:  # RSA with SHA256/SHA1
-            if isinstance(issuer_public_key, rsa.RSAPublicKey):
-                hash_alg = hashes.SHA256() if "11" in sig_alg_oid else hashes.SHA1()
-                issuer_public_key.verify(signature, tbs_certificate_bytes, padding.PKCS1v15(), hash_alg)
-                return True
-        elif sig_alg_oid == "1.2.840.10045.4.3.2":  # ECDSA with SHA256
-            if isinstance(issuer_public_key, ec.EllipticCurvePublicKey):
-                issuer_public_key.verify(signature, tbs_certificate_bytes, ec.ECDSA(hashes.SHA256()))
-                return True
-        
-        logger.warning(f"Unsupported signature algorithm: {sig_alg_oid}")
-        return False
-        
-    except Exception as e:
-        logger.debug(f"Signature verification failed: {e}")
-        return False
-
-def _validate_pkcs7_chain(pkcs7_chain: Dict) -> List[ValidationResult]:
-    """Validate PKCS7 certificate chain with detailed analysis"""
-    logger.info(f"=== PKCS7 CHAIN VALIDATION ===")
-    
-    filename = pkcs7_chain['filename']
-    certificates = pkcs7_chain['certificates']
-    
-    logger.info(f"Validating PKCS7 chain: {filename} ({len(certificates)} certificates)")
+    logger.info(f"Validating {chain_type}: {filename} ({len(certificates)} certificates)")
     
     validations = []
     
     if len(certificates) < 2:
-        logger.warning(f"PKCS7 chain has only {len(certificates)} certificate(s) - cannot validate chain")
+        logger.warning(f"{chain_type} has only {len(certificates)} certificate(s) - cannot validate chain")
         return [ValidationResult(
             is_valid=False,
-            validation_type="PKCS7 Certificate Chain",
+            validation_type=f"{chain_type} Validation",
             error=f"Chain must have at least 2 certificates, found {len(certificates)}",
             details={"filename": filename, "certificateCount": len(certificates)}
         )]
@@ -459,13 +295,13 @@ def _validate_pkcs7_chain(pkcs7_chain: Dict) -> List[ValidationResult]:
         logger.debug(f"Cert {i}: {info['subject']} (issued by: {info['issuer']}, CA: {info['is_ca']})")
     
     # Try to determine the correct chain order (end-entity → intermediate → root)
-    ordered_chain = _order_pkcs7_certificates(cert_info)
+    ordered_chain = _order_certificates(cert_info)
     
     if not ordered_chain:
         logger.warning("Could not determine certificate chain order")
         return [ValidationResult(
             is_valid=False,
-            validation_type="PKCS7 Certificate Chain",
+            validation_type=f"{chain_type} Validation",
             error="Could not determine certificate chain order",
             details={
                 "filename": filename,
@@ -494,7 +330,7 @@ def _validate_pkcs7_chain(pkcs7_chain: Dict) -> List[ValidationResult]:
         
         validation = ValidationResult(
             is_valid=link_valid,
-            validation_type="PKCS7 Certificate Chain",
+            validation_type=f"{chain_type} Validation",
             details={
                 "filename": filename,
                 "chainPosition": f"Link {i+1} of {len(ordered_chain)-1}",
@@ -536,9 +372,84 @@ def _validate_pkcs7_chain(pkcs7_chain: Dict) -> List[ValidationResult]:
     
     return validations
 
-def _order_pkcs7_certificates(cert_info: List[Dict]) -> List[Dict]:
+# FIXED helper functions - removed is_issuer parameter
+def _get_subject_cn(cert):
+    """Extract subject common name"""
+    try:
+        for attribute in cert.subject:
+            if attribute.oid._name == 'commonName':
+                return attribute.value
+        return "Unknown"
+    except Exception:
+        return "Unknown"
+
+def _get_issuer_cn(cert):
+    """Extract issuer common name"""
+    try:
+        for attribute in cert.issuer:
+            if attribute.oid._name == 'commonName':
+                return attribute.value
+        return "Unknown"
+    except Exception:
+        return "Unknown"
+
+def _is_ca_certificate(cert):
+    """Check if certificate is a CA certificate"""
+    try:
+        from cryptography import x509
+        basic_constraints = cert.extensions.get_extension_for_oid(x509.oid.ExtensionOID.BASIC_CONSTRAINTS).value
+        return basic_constraints.ca
+    except:
+        return False
+
+def _get_certificate_fingerprint(cert):
+    """Get SHA256 fingerprint of certificate"""
+    from cryptography.hazmat.primitives import serialization
+    import hashlib
+    cert_der = cert.public_bytes(serialization.Encoding.DER)
+    return hashlib.sha256(cert_der).hexdigest()
+
+def _verify_certificate_signature_detailed(cert, issuer_cert):
+    """Verify certificate signature with detailed results"""
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import rsa, ec, padding
+    
+    result = {
+        "verified": False,
+        "algorithm": cert.signature_algorithm_oid._name,
+        "algorithmOID": cert.signature_algorithm_oid.dotted_string,
+        "issuerPublicKeyAlgorithm": type(issuer_cert.public_key()).__name__.replace('PublicKey', ''),
+        "error": None
+    }
+    
+    try:
+        issuer_public_key = issuer_cert.public_key()
+        signature = cert.signature
+        tbs_certificate_bytes = cert.tbs_certificate_bytes
+        signature_algorithm = cert.signature_algorithm_oid
+        
+        # Verify signature based on algorithm
+        if signature_algorithm.dotted_string == "1.2.840.113549.1.1.11":  # SHA256withRSA
+            if isinstance(issuer_public_key, rsa.RSAPublicKey):
+                issuer_public_key.verify(signature, tbs_certificate_bytes, padding.PKCS1v15(), hashes.SHA256())
+                result["verified"] = True
+                result["hashAlgorithm"] = "SHA256"
+        elif signature_algorithm.dotted_string == "1.2.840.10045.4.3.2":  # ECDSA with SHA256
+            if isinstance(issuer_public_key, ec.EllipticCurvePublicKey):
+                issuer_public_key.verify(signature, tbs_certificate_bytes, ec.ECDSA(hashes.SHA256()))
+                result["verified"] = True
+                result["hashAlgorithm"] = "SHA256"
+        else:
+            result["error"] = f"Unsupported signature algorithm: {signature_algorithm.dotted_string}"
+        
+    except Exception as e:
+        result["error"] = str(e)
+    
+    return result
+
+def _order_certificates(cert_info: List[Dict]) -> List[Dict]:
     """Order certificates in a logical chain (end-entity → intermediate → root)"""
-    logger.debug("Ordering PKCS7 certificates...")
+    logger.debug("Ordering certificates...")
     
     # Find the end-entity certificate (not CA)
     end_entities = [info for info in cert_info if not info['is_ca']]
@@ -548,7 +459,23 @@ def _order_pkcs7_certificates(cert_info: List[Dict]) -> List[Dict]:
     
     if len(end_entities) != 1:
         logger.warning(f"Expected 1 end-entity certificate, found {len(end_entities)}")
-        return []
+        if len(end_entities) == 0:
+            # If no clear end-entity, try to find the leaf certificate
+            # Look for certificate that is not an issuer of any other cert
+            potential_leaves = []
+            for cert in cert_info:
+                is_issuer = any(other['issuer'] == cert['subject'] for other in cert_info if other != cert)
+                if not is_issuer:
+                    potential_leaves.append(cert)
+            
+            if len(potential_leaves) == 1:
+                logger.info(f"Found leaf certificate by issuer analysis: {potential_leaves[0]['subject']}")
+                end_entities = potential_leaves
+                cas = [info for info in cert_info if info not in end_entities]
+            else:
+                return []
+        else:
+            return []
     
     # Start with the end-entity certificate
     ordered = [end_entities[0]]

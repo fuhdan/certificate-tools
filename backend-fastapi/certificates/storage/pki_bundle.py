@@ -228,21 +228,13 @@ class PKIBundleManager:
         validation["hasRootCA"] = 'RootCA' in component_types
         validation["intermediateCACount"] = component_types.count('IntermediateCA')
         
-        # Check completeness
-        essential_components = ['CSR', 'PrivateKey', 'Certificate']
-        has_essential = all(comp_type in component_types for comp_type in essential_components)
-        
-        if has_essential and (validation["hasIssuingCA"] or validation["hasRootCA"]):
+        # FIXED: PKI bundle is complete if we have at least one certificate
+        # CSR is NOT required for bundle completeness
+        if validation["hasCertificate"] or validation["hasIssuingCA"] or validation["hasRootCA"]:
             validation["isComplete"] = True
         
-        # Identify issues
-        if not validation["hasCSR"]:
-            validation["issues"].append("Missing CSR")
-        if not validation["hasPrivateKey"]:
-            validation["issues"].append("Missing Private Key")
-        if not validation["hasCertificate"]:
-            validation["issues"].append("Missing End-Entity Certificate")
-        if not validation["hasIssuingCA"] and not validation["hasRootCA"]:
-            validation["issues"].append("Missing CA Certificate (Issuing or Root)")
+        # Only add issues for truly missing essential components
+        if not validation["hasCertificate"] and not validation["hasIssuingCA"] and not validation["hasRootCA"]:
+            validation["issues"].append("Missing certificates - upload at least one certificate")
         
         return validation

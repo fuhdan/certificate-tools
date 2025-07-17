@@ -79,8 +79,239 @@ const ValidationPanel = ({ certificates }) => {
       return `${details.privateKeyFile} ↔ ${details.csrFile}`
     } else if (details.csrFile && details.certificateFile) {
       return `${details.csrFile} ↔ ${details.certificateFile}`
+    } else if (details.files && details.files.length >= 2) {
+      return `${details.files[0]} ↔ ${details.files[1]}`
     }
     return null
+  }
+
+  // Enhanced validation details renderer
+  const renderValidationDetails = (validation) => {
+    const details = validation.details || {}
+    
+    // For Certificate Chain validations, show cryptographic details
+    if (validation.validationType === 'Certificate Chain' && details.signatureVerification) {
+      return renderCertificateChainDetails(details)
+    }
+
+    // For other validation types, show existing details
+    return renderStandardValidationDetails(validation)
+  }
+
+  const renderCertificateChainDetails = (details) => {
+    const sigDetails = details.signatureVerification
+    const nameChain = details.nameChaining
+    
+    return (
+      <div className={styles.validationDetails}>
+        <h4>Cryptographic Validation Details</h4>
+        
+        <div className={styles.detailSection}>
+          <h5>🔐 Digital Signature Verification</h5>
+          <div className={styles.detailGrid}>
+            <div className={styles.detailItem}>
+              <span className={styles.detailLabel}>Signature Verified:</span>
+              <span className={`${styles.detailValue} ${sigDetails.verified ? styles.valid : styles.invalid}`}>
+                {sigDetails.verified ? '✅ VERIFIED' : '❌ FAILED'}
+              </span>
+            </div>
+            <div className={styles.detailItem}>
+              <span className={styles.detailLabel}>Signature Algorithm:</span>
+              <span className={styles.detailValue}>{sigDetails.algorithm}</span>
+            </div>
+            <div className={styles.detailItem}>
+              <span className={styles.detailLabel}>Algorithm OID:</span>
+              <span className={styles.detailValue}>{sigDetails.algorithmOID}</span>
+            </div>
+            <div className={styles.detailItem}>
+              <span className={styles.detailLabel}>Issuer Public Key:</span>
+              <span className={styles.detailValue}>
+                {sigDetails.issuerPublicKeyAlgorithm} ({sigDetails.issuerKeySize} bits)
+              </span>
+            </div>
+            <div className={styles.detailItem}>
+              <span className={styles.detailLabel}>Signature Length:</span>
+              <span className={styles.detailValue}>{sigDetails.signatureLength} bytes</span>
+            </div>
+          </div>
+          {sigDetails.error && (
+            <div className={styles.errorDetail}>
+              <span className={styles.errorLabel}>Signature Error:</span>
+              <span className={styles.errorValue}>{sigDetails.error}</span>
+            </div>
+          )}
+        </div>
+
+        <div className={styles.detailSection}>
+          <h5>🔗 Certificate Name Chaining</h5>
+          <div className={styles.detailGrid}>
+            <div className={styles.detailItem}>
+              <span className={styles.detailLabel}>Name Chain Valid:</span>
+              <span className={`${styles.detailValue} ${nameChain?.valid ? styles.valid : styles.invalid}`}>
+                {nameChain?.valid ? '✅ VALID' : '❌ INVALID'}
+              </span>
+            </div>
+            <div className={styles.detailItem}>
+              <span className={styles.detailLabel}>End Entity Issuer:</span>
+              <span className={styles.detailValue}>{nameChain?.endEntityIssuer || 'N/A'}</span>
+            </div>
+            <div className={styles.detailItem}>
+              <span className={styles.detailLabel}>CA Subject:</span>
+              <span className={styles.detailValue}>{nameChain?.caSubject || 'N/A'}</span>
+            </div>
+          </div>
+        </div>
+
+        {details.certificates && (
+          <div className={styles.detailSection}>
+            <h5>📋 Certificate Information</h5>
+            <div className={styles.certificateChain}>
+              {details.certificates.map((cert, index) => (
+                <div key={index} className={styles.chainCertificate}>
+                  <span className={styles.chainRole}>
+                    {cert.isCA ? '🏛️ CA Certificate' : '📄 End Entity'}
+                  </span>
+                  <span className={styles.chainFile}>{cert.filename}</span>
+                  <div className={styles.chainDetails}>
+                    <span>Subject: {cert.subject}</span>
+                    <span>Serial: {cert.serialNumber}</span>
+                    <span>Valid: {new Date(cert.notBefore).toLocaleDateString()} - {new Date(cert.notAfter).toLocaleDateString()}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {details.keyIdentifiers && (
+          <div className={styles.detailSection}>
+            <h5>🔑 Key Identifiers</h5>
+            <div className={styles.detailGrid}>
+              {details.keyIdentifiers.endEntity?.subjectKeyId && (
+                <div className={styles.detailItem}>
+                  <span className={styles.detailLabel}>End Entity Subject Key ID:</span>
+                  <span className={styles.detailValue}>{details.keyIdentifiers.endEntity.subjectKeyId}</span>
+                </div>
+              )}
+              {details.keyIdentifiers.endEntity?.authorityKeyId && (
+                <div className={styles.detailItem}>
+                  <span className={styles.detailLabel}>End Entity Authority Key ID:</span>
+                  <span className={styles.detailValue}>{details.keyIdentifiers.endEntity.authorityKeyId}</span>
+                </div>
+              )}
+              {details.keyIdentifiers.issuingCA?.subjectKeyId && (
+                <div className={styles.detailItem}>
+                  <span className={styles.detailLabel}>CA Subject Key ID:</span>
+                  <span className={styles.detailValue}>{details.keyIdentifiers.issuingCA.subjectKeyId}</span>
+                </div>
+              )}
+              {details.keyIdentifiers.keyIdMatch !== null && (
+                <div className={styles.detailItem}>
+                  <span className={styles.detailLabel}>Key ID Match:</span>
+                  <span className={`${styles.detailValue} ${details.keyIdentifiers.keyIdMatch ? styles.valid : styles.invalid}`}>
+                    {details.keyIdentifiers.keyIdMatch ? '✅ MATCH' : '❌ NO MATCH'}
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {details.validationSteps && (
+          <div className={styles.detailSection}>
+            <h5>📝 Validation Steps</h5>
+            <div className={styles.validationSteps}>
+              {details.validationSteps.map((step, index) => (
+                <div key={index} className={styles.validationStep}>
+                  <div className={styles.stepHeader}>
+                    <span className={styles.stepName}>{step.step}</span>
+                    <span className={`${styles.stepResult} ${step.result ? styles.valid : styles.invalid}`}>
+                      {step.result ? '✅' : '❌'}
+                    </span>
+                  </div>
+                  <div className={styles.stepDetails}>{step.details}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  const renderStandardValidationDetails = (validation) => {
+    const details = validation.details || {}
+    
+    return (
+      <div className={styles.validationDetails}>
+        <h4>Validation Details</h4>
+        
+        {/* Render algorithm info */}
+        {renderAlgorithmInfo(details)}
+        
+        {/* Render public key comparison */}
+        {renderPublicKeyComparison(details.publicKeyComparison)}
+        
+        {/* Render legacy comparison format */}
+        {details.comparison && (
+          <div className={styles.comparisonSection}>
+            <h5>Comparison</h5>
+            {Object.entries(details.comparison).map(([key, comparison]) => (
+              <div key={key} className={styles.comparisonItem}>
+                <div className={styles.comparisonHeader}>
+                  <span className={styles.comparisonLabel}>
+                    {key.charAt(0).toUpperCase() + key.slice(1)}
+                  </span>
+                  <span className={`${styles.comparisonResult} ${comparison.match ? styles.match : styles.noMatch}`}>
+                    {comparison.match ? <CheckCircle size={14} /> : <XCircle size={14} />}
+                    {comparison.match ? 'Match' : 'No Match'}
+                  </span>
+                </div>
+                {comparison.privateKey && comparison.csr && (
+                  <div className={styles.comparisonValues}>
+                    <div className={styles.valueRow}>
+                      <span className={styles.valueLabel}>Private Key:</span>
+                      <span className={styles.valueText}>{comparison.privateKey}</span>
+                    </div>
+                    <div className={styles.valueRow}>
+                      <span className={styles.valueLabel}>CSR:</span>
+                      <span className={styles.valueText}>{comparison.csr}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Render other standard details */}
+        {renderFingerprint(details.fingerprint)}
+        {renderSubjectComparison(details.subjectComparison)}
+        {renderSanComparison(details.sanComparison)}
+      </div>
+    )
+  }
+
+  const renderAlgorithmInfo = (details) => {
+    if (!details.algorithm) return null
+
+    return (
+      <div className={styles.comparisonSection}>
+        <h5>Algorithm Information</h5>
+        <div className={styles.comparisonItem}>
+          <div className={styles.comparisonHeader}>
+            <span className={styles.comparisonLabel}>Algorithm</span>
+            <span className={styles.comparisonResult}>{details.algorithm}</span>
+          </div>
+          {details.keySize && (
+            <div className={styles.valueRow}>
+              <span className={styles.valueLabel}>Key Size:</span>
+              <span className={styles.valueText}>{details.keySize} bits</span>
+            </div>
+          )}
+        </div>
+      </div>
+    )
   }
 
   const renderPublicKeyComparison = (comparison) => {
@@ -90,7 +321,6 @@ const ValidationPanel = ({ certificates }) => {
       <div className={styles.comparisonSection}>
         <h5>Public Key Comparison</h5>
         
-        {/* Direct Match */}
         {comparison.directMatch !== undefined && (
           <div className={styles.comparisonItem}>
             <div className={styles.comparisonHeader}>
@@ -103,7 +333,6 @@ const ValidationPanel = ({ certificates }) => {
           </div>
         )}
         
-        {/* Fingerprint Match */}
         {comparison.fingerprintMatch !== undefined && (
           <div className={styles.comparisonItem}>
             <div className={styles.comparisonHeader}>
@@ -115,91 +344,6 @@ const ValidationPanel = ({ certificates }) => {
             </div>
           </div>
         )}
-
-        {/* Legacy format support for older validations */}
-        {Object.entries(comparison).map(([key, comp]) => {
-          // Skip the new format fields
-          if (key === 'directMatch' || key === 'fingerprintMatch') return null
-          
-          return (
-            <div key={key} className={styles.comparisonItem}>
-              <div className={styles.comparisonHeader}>
-                <span className={styles.comparisonLabel}>
-                  {key === 'publicPoint' ? 'Public Point' : key.charAt(0).toUpperCase() + key.slice(1)}
-                </span>
-                <span className={`${styles.comparisonResult} ${comp.match ? styles.match : styles.noMatch}`}>
-                  {comp.match ? <CheckCircle size={14} /> : <XCircle size={14} />}
-                  {comp.match ? 'Match' : 'No Match'}
-                </span>
-              </div>
-              
-              {/* Handle different comparison types */}
-              {comp.privateKey !== undefined && comp.csr !== undefined && (
-                <div className={styles.comparisonValues}>
-                  <div className={styles.valueRow}>
-                    <span className={styles.valueLabel}>Private Key:</span>
-                    <span className={styles.valueText}>{comp.privateKey}</span>
-                  </div>
-                  <div className={styles.valueRow}>
-                    <span className={styles.valueLabel}>CSR:</span>
-                    <span className={styles.valueText}>{comp.csr}</span>
-                  </div>
-                </div>
-              )}
-
-              {comp.csr !== undefined && comp.certificate !== undefined && (
-                <div className={styles.comparisonValues}>
-                  <div className={styles.valueRow}>
-                    <span className={styles.valueLabel}>CSR:</span>
-                    <span className={styles.valueText}>{comp.csr}</span>
-                  </div>
-                  <div className={styles.valueRow}>
-                    <span className={styles.valueLabel}>Certificate:</span>
-                    <span className={styles.valueText}>{comp.certificate}</span>
-                  </div>
-                </div>
-              )}
-
-              {/* Handle EC point coordinates */}
-              {comp.x && comp.y && (
-                <div className={styles.comparisonValues}>
-                  <div className={styles.valueRow}>
-                    <span className={styles.valueLabel}>X Coordinate:</span>
-                    <div className={styles.coordComparison}>
-                      <div className={styles.coordValue}>
-                        <span className={styles.coordLabel}>CSR:</span>
-                        <span className={styles.valueText}>{comp.x.csr}</span>
-                      </div>
-                      <div className={styles.coordValue}>
-                        <span className={styles.coordLabel}>Cert:</span>
-                        <span className={styles.valueText}>{comp.x.certificate}</span>
-                      </div>
-                      <span className={`${styles.coordResult} ${comp.x.match ? styles.match : styles.noMatch}`}>
-                        {comp.x.match ? '✓' : '✗'}
-                      </span>
-                    </div>
-                  </div>
-                  <div className={styles.valueRow}>
-                    <span className={styles.valueLabel}>Y Coordinate:</span>
-                    <div className={styles.coordComparison}>
-                      <div className={styles.coordValue}>
-                        <span className={styles.coordLabel}>CSR:</span>
-                        <span className={styles.valueText}>{comp.y.csr}</span>
-                      </div>
-                      <div className={styles.coordValue}>
-                        <span className={styles.coordLabel}>Cert:</span>
-                        <span className={styles.valueText}>{comp.y.certificate}</span>
-                      </div>
-                      <span className={`${styles.coordResult} ${comp.y.match ? styles.match : styles.noMatch}`}>
-                        {comp.y.match ? '✓' : '✗'}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-          )
-        })}
       </div>
     )
   }
@@ -209,24 +353,11 @@ const ValidationPanel = ({ certificates }) => {
 
     return (
       <div className={styles.comparisonSection}>
-        <h5>Public Key Fingerprint (SHA256)</h5>
+        <h5>Fingerprint</h5>
         <div className={styles.comparisonItem}>
-          <div className={styles.comparisonHeader}>
-            <span className={styles.comparisonLabel}>Fingerprint</span>
-            <span className={`${styles.comparisonResult} ${fingerprint.match ? styles.match : styles.noMatch}`}>
-              {fingerprint.match ? <CheckCircle size={14} /> : <XCircle size={14} />}
-              {fingerprint.match ? 'Match' : 'No Match'}
-            </span>
-          </div>
-          <div className={styles.comparisonValues}>
-            <div className={styles.valueRow}>
-              <span className={styles.valueLabel}>CSR:</span>
-              <span className={styles.valueText}>{fingerprint.csr}</span>
-            </div>
-            <div className={styles.valueRow}>
-              <span className={styles.valueLabel}>Certificate:</span>
-              <span className={styles.valueText}>{fingerprint.certificate}</span>
-            </div>
+          <div className={styles.valueRow}>
+            <span className={styles.valueLabel}>SHA256:</span>
+            <span className={styles.valueText}>{fingerprint}</span>
           </div>
         </div>
       </div>
@@ -234,27 +365,27 @@ const ValidationPanel = ({ certificates }) => {
   }
 
   const renderSubjectComparison = (subjectComparison) => {
-    if (!subjectComparison || subjectComparison.match) return null
+    if (!subjectComparison) return null
 
     return (
       <div className={styles.comparisonSection}>
-        <h5>⚠️ Subject Name Differences</h5>
+        <h5>Subject Comparison</h5>
         <div className={styles.comparisonItem}>
           <div className={styles.comparisonHeader}>
-            <span className={styles.comparisonLabel}>Common Name</span>
-            <span className={`${styles.comparisonResult} ${styles.noMatch}`}>
-              <XCircle size={14} />
-              Different
+            <span className={styles.comparisonLabel}>Subject Match</span>
+            <span className={`${styles.comparisonResult} ${subjectComparison.match ? styles.match : styles.noMatch}`}>
+              {subjectComparison.match ? <CheckCircle size={14} /> : <XCircle size={14} />}
+              {subjectComparison.match ? 'Match' : 'No Match'}
             </span>
           </div>
           <div className={styles.comparisonValues}>
             <div className={styles.valueRow}>
-              <span className={styles.valueLabel}>CSR:</span>
-              <span className={styles.valueText}>{subjectComparison.commonName?.csr || 'N/A'}</span>
+              <span className={styles.valueLabel}>CSR Subject:</span>
+              <span className={styles.valueText}>{subjectComparison.csr}</span>
             </div>
             <div className={styles.valueRow}>
-              <span className={styles.valueLabel}>Certificate:</span>
-              <span className={styles.valueText}>{subjectComparison.commonName?.certificate || 'N/A'}</span>
+              <span className={styles.valueLabel}>Certificate Subject:</span>
+              <span className={styles.valueText}>{subjectComparison.certificate}</span>
             </div>
           </div>
         </div>
@@ -263,99 +394,54 @@ const ValidationPanel = ({ certificates }) => {
   }
 
   const renderSanComparison = (sanComparison) => {
-    if (!sanComparison || sanComparison.match) return null
+    if (!sanComparison) return null
 
     return (
       <div className={styles.comparisonSection}>
-        <h5>⚠️ Subject Alternative Name Differences</h5>
+        <h5>Subject Alternative Names (SAN)</h5>
         <div className={styles.comparisonItem}>
+          <div className={styles.comparisonHeader}>
+            <span className={styles.comparisonLabel}>SAN Match</span>
+            <span className={`${styles.comparisonResult} ${sanComparison.match ? styles.match : styles.noMatch}`}>
+              {sanComparison.match ? <CheckCircle size={14} /> : <XCircle size={14} />}
+              {sanComparison.match ? 'Match' : 'No Match'}
+            </span>
+          </div>
           <div className={styles.comparisonValues}>
             <div className={styles.valueRow}>
-              <span className={styles.valueLabel}>CSR SANs:</span>
-              <span className={styles.valueText}>
-                {sanComparison.csr?.length > 0 ? sanComparison.csr.join(', ') : 'None'}
-              </span>
+              <span className={styles.valueLabel}>CSR SAN:</span>
+              <span className={styles.valueText}>{sanComparison.csr?.join(', ') || 'None'}</span>
             </div>
             <div className={styles.valueRow}>
-              <span className={styles.valueLabel}>Certificate SANs:</span>
-              <span className={styles.valueText}>
-                {sanComparison.certificate?.length > 0 ? sanComparison.certificate.join(', ') : 'None'}
-              </span>
+              <span className={styles.valueLabel}>Certificate SAN:</span>
+              <span className={styles.valueText}>{sanComparison.certificate?.join(', ') || 'None'}</span>
             </div>
-            {sanComparison.onlyInCsr?.length > 0 && (
-              <div className={styles.valueRow}>
-                <span className={styles.valueLabel}>Only in CSR:</span>
-                <span className={styles.valueText}>{sanComparison.onlyInCsr.join(', ')}</span>
-              </div>
-            )}
-            {sanComparison.onlyInCertificate?.length > 0 && (
-              <div className={styles.valueRow}>
-                <span className={styles.valueLabel}>Only in Certificate:</span>
-                <span className={styles.valueText}>{sanComparison.onlyInCertificate.join(', ')}</span>
-              </div>
-            )}
           </div>
         </div>
       </div>
     )
   }
 
-  const renderAlgorithmInfo = (details) => {
-    if (!details.algorithm) return null
-
-    return (
-      <div className={styles.algorithmInfo}>
-        <span className={styles.algorithmLabel}>Algorithm:</span>
-        <span className={styles.algorithmValue}>{details.algorithm}</span>
-        {details.keySize && (
-          <>
-            <span className={styles.algorithmLabel}>Key Size:</span>
-            <span className={styles.algorithmValue}>{details.keySize} bits</span>
-          </>
-        )}
-        {details.curve && (
-          <>
-            <span className={styles.algorithmLabel}>Curve:</span>
-            <span className={styles.algorithmValue}>{details.curve}</span>
-          </>
-        )}
-      </div>
-    )
-  }
-
   const hasValidations = validations.length > 0
-  const validCount = validations.filter(v => v.isValid).length
-  const invalidCount = validations.length - validCount
-
-  if (certificates.length < 2) {
-    return null // Don't show validation panel if less than 2 certificates
-  }
 
   return (
     <div className={styles.container}>
       <div className={styles.header} onClick={() => setIsExpanded(!isExpanded)}>
         <div className={styles.titleSection}>
-          <Shield size={24} className={styles.headerIcon} />
-          <h3>Certificate Validation</h3>
+          <Shield size={24} className={styles.icon} />
+          <h3>Validation Results</h3>
           {hasValidations && (
-            <div className={styles.statusBadges}>
-              {validCount > 0 && (
-                <span className={styles.validBadge}>
-                  <CheckCircle size={14} />
-                  {validCount} Valid
-                </span>
-              )}
-              {invalidCount > 0 && (
-                <span className={styles.invalidBadge}>
-                  <XCircle size={14} />
-                  {invalidCount} Invalid
-                </span>
-              )}
-            </div>
+            <span className={styles.validationCount}>
+              {validations.filter(v => v.isValid).length}/{validations.length} passed
+            </span>
           )}
         </div>
         <div className={styles.controls}>
-          {isLoading && <div className={styles.spinner}></div>}
+          {hasValidations && (
+            <button onClick={(e) => { e.stopPropagation(); runValidations() }} className={styles.refreshButton}>
+              Refresh
+            </button>
+          )}
           {isExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
         </div>
       </div>
@@ -422,90 +508,7 @@ const ValidationPanel = ({ certificates }) => {
                     </div>
                   )}
 
-                  {showDetails[index] && validation.details && (
-                    <div className={styles.validationDetails}>
-                      <h4>Validation Details</h4>
-                      
-                      {/* Render algorithm info */}
-                      {renderAlgorithmInfo(validation.details)}
-                      
-                      {/* Render public key comparison (legacy format for Private Key <-> CSR) */}
-                      {validation.details.comparison && (
-                        <div className={styles.comparisonSection}>
-                          <h5>Comparison</h5>
-                          {Object.entries(validation.details.comparison).map(([key, comparison]) => (
-                            <div key={key} className={styles.comparisonItem}>
-                              <div className={styles.comparisonHeader}>
-                                <span className={styles.comparisonLabel}>
-                                  {key.charAt(0).toUpperCase() + key.slice(1)}
-                                </span>
-                                <span className={`${styles.comparisonResult} ${comparison.match ? styles.match : styles.noMatch}`}>
-                                  {comparison.match ? <CheckCircle size={14} /> : <XCircle size={14} />}
-                                  {comparison.match ? 'Match' : 'No Match'}
-                                </span>
-                              </div>
-                              
-                              {comparison.privateKey !== undefined && comparison.csr !== undefined && (
-                                <div className={styles.comparisonValues}>
-                                  <div className={styles.valueRow}>
-                                    <span className={styles.valueLabel}>Private Key:</span>
-                                    <span className={styles.valueText}>{comparison.privateKey}</span>
-                                  </div>
-                                  <div className={styles.valueRow}>
-                                    <span className={styles.valueLabel}>CSR:</span>
-                                    <span className={styles.valueText}>{comparison.csr}</span>
-                                  </div>
-                                </div>
-                              )}
-
-                              {comparison.x && comparison.y && (
-                                <div className={styles.comparisonValues}>
-                                  <div className={styles.valueRow}>
-                                    <span className={styles.valueLabel}>X Coordinate:</span>
-                                    <div className={styles.coordComparison}>
-                                      <div className={styles.coordValue}>
-                                        <span className={styles.coordLabel}>PK:</span>
-                                        <span className={styles.valueText}>{comparison.x.privateKey}</span>
-                                      </div>
-                                      <div className={styles.coordValue}>
-                                        <span className={styles.coordLabel}>CSR:</span>
-                                        <span className={styles.valueText}>{comparison.x.csr}</span>
-                                      </div>
-                                      <span className={`${styles.coordResult} ${comparison.x.match ? styles.match : styles.noMatch}`}>
-                                        {comparison.x.match ? '✓' : '✗'}
-                                      </span>
-                                    </div>
-                                  </div>
-                                  <div className={styles.valueRow}>
-                                    <span className={styles.valueLabel}>Y Coordinate:</span>
-                                    <div className={styles.coordComparison}>
-                                      <div className={styles.coordValue}>
-                                        <span className={styles.coordLabel}>PK:</span>
-                                        <span className={styles.valueText}>{comparison.y.privateKey}</span>
-                                      </div>
-                                      <div className={styles.coordValue}>
-                                        <span className={styles.coordLabel}>CSR:</span>
-                                        <span className={styles.valueText}>{comparison.y.csr}</span>
-                                      </div>
-                                      <span className={`${styles.coordResult} ${comparison.y.match ? styles.match : styles.noMatch}`}>
-                                        {comparison.y.match ? '✓' : '✗'}
-                                      </span>
-                                    </div>
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-
-                      {/* Render new format for CSR <-> Certificate */}
-                      {renderPublicKeyComparison(validation.details.publicKeyComparison)}
-                      {renderFingerprint(validation.details.fingerprint)}
-                      {renderSubjectComparison(validation.details.subjectComparison)}
-                      {renderSanComparison(validation.details.sanComparison)}
-                    </div>
-                  )}
+                  {showDetails[index] && (validation.details || validation.error) && renderValidationDetails(validation)}
                 </div>
               ))}
             </div>

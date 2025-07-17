@@ -476,3 +476,149 @@
     min-width: auto;
   }
 }
+
+.validationDetails {
+  margin-top: 1rem;
+  padding: 1rem;
+  background-color: #f8fafc;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+}
+
+.validationDetails h4 {
+  margin: 0 0 1rem 0;
+  color: #1e293b;
+  font-size: 1rem;
+  font-weight: 600;
+  border-bottom: 2px solid #e2e8f0;
+  padding-bottom: 0.5rem;
+}
+
+.detailSection {
+  margin-bottom: 1.5rem;
+}
+
+.detailSection:last-child {
+  margin-bottom: 0;
+}
+
+.detailSection h5 {
+  margin: 0 0 0.75rem 0;
+  color: #475569;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.detailGrid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.5rem;
+}
+
+.detailItem {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem;
+  background-color: white;
+  border-radius: 4px;
+  border: 1px solid #e2e8f0;
+}
+
+.detailLabel {
+  font-weight: 500;
+  color: #64748b;
+  font-size: 0.875rem;
+}
+
+.detailValue {
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 0.8rem;
+  color: #334155;
+  text-align: right;
+  word-break: break-all;
+}
+
+.detailValue.valid {
+  color: #22c55e;
+  font-weight: 600;
+}
+
+.detailValue.invalid {
+  color: #ef4444;
+  font-weight: 600;
+}
+
+.errorDetail {
+  margin-top: 0.5rem;
+  padding: 0.75rem;
+  background-color: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 4px;
+}
+
+.errorLabel {
+  font-weight: 500;
+  color: #dc2626;
+  font-size: 0.875rem;
+}
+
+.errorValue {
+  display: block;
+  margin-top: 0.25rem;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 0.8rem;
+  color: #991b1b;
+}
+
+.certificateChain {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.chainCertificate {
+  padding: 0.75rem;
+  background-color: white;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.chainRole {
+  font-weight: 600;
+  color: #1e293b;
+  font-size: 0.875rem;
+}
+
+.chainFile {
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  color: #3b82f6;
+  font-size: 0.8rem;
+}
+
+.chainDetails {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  margin-top: 0.5rem;
+}
+
+.chainDetails span {
+  font-size: 0.75rem;
+  color: #64748b;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+}
+
+.detailsJson {
+  background-color: #1e293b;
+  color: #e2e8f0;
+  padding: 1rem;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

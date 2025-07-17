@@ -347,56 +347,82 @@ async def read_users_me(current_user: Annotated[User, Depends(get_current_active
 # ============================================================================
 
 @app.get("/pki-bundle", tags=["pki"])
-def generate_pki_bundle(current_user: Annotated[User, Depends(get_current_active_user)]):
-    """Generate comprehensive PKI bundle with PEM content and details"""
+def get_pki_bundle(current_user: Annotated[User, Depends(get_current_active_user)]):
+    """Get current PKI bundle - regenerates automatically if needed"""
     from certificates.storage import CertificateStorage
-    from certificates.pki_bundle import PKIBundleGenerator
+    from certificates.storage.pki_bundle import PKIBundleManager
     
     try:
-        certificates = CertificateStorage.get_all()
+        # Always get the latest certificates from storage
+        all_certificates = CertificateStorage.get_all()
         
-        if not certificates:
-            raise HTTPException(
-                status_code=404,
-                detail="No certificates found to generate PKI bundle"
-            )
+        if not all_certificates:
+            return {
+                "success": False,
+                "message": "No certificates uploaded. Upload certificates to generate a bundle.",
+                "bundle": None
+            }
         
-        bundle = PKIBundleGenerator.generate_pki_bundle(certificates)
-        validation = PKIBundleGenerator.validate_pki_bundle(bundle)
+        # Force regeneration to ensure bundle includes ALL current certificates
+        logger.info(f"Forcing PKI bundle regeneration for {len(all_certificates)} certificates")
+        PKIBundleManager.auto_generate_pki_bundle(all_certificates)
+        
+        # Get the freshly generated bundle
+        bundle = PKIBundleManager.get_pki_bundle()
+        has_bundle = PKIBundleManager.has_pki_bundle()
+        
+        if not has_bundle or not bundle:
+            return {
+                "success": False,
+                "message": "Failed to generate PKI bundle from uploaded certificates.",
+                "bundle": None
+            }
+        
+        logger.info(f"PKI bundle retrieved with {len(bundle.get('components', []))} components")
         
         return {
             "success": True,
             "bundle": bundle,
-            "validation": validation,
             "timestamp": datetime.datetime.now().isoformat()
         }
         
     except Exception as e:
-        logger.error(f"PKI bundle generation error: {e}")
+        logger.error(f"PKI bundle fetch error: {e}")
         import traceback
         logger.error(f"Full traceback: {traceback.format_exc()}")
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to generate PKI bundle: {str(e)}"
+            detail=f"Failed to fetch PKI bundle: {str(e)}"
         )
 
 @app.get("/pki-bundle/download", tags=["pki"])
 def download_pki_bundle(current_user: Annotated[User, Depends(get_current_active_user)]):
     """Download PKI bundle as JSON file"""
     from certificates.storage import CertificateStorage
-    from certificates.pki_bundle import PKIBundleGenerator
+    from certificates.storage.pki_bundle import PKIBundleManager
     from fastapi.responses import JSONResponse
     
     try:
-        certificates = CertificateStorage.get_all()
+        # Always get the latest certificates from storage
+        all_certificates = CertificateStorage.get_all()
         
-        if not certificates:
+        if not all_certificates:
             raise HTTPException(
                 status_code=404,
-                detail="No certificates found to generate PKI bundle"
+                detail="No certificates uploaded. Upload certificates to generate a bundle."
             )
         
-        bundle = PKIBundleGenerator.generate_pki_bundle(certificates)
+        # Force regeneration to ensure bundle includes ALL current certificates
+        PKIBundleManager.auto_generate_pki_bundle(all_certificates)
+        
+        # Get the freshly generated bundle
+        bundle = PKIBundleManager.get_pki_bundle()
+        
+        if not bundle:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to generate PKI bundle from uploaded certificates."
+            )
         
         # Return as downloadable JSON
         return JSONResponse(
@@ -414,35 +440,25 @@ def download_pki_bundle(current_user: Annotated[User, Depends(get_current_active
             detail=f"Failed to download PKI bundle: {str(e)}"
         )
 
-@app.get("/pki-bundle", tags=["pki"])
-def get_pki_bundle(current_user: Annotated[User, Depends(get_current_active_user)]):
-    """Get current PKI bundle"""
-    from certificates.storage import CertificateStorage
+@app.get("/pki-bundle/validation", tags=["pki"])
+def validate_pki_bundle(current_user: Annotated[User, Depends(get_current_active_user)]):
+    """Validate PKI bundle completeness"""
+    from certificates.storage.pki_bundle import PKIBundleManager
     
     try:
-        bundle = CertificateStorage.get_pki_bundle()
-        has_bundle = CertificateStorage.has_pki_bundle()
-        
-        if not has_bundle:
-            return {
-                "success": False,
-                "message": "No PKI bundle available. Upload certificates to generate a bundle.",
-                "bundle": None
-            }
+        validation = PKIBundleManager.validate_pki_bundle()
         
         return {
             "success": True,
-            "bundle": bundle,
+            "validation": validation,
             "timestamp": datetime.datetime.now().isoformat()
         }
         
     except Exception as e:
-        logger.error(f"PKI bundle fetch error: {e}")
-        import traceback
-        logger.error(f"Full traceback: {traceback.format_exc()}")
+        logger.error(f"PKI bundle validation error: {e}")
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to fetch PKI bundle: {str(e)}"
+            detail=f"Failed to validate PKI bundle: {str(e)}"
         )
 
 # ============================================================================

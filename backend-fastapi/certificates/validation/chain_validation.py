@@ -1,11 +1,12 @@
-# certificates/validation/chain_validation.py
-# Certificate chain validation with COMPREHENSIVE details
+# backend-fastapi/certificates/validation/chain_validation.py
+# Certificate chain validation with COMPREHENSIVE cryptographic details
 
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import padding, rsa, ec
+from cryptography.hazmat.primitives.asymmetric import padding, rsa, ec, ed25519, ed448
+from cryptography.exceptions import InvalidSignature
 from .models import ValidationResult
 
 logger = logging.getLogger(__name__)
@@ -92,7 +93,7 @@ def _build_certificate_chains(cert_objects: List[Dict]) -> List[List[Dict]]:
     return chains
 
 def _validate_single_chain_detailed(chain: List[Dict]) -> ValidationResult:
-    """Validate a single certificate chain with COMPREHENSIVE details"""
+    """Validate a single certificate chain with COMPREHENSIVE cryptographic details"""
     logger.debug(f"=== DETAILED CHAIN VALIDATION ===")
     
     if len(chain) < 2:
@@ -108,81 +109,113 @@ def _validate_single_chain_detailed(chain: List[Dict]) -> ValidationResult:
     logger.info(f"Validating chain: {end_entity['filename']} → {issuing_ca['filename']}")
     
     try:
-        # Perform signature verification
+        # Perform comprehensive signature verification
         signature_result = _verify_certificate_signature_detailed(
             end_entity['certificate_obj'], 
             issuing_ca['certificate_obj']
         )
         
-        # Extract fingerprints for comparison
+        # Check name chaining
+        name_chain_valid = end_entity['issuer'] == issuing_ca['subject']
+        
+        # Extract certificate fingerprints
         ee_fingerprint = _get_certificate_fingerprint(end_entity['certificate_obj'])
         ca_fingerprint = _get_certificate_fingerprint(issuing_ca['certificate_obj'])
         
         # Extract key identifiers if available
         ee_ski = _get_subject_key_identifier(end_entity['certificate_obj'])
-        ca_ski = _get_subject_key_identifier(issuing_ca['certificate_obj'])
         ee_aki = _get_authority_key_identifier(end_entity['certificate_obj'])
+        ca_ski = _get_subject_key_identifier(issuing_ca['certificate_obj'])
+        ca_aki = _get_authority_key_identifier(issuing_ca['certificate_obj'])
         
-        # Check key identifier matching
-        key_id_match = False
-        if ee_aki and ca_ski:
-            key_id_match = ee_aki == ca_ski
-            logger.debug(f"Key identifier match: {key_id_match}")
-        
+        # Build comprehensive validation details
         validation_details = {
-            "chainDescription": f"{end_entity['subject']} → {issuing_ca['subject']}",
-            "endEntityCertificate": {
-                "filename": end_entity['filename'],
-                "subject": end_entity['subject'],
-                "issuer": end_entity['issuer'],
-                "serialNumber": end_entity['serial_number'],
-                "fingerprint": ee_fingerprint,
-                "subjectKeyIdentifier": ee_ski,
-                "authorityKeyIdentifier": ee_aki,
-                "validFrom": end_entity['not_before'],
-                "validUntil": end_entity['not_after'],
-                "publicKeyAlgorithm": end_entity['public_key_algorithm'],
-                "keySize": end_entity['key_size']
-            },
-            "issuingCA": {
-                "filename": issuing_ca['filename'],
-                "subject": issuing_ca['subject'],
-                "issuer": issuing_ca['issuer'],
-                "serialNumber": issuing_ca['serial_number'],
-                "fingerprint": ca_fingerprint,
-                "subjectKeyIdentifier": ca_ski,
-                "validFrom": issuing_ca['not_before'],
-                "validUntil": issuing_ca['not_after'],
-                "publicKeyAlgorithm": issuing_ca['public_key_algorithm'],
-                "keySize": issuing_ca['key_size'],
-                "isSelfSigned": issuing_ca['subject'] == issuing_ca['issuer']
-            },
             "signatureVerification": signature_result,
             "nameChaining": {
-                "issuerFieldMatches": end_entity['issuer'] == issuing_ca['subject'],
+                "valid": name_chain_valid,
                 "endEntityIssuer": end_entity['issuer'],
-                "caSubject": issuing_ca['subject']
+                "caSubject": issuing_ca['subject'],
+                "match": end_entity['issuer'] == issuing_ca['subject']
             },
-            "keyIdentifierChaining": {
-                "authorityKeyIdMatches": key_id_match,
-                "endEntityAKI": ee_aki,
-                "caSubjectKeyId": ca_ski
-            } if ee_aki and ca_ski else None,
-            "certificateFiles": [end_entity['filename'], issuing_ca['filename']]
+            "certificates": [
+                {
+                    "filename": end_entity['filename'],
+                    "subject": end_entity['subject'],
+                    "issuer": end_entity['issuer'],
+                    "serialNumber": end_entity['serial_number'],
+                    "fingerprint": ee_fingerprint,
+                    "isCA": end_entity['is_ca'],
+                    "signatureAlgorithm": end_entity['signature_algorithm'],
+                    "publicKeyAlgorithm": end_entity['public_key_algorithm'],
+                    "keySize": end_entity['key_size'],
+                    "notBefore": end_entity['not_before'],
+                    "notAfter": end_entity['not_after']
+                },
+                {
+                    "filename": issuing_ca['filename'],
+                    "subject": issuing_ca['subject'],
+                    "issuer": issuing_ca['issuer'],
+                    "serialNumber": issuing_ca['serial_number'],
+                    "fingerprint": ca_fingerprint,
+                    "isCA": issuing_ca['is_ca'],
+                    "signatureAlgorithm": issuing_ca['signature_algorithm'],
+                    "publicKeyAlgorithm": issuing_ca['public_key_algorithm'],
+                    "keySize": issuing_ca['key_size'],
+                    "notBefore": issuing_ca['not_before'],
+                    "notAfter": issuing_ca['not_after']
+                }
+            ],
+            "keyIdentifiers": {
+                "endEntity": {
+                    "subjectKeyId": ee_ski,
+                    "authorityKeyId": ee_aki
+                },
+                "issuingCA": {
+                    "subjectKeyId": ca_ski,
+                    "authorityKeyId": ca_aki
+                },
+                "keyIdMatch": ee_aki == ca_ski if (ee_aki and ca_ski) else None
+            },
+            "fingerprints": {
+                "endEntity": ee_fingerprint,
+                "issuingCA": ca_fingerprint
+            },
+            "validationSteps": [
+                {
+                    "step": "Digital Signature Verification",
+                    "result": signature_result['verified'],
+                    "details": f"Verified {end_entity['subject']} signature using {issuing_ca['subject']} public key"
+                },
+                {
+                    "step": "Certificate Name Chaining",
+                    "result": name_chain_valid,
+                    "details": f"End entity issuer '{end_entity['issuer']}' {'matches' if name_chain_valid else 'does not match'} CA subject '{issuing_ca['subject']}'"
+                },
+                {
+                    "step": "Key Identifier Matching",
+                    "result": ee_aki == ca_ski if (ee_aki and ca_ski) else None,
+                    "details": f"Authority Key ID matching: {ee_aki == ca_ski if (ee_aki and ca_ski) else 'Key IDs not available'}"
+                }
+            ],
+            "files": [end_entity['filename'], issuing_ca['filename']]
         }
         
         # Overall validation result
-        is_valid = (signature_result['verified'] and 
-                   end_entity['issuer'] == issuing_ca['subject'])
+        is_valid = signature_result['verified'] and name_chain_valid
         
+        # Log detailed results
         if is_valid:
             logger.info(f"✅ Certificate chain VALID: {end_entity['filename']} → {issuing_ca['filename']}")
+            logger.info(f"  ✓ Signature verification: PASSED")
+            logger.info(f"  ✓ Name chaining: PASSED")
+            if ee_aki and ca_ski:
+                logger.info(f"  ✓ Key ID matching: {'PASSED' if ee_aki == ca_ski else 'FAILED'}")
         else:
             logger.warning(f"❌ Certificate chain INVALID: {end_entity['filename']} → {issuing_ca['filename']}")
             if not signature_result['verified']:
-                logger.warning(f"  - Signature verification failed")
-            if end_entity['issuer'] != issuing_ca['subject']:
-                logger.warning(f"  - Name chaining failed: '{end_entity['issuer']}' != '{issuing_ca['subject']}'")
+                logger.warning(f"  ✗ Signature verification: FAILED - {signature_result.get('error', 'Unknown error')}")
+            if not name_chain_valid:
+                logger.warning(f"  ✗ Name chaining: FAILED - '{end_entity['issuer']}' != '{issuing_ca['subject']}'")
         
         return ValidationResult(
             is_valid=is_valid,
@@ -201,12 +234,13 @@ def _validate_single_chain_detailed(chain: List[Dict]) -> ValidationResult:
             error=str(e),
             details={
                 "endEntityFile": end_entity['filename'],
-                "issuingCAFile": issuing_ca['filename']
+                "issuingCAFile": issuing_ca['filename'],
+                "error": str(e)
             }
         )
 
 def _verify_certificate_signature_detailed(cert: x509.Certificate, issuer_cert: x509.Certificate) -> Dict[str, Any]:
-    """Verify certificate signature with detailed results"""
+    """Verify certificate signature with detailed cryptographic results"""
     logger.debug(f"Verifying signature: {_get_subject_cn(cert)} signed by {_get_subject_cn(issuer_cert)}")
     
     result = {
@@ -226,110 +260,159 @@ def _verify_certificate_signature_detailed(cert: x509.Certificate, issuer_cert: 
         tbs_certificate_bytes = cert.tbs_certificate_bytes
         signature_algorithm = cert.signature_algorithm_oid
         
-        logger.debug(f"Signature algorithm: {result['algorithm']} ({result['algorithmOID']})")
-        logger.debug(f"Issuer public key: {result['issuerPublicKeyAlgorithm']} {result['issuerKeySize']} bits")
-        logger.debug(f"Signature length: {result['signatureLength']} bytes")
+        logger.debug(f"Signature algorithm: {signature_algorithm._name}")
+        logger.debug(f"Issuer public key: {_get_public_key_algorithm(issuer_public_key)} ({_get_key_size(issuer_public_key)} bits)")
+        logger.debug(f"Signature length: {len(signature)} bytes")
         
-        # Verify signature based on algorithm
-        if signature_algorithm.dotted_string == "1.2.840.113549.1.1.11":  # SHA256withRSA
-            if isinstance(issuer_public_key, rsa.RSAPublicKey):
-                issuer_public_key.verify(signature, tbs_certificate_bytes, padding.PKCS1v15(), hashes.SHA256())
-                result["verified"] = True
-                result["hashAlgorithm"] = "SHA256"
-                logger.debug("RSA-SHA256 signature verification: SUCCESS")
-            else:
-                result["error"] = f"Algorithm mismatch: RSA signature but {type(issuer_public_key).__name__} public key"
-                
-        elif signature_algorithm.dotted_string == "1.2.840.113549.1.1.5":  # SHA1withRSA
-            if isinstance(issuer_public_key, rsa.RSAPublicKey):
-                issuer_public_key.verify(signature, tbs_certificate_bytes, padding.PKCS1v15(), hashes.SHA1())
-                result["verified"] = True
-                result["hashAlgorithm"] = "SHA1"
-                logger.debug("RSA-SHA1 signature verification: SUCCESS")
-            else:
-                result["error"] = f"Algorithm mismatch: RSA signature but {type(issuer_public_key).__name__} public key"
-                
-        elif signature_algorithm.dotted_string == "1.2.840.10045.4.3.2":  # ECDSA with SHA256
-            if isinstance(issuer_public_key, ec.EllipticCurvePublicKey):
-                issuer_public_key.verify(signature, tbs_certificate_bytes, ec.ECDSA(hashes.SHA256()))
-                result["verified"] = True
-                result["hashAlgorithm"] = "SHA256"
-                result["curve"] = issuer_public_key.curve.name
-                logger.debug("ECDSA-SHA256 signature verification: SUCCESS")
-            else:
-                result["error"] = f"Algorithm mismatch: ECDSA signature but {type(issuer_public_key).__name__} public key"
+        # Perform signature verification based on algorithm type
+        if isinstance(issuer_public_key, rsa.RSAPublicKey):
+            _verify_rsa_signature(issuer_public_key, signature, tbs_certificate_bytes, signature_algorithm)
+        elif isinstance(issuer_public_key, ec.EllipticCurvePublicKey):
+            _verify_ec_signature(issuer_public_key, signature, tbs_certificate_bytes, signature_algorithm)
+        elif isinstance(issuer_public_key, (ed25519.Ed25519PublicKey, ed448.Ed448PublicKey)):
+            _verify_ed_signature(issuer_public_key, signature, tbs_certificate_bytes)
         else:
-            result["error"] = f"Unsupported signature algorithm: {signature_algorithm.dotted_string}"
-            logger.warning(f"Unsupported signature algorithm: {signature_algorithm.dotted_string}")
+            raise ValueError(f"Unsupported public key type: {type(issuer_public_key)}")
         
+        result["verified"] = True
+        logger.debug(f"✅ Signature verification PASSED")
+        
+    except InvalidSignature:
+        result["error"] = "Invalid signature - cryptographic verification failed"
+        logger.debug(f"❌ Signature verification FAILED: Invalid signature")
     except Exception as e:
-        result["error"] = str(e)
-        logger.debug(f"Signature verification failed: {e}")
+        result["error"] = f"Signature verification error: {str(e)}"
+        logger.debug(f"❌ Signature verification FAILED: {str(e)}")
     
     return result
 
-def _get_certificate_fingerprint(cert: x509.Certificate) -> str:
-    """Get SHA256 fingerprint of certificate"""
-    from cryptography.hazmat.primitives import serialization
-    cert_der = cert.public_bytes(serialization.Encoding.DER)
-    import hashlib
-    return hashlib.sha256(cert_der).hexdigest()
+def _verify_rsa_signature(public_key: rsa.RSAPublicKey, signature: bytes, data: bytes, sig_algorithm: x509.ObjectIdentifier):
+    """Verify RSA signature with appropriate padding and hash algorithm"""
+    # Determine hash algorithm and padding from signature algorithm OID
+    if sig_algorithm._name in ['sha1WithRSAEncryption', 'rsaWithSHA1']:
+        hash_alg = hashes.SHA1()
+    elif sig_algorithm._name in ['sha256WithRSAEncryption', 'rsaWithSHA256']:
+        hash_alg = hashes.SHA256()
+    elif sig_algorithm._name in ['sha384WithRSAEncryption', 'rsaWithSHA384']:
+        hash_alg = hashes.SHA384()
+    elif sig_algorithm._name in ['sha512WithRSAEncryption', 'rsaWithSHA512']:
+        hash_alg = hashes.SHA512()
+    elif sig_algorithm._name == 'rsassaPss':
+        # PSS padding - more complex, use SHA256 as default
+        hash_alg = hashes.SHA256()
+        public_key.verify(signature, data, padding.PSS(
+            mgf=padding.MGF1(hash_alg),
+            salt_length=padding.PSS.MAX_LENGTH
+        ), hash_alg)
+        return
+    else:
+        raise ValueError(f"Unsupported RSA signature algorithm: {sig_algorithm._name}")
+    
+    # PKCS1v15 padding for standard RSA signatures
+    public_key.verify(signature, data, padding.PKCS1v15(), hash_alg)
 
-def _get_subject_key_identifier(cert: x509.Certificate) -> str:
-    """Extract Subject Key Identifier extension"""
-    try:
-        ski_ext = cert.extensions.get_extension_for_oid(x509.oid.ExtensionOID.SUBJECT_KEY_IDENTIFIER)
-        return ski_ext.value.digest.hex()
-    except x509.ExtensionNotFound:
-        return None
+def _verify_ec_signature(public_key: ec.EllipticCurvePublicKey, signature: bytes, data: bytes, sig_algorithm: x509.ObjectIdentifier):
+    """Verify ECDSA signature with appropriate hash algorithm"""
+    # Determine hash algorithm from signature algorithm OID
+    if sig_algorithm._name in ['ecdsa-with-SHA1']:
+        hash_alg = hashes.SHA1()
+    elif sig_algorithm._name in ['ecdsa-with-SHA256']:
+        hash_alg = hashes.SHA256()
+    elif sig_algorithm._name in ['ecdsa-with-SHA384']:
+        hash_alg = hashes.SHA384()
+    elif sig_algorithm._name in ['ecdsa-with-SHA512']:
+        hash_alg = hashes.SHA512()
+    else:
+        # Default to SHA256 for unknown ECDSA algorithms
+        hash_alg = hashes.SHA256()
+    
+    public_key.verify(signature, data, ec.ECDSA(hash_alg))
 
-def _get_authority_key_identifier(cert: x509.Certificate) -> str:
-    """Extract Authority Key Identifier extension"""
-    try:
-        aki_ext = cert.extensions.get_extension_for_oid(x509.oid.ExtensionOID.AUTHORITY_KEY_IDENTIFIER)
-        if aki_ext.value.key_identifier:
-            return aki_ext.value.key_identifier.hex()
-        return None
-    except x509.ExtensionNotFound:
-        return None
+def _verify_ed_signature(public_key, signature: bytes, data: bytes):
+    """Verify EdDSA signature (Ed25519/Ed448)"""
+    # EdDSA signatures don't use separate hash algorithms
+    public_key.verify(signature, data)
 
+# Helper functions
 def _is_ca_certificate(cert: x509.Certificate) -> bool:
     """Check if certificate is a CA certificate"""
     try:
-        basic_constraints = cert.extensions.get_extension_for_oid(x509.oid.ExtensionOID.BASIC_CONSTRAINTS).value
-        return basic_constraints.ca
+        basic_constraints = cert.extensions.get_extension_for_oid(x509.oid.ExtensionOID.BASIC_CONSTRAINTS)
+        return basic_constraints.value.ca
     except x509.ExtensionNotFound:
         return False
 
 def _get_subject_cn(cert: x509.Certificate) -> str:
-    """Extract subject common name"""
+    """Extract Common Name from certificate subject"""
     try:
         for attribute in cert.subject:
-            if attribute.oid._name == 'commonName':
+            if attribute.oid == x509.oid.NameOID.COMMON_NAME:
                 return attribute.value
-        return "Unknown"
+        return str(cert.subject)
     except Exception:
-        return "Unknown"
+        return "Unknown Subject"
 
 def _get_issuer_cn(cert: x509.Certificate) -> str:
-    """Extract issuer common name"""
+    """Extract Common Name from certificate issuer"""
     try:
         for attribute in cert.issuer:
-            if attribute.oid._name == 'commonName':
+            if attribute.oid == x509.oid.NameOID.COMMON_NAME:
                 return attribute.value
-        return "Unknown"
+        return str(cert.issuer)
     except Exception:
-        return "Unknown"
+        return "Unknown Issuer"
 
 def _get_public_key_algorithm(public_key) -> str:
     """Get public key algorithm name"""
-    return type(public_key).__name__.replace('PublicKey', '')
+    if isinstance(public_key, rsa.RSAPublicKey):
+        return "RSA"
+    elif isinstance(public_key, ec.EllipticCurvePublicKey):
+        return f"EC ({public_key.curve.name})"
+    elif isinstance(public_key, ed25519.Ed25519PublicKey):
+        return "Ed25519"
+    elif isinstance(public_key, ed448.Ed448PublicKey):
+        return "Ed448"
+    else:
+        return str(type(public_key).__name__)
 
 def _get_key_size(public_key) -> int:
-    """Get public key size"""
+    """Get public key size in bits"""
+    if isinstance(public_key, rsa.RSAPublicKey):
+        return public_key.key_size
+    elif isinstance(public_key, ec.EllipticCurvePublicKey):
+        return public_key.curve.key_size
+    elif isinstance(public_key, ed25519.Ed25519PublicKey):
+        return 256  # Ed25519 is always 256-bit
+    elif isinstance(public_key, ed448.Ed448PublicKey):
+        return 448  # Ed448 is always 448-bit
+    else:
+        return 0
+
+def _get_subject_key_identifier(cert: x509.Certificate) -> Optional[str]:
+    """Extract Subject Key Identifier from certificate"""
     try:
-        if hasattr(public_key, 'key_size'):
-            return public_key.key_size
-        return 0
-    except:
-        return 0
+        ski_ext = cert.extensions.get_extension_for_oid(x509.oid.ExtensionOID.SUBJECT_KEY_IDENTIFIER)
+        return ski_ext.value.digest.hex().upper()
+    except x509.ExtensionNotFound:
+        return None
+    except Exception as e:
+        logger.debug(f"Error extracting Subject Key Identifier: {e}")
+        return None
+
+def _get_authority_key_identifier(cert: x509.Certificate) -> Optional[str]:
+    """Extract Authority Key Identifier from certificate"""
+    try:
+        aki_ext = cert.extensions.get_extension_for_oid(x509.oid.ExtensionOID.AUTHORITY_KEY_IDENTIFIER)
+        if aki_ext.value.key_identifier:
+            return aki_ext.value.key_identifier.hex().upper()
+        return None
+    except x509.ExtensionNotFound:
+        return None
+    except Exception as e:
+        logger.debug(f"Error extracting Authority Key Identifier: {e}")
+        return None
+
+def _get_certificate_fingerprint(cert: x509.Certificate) -> str:
+    """Get SHA256 fingerprint of certificate"""
+    fingerprint = cert.fingerprint(hashes.SHA256())
+    return fingerprint.hex().upper()

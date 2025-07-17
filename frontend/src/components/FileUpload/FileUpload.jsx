@@ -274,13 +274,6 @@ const FileUpload = () => {
           </p>
         </div>
       )}
-
-      {files.length > 0 && !needsPassword && (
-        <div className={styles.uploadMessage}>
-          <p>✅ {files.length} file(s) uploaded successfully</p>
-          <p>View details in the System Panel →</p>
-        </div>
-      )}
     </div>
   )
 }

@@ -163,20 +163,6 @@
   font-weight: 500;
 }
 
-.uploadMessage {
-  margin-top: 1rem;
-  padding: 1rem;
-  background-color: rgb(240, 253, 244);
-  border: 1px solid rgb(34, 197, 94);
-  border-radius: 8px;
-  color: rgb(22, 163, 74);
-  text-align: center;
-}
-
-.uploadMessage p {
-  margin: 0.25rem 0;
-}
-
 .passwordSection {
   margin-top: 1.5rem;
   padding: 1.5rem;

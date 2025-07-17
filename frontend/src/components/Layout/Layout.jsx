@@ -1,4 +1,4 @@
-// frontend/src/components/Layout/Layout.jsx
+// frontend/src/components/Layout/Layout.jsx - ORIGINAL with ONLY 2 changes
 import React, { useState, useEffect } from 'react'
 import Header from '../Header/Header'
 import Footer from '../Footer/Footer'
@@ -158,7 +158,7 @@ const Layout = () => {
           <p>Professional certificate management and conversion platform.</p>
           <FileUpload isAuthenticated={isAuthenticated} />
           
-          {sortedCertificates.length > 0 && isAuthenticated && (
+          {sortedCertificates.length > 0 && (
             <div className={styles.certificatesSection}>
               <h2>Certificate Analysis</h2>
               
@@ -175,7 +175,7 @@ const Layout = () => {
           )}
         </div>
       </main>
-      {isAuthenticated && <FloatingPanel />}
+      <FloatingPanel isAuthenticated={isAuthenticated} />
       <Footer />
     </div>
   )

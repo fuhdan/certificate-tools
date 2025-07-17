@@ -1,27 +1,220 @@
-import React, { useState, useRef } from 'react'
-import { Upload, Key } from 'lucide-react'
+import React, { useState, useRef, useEffect } from 'react'
+import { Upload, Key, AlertCircle } from 'lucide-react'
 import api from '../../services/api'
 import styles from './FileUpload.module.css'
 
-const FileUpload = () => {
+const FileUpload = ({ isAuthenticated }) => {
   const [dragActive, setDragActive] = useState(false)
-  const [files, setFiles] = useState([])
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [password, setPassword] = useState('')
   const [needsPassword, setNeedsPassword] = useState(false)
   const [passwordRequiredFiles, setPasswordRequiredFiles] = useState([])
+  const [error, setError] = useState(null)
   const inputRef = useRef(null)
 
-  const handleDrag = (e) => {
+  // File validation
+  const validateFile = (file) => {
+    const errors = []
+    
+    // Size check (10MB limit)
+    if (file.size > 10 * 1024 * 1024) {
+      errors.push('File too large (max 10MB)')
+    }
+    
+    // Extension check
+    const allowedExtensions = ['.pem', '.crt', '.cer', '.der', '.p12', '.pfx', '.jks', '.csr', '.key', '.p8', '.pk8']
+    const fileExtension = file.name.toLowerCase().substring(file.name.lastIndexOf('.'))
+    
+    if (!allowedExtensions.includes(fileExtension)) {
+      errors.push('Unsupported file type')
+    }
+    
+    // Filename length check
+    if (file.name.length > 255) {
+      errors.push('Filename too long')
+    }
+    
+    return errors
+  }
+
+  // Refresh file list from backend - NO AUTHENTICATION REQUIRED
+  const refreshFiles = async () => {
+    try {
+      const response = await api.get('/certificates')
+      if (response.data.success) {
+        const files = response.data.certificates.map(cert => ({
+          id: cert.id,
+          name: cert.filename,
+          success: true,
+          analysis: cert.analysis,
+          filename: cert.filename,
+          uploadedAt: cert.uploadedAt
+        }))
+        
+        // Update global state
+        window.uploadedFiles = files
+        window.dispatchEvent(new CustomEvent('filesUpdated', { detail: { files } }))
+      }
+    } catch (error) {
+      // Only log error, don't show to user since this is background refresh
+      console.error('Error refreshing files:', error)
+    }
+  }
+
+  // Analyze single file - NO AUTHENTICATION REQUIRED
+  const analyzeFile = async (file, password = null) => {
+    const formData = new FormData()
+    formData.append('certificate', file)
+    if (password) {
+      formData.append('password', password)
+    }
+    
+    const response = await api.post('/analyze-certificate', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    })
+    
+    return response.data
+  }
+
+  // Handle file selection/drop
+  const handleFiles = async (fileList) => {
+    const files = Array.from(fileList)
+    setError(null)
+    setIsAnalyzing(true)
+    
+    try {
+      // Validate all files first
+      const validationErrors = []
+      files.forEach(file => {
+        const errors = validateFile(file)
+        if (errors.length > 0) {
+          validationErrors.push(`${file.name}: ${errors.join(', ')}`)
+        }
+      })
+      
+      if (validationErrors.length > 0) {
+        setError(`Validation failed:\n${validationErrors.join('\n')}`)
+        return
+      }
+      
+      // Process files
+      const passwordRequired = []
+      
+      for (const file of files) {
+        try {
+          const result = await analyzeFile(file)
+          
+          if (result.success) {
+            // File processed successfully
+            console.log(`Successfully analyzed: ${file.name}`)
+          } else if (result.requiresPassword) {
+            // File needs password
+            passwordRequired.push({
+              fileObject: file,
+              filename: file.name,
+              type: result.certificate?.analysis?.type || 'Encrypted File'
+            })
+          } else {
+            // Other error
+            throw new Error(result.error || 'Analysis failed')
+          }
+        } catch (error) {
+          console.error(`Error analyzing ${file.name}:`, error)
+          setError(`Failed to analyze ${file.name}: ${error.message}`)
+          return
+        }
+      }
+      
+      // Handle password-required files
+      if (passwordRequired.length > 0) {
+        setPasswordRequiredFiles(passwordRequired)
+        setNeedsPassword(true)
+      } else {
+        // All files processed, refresh list
+        await refreshFiles()
+      }
+      
+    } catch (error) {
+      console.error('Error handling files:', error)
+      setError(`Upload failed: ${error.message}`)
+    } finally {
+      setIsAnalyzing(false)
+    }
+  }
+
+  // Handle password submission
+  const handlePasswordSubmit = async (passwordToUse = password) => {
+    if (!passwordToUse.trim()) {
+      setError('Please enter a password')
+      return
+    }
+    
+    setError(null)
+    setIsAnalyzing(true)
+    
+    try {
+      for (const fileInfo of passwordRequiredFiles) {
+        const result = await analyzeFile(fileInfo.fileObject, passwordToUse)
+        
+        if (!result.success) {
+          throw new Error(result.error || 'Invalid password')
+        }
+      }
+      
+      // Success - clear password state and refresh
+      setPassword('')
+      setNeedsPassword(false)
+      setPasswordRequiredFiles([])
+      await refreshFiles()
+      
+    } catch (error) {
+      console.error('Error with password:', error)
+      // Don't show password errors to user - just silently fail and let them try again
+    } finally {
+      setIsAnalyzing(false)
+    }
+  }
+
+  // Clear all files - NO AUTHENTICATION REQUIRED
+  const clearAllFiles = async () => {
+    try {
+      setError(null)
+      await api.delete('/certificates')
+      setPassword('')
+      setNeedsPassword(false)
+      setPasswordRequiredFiles([])
+      await refreshFiles()
+    } catch (error) {
+      console.error('Error clearing files:', error)
+      setError(`Clear failed: ${error.message}`)
+    }
+  }
+
+  // Delete single file - NO AUTHENTICATION REQUIRED
+  const deleteFile = async (fileId) => {
+    try {
+      setError(null)
+      await api.delete(`/certificates/${fileId}`)
+      await refreshFiles()
+    } catch (error) {
+      console.error('Error deleting file:', error)
+      setError(`Delete failed: ${error.message}`)
+    }
+  }
+
+  // Drag handlers
+  const handleDragOver = (e) => {
     e.preventDefault()
     e.stopPropagation()
-    if (needsPassword) return // Disable drag when password needed
-    
-    if (e.type === "dragenter" || e.type === "dragover") {
+    if (!needsPassword) {
       setDragActive(true)
-    } else if (e.type === "dragleave") {
-      setDragActive(false)
     }
+  }
+
+  const handleDragLeave = (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setDragActive(false)
   }
 
   const handleDrop = (e) => {
@@ -29,207 +222,81 @@ const FileUpload = () => {
     e.stopPropagation()
     setDragActive(false)
     
-    if (needsPassword) return // Disable drop when password needed
+    if (needsPassword) return
     
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      handleFiles(e.dataTransfer.files)
+    const files = e.dataTransfer.files
+    if (files?.length > 0) {
+      handleFiles(files)
     }
   }
 
-  const handleChange = (e) => {
-    e.preventDefault()
-    if (needsPassword) return // Disable file selection when password needed
+  // File input change
+  const handleInputChange = (e) => {
+    if (needsPassword) return
     
-    if (e.target.files && e.target.files[0]) {
-      handleFiles(e.target.files)
+    const files = e.target.files
+    if (files?.length > 0) {
+      handleFiles(files)
     }
   }
 
+  // Button click
+  const handleButtonClick = () => {
+    if (needsPassword) return
+    inputRef.current?.click()
+  }
+
+  // Password input change
   const handlePasswordChange = (e) => {
     const newPassword = e.target.value
     setPassword(newPassword)
+    setError(null)
     
-    // If we have password-required files and a password, re-analyze them
-    if (passwordRequiredFiles.length > 0 && newPassword) {
-      reanalyzeFilesWithPassword(newPassword)
+    // Auto-submit when password is entered
+    if (passwordRequiredFiles.length > 0 && newPassword.trim()) {
+      handlePasswordSubmit(newPassword)
     }
   }
 
-  const reanalyzeFilesWithPassword = async (pwd) => {
-    setIsAnalyzing(true)
+  // Password form submit (not needed anymore but keeping for compatibility)
+  const handlePasswordFormSubmit = (e) => {
+    e.preventDefault()
+    // This won't be called since we removed the form, but keeping it just in case
+  }
+
+  // Setup global functions and load initial files
+  useEffect(() => {
+    window.clearAllFiles = clearAllFiles
+    window.deleteFile = deleteFile
     
-    let allSuccessful = true
-    
-    for (const file of passwordRequiredFiles) {
+    // Load initial files - but don't spam the server
+    const loadFiles = async () => {
       try {
-        const formData = new FormData()
-        formData.append('certificate', file.fileObject)
-        formData.append('password', pwd)
-        
-        const response = await api.post('/analyze-certificate', formData, {
-          headers: { 'Content-Type': 'multipart/form-data' }
-        })
-        
-        if (response.data.success) {
-          // Successfully analyzed with password
-          await refreshFileList()
-        } else if (response.data.requiresPassword) {
-          // Still requires password (probably wrong password)
-          allSuccessful = false
-          console.log('Invalid password for:', file.filename)
-        } else {
-          allSuccessful = false
-        }
+        await refreshFiles()
       } catch (error) {
-        console.error('Error re-analyzing with password:', error)
-        allSuccessful = false
+        // Ignore errors on initial load
+        console.log('Initial file load failed - this is normal')
       }
     }
     
-    // Only clear password requirement if ALL files were successfully analyzed
-    if (allSuccessful) {
-      setNeedsPassword(false)
-      setPasswordRequiredFiles([])
-      setPassword('')
-    }
-    
-    setIsAnalyzing(false)
-  }
-
-  // Refresh file list from backend
-  const refreshFileList = async () => {
-    try {
-      const response = await api.get('/certificates')
-      if (response.data.success) {
-        const backendFiles = response.data.certificates.map(cert => ({
-          id: cert.id,
-          name: cert.filename,
-          size: cert.analysis.size,
-          type: cert.analysis.type,
-          format: cert.analysis.format,
-          isValid: cert.analysis.isValid,
-          analyzed: true,
-          analysis: cert.analysis,
-          filename: cert.filename,
-          uploadedAt: cert.uploadedAt
-        }))
-        
-        setFiles(backendFiles)
-        window.uploadedFiles = backendFiles
-        
-        window.dispatchEvent(new CustomEvent('filesUpdated', { 
-          detail: { files: backendFiles } 
-        }))
-      }
-    } catch (error) {
-      // Handle 401 authentication errors properly
-      if (error.response && error.response.status === 401) {
-        console.error('Authentication expired - please refresh the page')
-        // Don't retry on 401 - just stop
-        return
-      }
-      console.error('Error refreshing file list:', error)
-    }
-  }
-
-  const handleFiles = async (fileList) => {
-    const fileArray = Array.from(fileList)
-    setIsAnalyzing(true)
-    
-    const passwordRequiredFilesList = []
-    
-    for (const file of fileArray) {
-      try {
-        const formData = new FormData()
-        formData.append('certificate', file)
-        
-        const response = await api.post('/analyze-certificate', formData, {
-          headers: { 'Content-Type': 'multipart/form-data' }
-        })
-        
-        if (response.data.success) {
-          // Successfully analyzed without password
-          if (response.data.isDuplicate && response.data.replaced) {
-            console.log(`Automatically replaced: ${response.data.replacedCertificate.filename} -> ${response.data.certificate.filename}`)
-          }
-          await refreshFileList()
-        } else if (response.data.requiresPassword) {
-          // File requires password - add to password required list
-          passwordRequiredFilesList.push({
-            fileObject: file,
-            filename: file.name,
-            type: response.data.certificate?.analysis?.type || 'Encrypted File'
-          })
-          console.log('Password required for:', file.name)
-        } else {
-          console.error('Unexpected response:', response.data)
-        }
-      } catch (error) {
-        console.error('Error analyzing file:', error)
-      }
-    }
-    
-    if (passwordRequiredFilesList.length > 0) {
-      setNeedsPassword(true)
-      setPasswordRequiredFiles(passwordRequiredFilesList)
-    }
-    
-    setIsAnalyzing(false)
-  }
-
-  const onButtonClick = () => {
-    if (needsPassword) return // Disable click when password needed
-    inputRef.current.click()
-  }
-
-  const clearAll = async () => {
-    try {
-      await api.delete('/certificates')
-      await refreshFileList()
-      setPassword('')
-      setNeedsPassword(false)
-      setPasswordRequiredFiles([])
-    } catch (error) {
-      console.error('Error clearing files:', error)
-    }
-  }
-
-  // Make clearAll function globally accessible and sync with backend
-  React.useEffect(() => {
-    window.clearAllFiles = clearAll
-    
-    window.deleteFile = async (fileId) => {
-      try {
-        await api.delete(`/certificates/${fileId}`)
-        await refreshFileList()
-      } catch (error) {
-        if (error.response && error.response.status === 401) {
-          console.error('Authentication expired - please refresh the page')
-          return
-        }
-        console.error('Error deleting file:', error)
-      }
-    }
-    
-    // DON'T automatically refresh on mount - only when explicitly needed
-    // refreshFileList()
+    loadFiles()
   }, [])
 
   return (
     <div className={styles.container}>
+      {/* Main upload area */}
       <div 
         className={`${styles.dropZone} ${dragActive ? styles.dragActive : ''} ${needsPassword ? styles.disabled : ''}`}
-        onDragEnter={handleDrag}
-        onDragLeave={handleDrag}
-        onDragOver={handleDrag}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        onClick={onButtonClick}
+        onClick={handleButtonClick}
       >
         <input
           ref={inputRef}
           type="file"
           multiple
-          onChange={handleChange}
+          onChange={handleInputChange}
           className={styles.hiddenInput}
           accept=".pem,.crt,.cer,.der,.p12,.pfx,.jks,.csr,.key,.p8,.pk8"
           disabled={needsPassword}
@@ -239,14 +306,14 @@ const FileUpload = () => {
           {needsPassword ? (
             <>
               <Key size={48} className={styles.lockIcon} />
-              <h3>Enter password to continue</h3>
-              <p>Password required for: {passwordRequiredFiles.map(f => f.filename).join(', ')}</p>
+              <h3>Password Required</h3>
+              <p>Enter password for: {passwordRequiredFiles.map(f => f.filename).join(', ')}</p>
             </>
           ) : (
             <>
               <Upload size={48} className={styles.uploadIcon} />
               <h3>{isAnalyzing ? 'Analyzing certificates...' : 'Drop certificate files here'}</h3>
-              <p>{isAnalyzing ? 'Please wait while we analyze your files' : 'or click to select files'}</p>
+              <p>{isAnalyzing ? 'Please wait...' : 'or click to select files'}</p>
               <span className={styles.supportedFormats}>
                 Supported: PEM, DER, PKCS12, PKCS8, JKS, CSR
               </span>
@@ -255,7 +322,17 @@ const FileUpload = () => {
         </div>
       </div>
 
-      {/* Password field - only show when needed */}
+      {/* Error display */}
+      {error && (
+        <div className={styles.errorSection}>
+          <div className={styles.errorMessage}>
+            <AlertCircle size={16} className={styles.errorIcon} />
+            <span>{error}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Password form */}
       {needsPassword && (
         <div className={styles.passwordSection}>
           <div className={styles.passwordField}>
@@ -267,10 +344,11 @@ const FileUpload = () => {
               onChange={handlePasswordChange}
               className={styles.passwordInput}
               autoFocus
+              disabled={isAnalyzing}
             />
           </div>
           <p className={styles.passwordHint}>
-            Enter the correct password or click "Clear All Files" to start over.
+            Enter the password - it will be checked automatically.
           </p>
         </div>
       )}

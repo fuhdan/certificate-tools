@@ -6,7 +6,7 @@ import PKIBundleViewer from './PKIBundleViewer'
 import { Trash2, Package } from 'lucide-react'
 import styles from './FloatingPanel.module.css'
 
-const FloatingPanel = () => {
+const FloatingPanel = ({ isAuthenticated }) => {
   const [showPKIBundle, setShowPKIBundle] = useState(false)
 
   const clearAllFiles = () => {
@@ -17,6 +17,10 @@ const FloatingPanel = () => {
   }
 
   const handleShowPKIBundle = () => {
+    if (!isAuthenticated) {
+      console.warn('PKI Bundle access requires authentication')
+      return
+    }
     setShowPKIBundle(true)
   }
 
@@ -36,9 +40,10 @@ const FloatingPanel = () => {
           <SystemMessages />
           
           <button 
-            className={styles.pkiBundleButton}
+            className={`${styles.pkiBundleButton} ${!isAuthenticated ? styles.disabled : ''}`}
             onClick={handleShowPKIBundle}
-            title="View PKI Bundle JSON"
+            title={isAuthenticated ? "View PKI Bundle JSON" : "Login required to view PKI Bundle"}
+            disabled={!isAuthenticated}
           >
             <Package size={16} />
             View PKI Bundle
@@ -56,7 +61,7 @@ const FloatingPanel = () => {
         </div>
       </div>
 
-      {showPKIBundle && (
+      {showPKIBundle && isAuthenticated && (
         <PKIBundleViewer onClose={handleClosePKIBundle} />
       )}
     </>

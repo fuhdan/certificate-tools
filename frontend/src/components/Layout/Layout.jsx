@@ -1,4 +1,4 @@
-// frontend/src/components/Layout/Layout.jsx - ORIGINAL with ONLY 2 changes
+// frontend/src/components/Layout/Layout.jsx
 import React, { useState, useEffect } from 'react'
 import Header from '../Header/Header'
 import Footer from '../Footer/Footer'
@@ -55,62 +55,20 @@ const Layout = () => {
     }
   }, [])
 
-  const getCertificateOrder = (certificate) => {
-    const type = certificate.analysis?.type || ''
-    const details = certificate.analysis?.details || {}
+  // Create sorted certificates for display
+  const sortedCertificates = certificates.slice().sort((a, b) => {
+    const typeA = a.analysis?.type || ''
+    const typeB = b.analysis?.type || ''
     
-    // CSR = 1
-    if (type === 'CSR') return 1
-    
-    // Private Key = 2  
-    if (type === 'Private Key') return 2
-    
-    // For certificates, check if it's a CA
-    if (type === 'Certificate' || type === 'CA Certificate' || type === 'PKCS12 Certificate') {
-      const isCA = details.extensions?.basicConstraints?.isCA || false
-      const issuer = details.issuer?.commonName || ''
-      const subject = details.subject?.commonName || ''
-      
-      if (!isCA) {
-        // End-entity certificate = 3
-        return 3
-      } else {
-        // CA certificates - determine hierarchy
-        if (issuer === subject) {
-          // Self-signed = Root CA = 6
-          return 6
-        } else {
-          // Check if it's an issuing CA (likely to issue end-entity certs)
-          const subjectLower = subject.toLowerCase()
-          if (subjectLower.includes('issuing') || subjectLower.includes('leaf')) {
-            // Issuing CA = 4
-            return 4
-          } else {
-            // Intermediate CA = 5
-            return 5
-          }
-        }
-      }
+    const typeOrder = {
+      'Private Key': 1,
+      'CSR': 2,
+      'Certificate': 3,
+      'CA Certificate': 4,
+      'Certificate Chain': 5
     }
     
-    // Certificate Chain = 7 (after all individual certificates)
-    if (type === 'Certificate Chain') return 7
-    
-    // Everything else = 8
-    return 8
-  }
-
-  // Sort certificates according to the logical order
-  const sortedCertificates = [...certificates].sort((a, b) => {
-    const orderA = getCertificateOrder(a)
-    const orderB = getCertificateOrder(b)
-    
-    if (orderA !== orderB) {
-      return orderA - orderB
-    }
-    
-    // If same order, sort by filename
-    return (a.filename || '').localeCompare(b.filename || '')
+    return (typeOrder[typeA] || 999) - (typeOrder[typeB] || 999)
   })
 
   const handleLoginSuccess = async () => {
@@ -163,7 +121,9 @@ const Layout = () => {
               <h2>Certificate Analysis</h2>
               
               {/* Validation Panel - appears above certificate details */}
-              <ValidationPanel certificates={sortedCertificates} />
+              <ValidationPanel 
+                certificates={sortedCertificates}
+              />
               
               {sortedCertificates.map((certificate) => (
                 <CertificateDetails 

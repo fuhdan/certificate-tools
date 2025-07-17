@@ -60,7 +60,6 @@ app.add_middleware(
 
 @app.post("/analyze-certificate", tags=["certificates"], status_code=201)
 async def analyze_certificate(
-    current_user: Annotated[User, Depends(get_current_active_user)],
     certificate: UploadFile = File(...),
     password: str = Form(None)
 ):
@@ -240,7 +239,7 @@ async def analyze_certificate(
         )
 
 @app.get("/certificates", tags=["certificates"])
-def get_certificates(current_user: Annotated[User, Depends(get_current_active_user)]):
+def get_certificates():
     """Get all uploaded certificates"""
     from certificates.storage import CertificateStorage
     
@@ -253,7 +252,6 @@ def get_certificates(current_user: Annotated[User, Depends(get_current_active_us
 
 @app.delete("/certificates/{certificate_id}", tags=["certificates"])
 def delete_certificate(
-    current_user: Annotated[User, Depends(get_current_active_user)],
     certificate_id: str
 ):
     """Delete certificate by ID"""
@@ -269,7 +267,7 @@ def delete_certificate(
         raise HTTPException(status_code=404, detail="Certificate not found")
 
 @app.delete("/certificates", tags=["certificates"])
-def clear_all_certificates(current_user: Annotated[User, Depends(get_current_active_user)]):
+def clear_all_certificates():
     """Clear all certificates"""
     from certificates.storage import CertificateStorage
     
@@ -280,7 +278,7 @@ def clear_all_certificates(current_user: Annotated[User, Depends(get_current_act
     }
 
 @app.get("/validate", tags=["validation"])
-def validate_certificates(current_user: Annotated[User, Depends(get_current_active_user)]):
+def validate_certificates():
     """Run validation checks on uploaded certificates using real cryptographic comparison"""
     from certificates.storage import CertificateStorage
     from certificates.validation.validator import run_validations
@@ -347,7 +345,7 @@ async def read_users_me(current_user: Annotated[User, Depends(get_current_active
 # ============================================================================
 
 @app.get("/pki-bundle", tags=["pki"])
-def get_pki_bundle(current_user: Annotated[User, Depends(get_current_active_user)]):
+def get_pki_bundle():
     """Get current PKI bundle - regenerates automatically if needed"""
     from certificates.storage import CertificateStorage
     from certificates.storage.pki_bundle import PKIBundleManager
@@ -396,7 +394,7 @@ def get_pki_bundle(current_user: Annotated[User, Depends(get_current_active_user
         )
 
 @app.get("/pki-bundle/download", tags=["pki"])
-def download_pki_bundle(current_user: Annotated[User, Depends(get_current_active_user)]):
+def download_pki_bundle():
     """Download PKI bundle as JSON file"""
     from certificates.storage import CertificateStorage
     from certificates.storage.pki_bundle import PKIBundleManager
@@ -441,7 +439,7 @@ def download_pki_bundle(current_user: Annotated[User, Depends(get_current_active
         )
 
 @app.get("/pki-bundle/validation", tags=["pki"])
-def validate_pki_bundle(current_user: Annotated[User, Depends(get_current_active_user)]):
+def validate_pki_bundle():
     """Validate PKI bundle completeness"""
     from certificates.storage.pki_bundle import PKIBundleManager
     

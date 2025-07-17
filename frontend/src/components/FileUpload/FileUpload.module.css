@@ -174,8 +174,4 @@
     flex-direction: column;
     align-items: stretch;
   }
-  
-  .passwordButton {
-    margin-top: 0.5rem;
-  }
 }

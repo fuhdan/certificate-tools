@@ -114,7 +114,7 @@ const Layout = () => {
         <div className={styles.content}>
           <h1>Certificate Tools</h1>
           <p>Professional certificate management and conversion platform.</p>
-          <FileUpload isAuthenticated={isAuthenticated} />
+          <FileUpload />
           
           {sortedCertificates.length > 0 && (
             <div className={styles.certificatesSection}>

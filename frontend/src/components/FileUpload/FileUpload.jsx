@@ -3,7 +3,7 @@ import { Upload, Key, AlertCircle } from 'lucide-react'
 import api from '../../services/api'
 import styles from './FileUpload.module.css'
 
-const FileUpload = ({ isAuthenticated }) => {
+const FileUpload = () => {
   const [dragActive, setDragActive] = useState(false)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [password, setPassword] = useState('')

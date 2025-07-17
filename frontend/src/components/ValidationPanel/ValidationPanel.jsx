@@ -88,7 +88,7 @@ const ValidationPanel = ({ certificates }) => {
 
     return (
       <div className={styles.comparisonSection}>
-        <h5>Public Key Comparison</h5>
+        <h5>Comparison</h5>
         
         {/* Direct Match */}
         {comparison.directMatch !== undefined && (

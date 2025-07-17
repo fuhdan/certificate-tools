@@ -1,18 +1,20 @@
+// frontend/src/components/FloatingPanel/FloatingPanel.jsx
 import React, { useState } from 'react'
 import ConnectionStatus from './ConnectionStatus'
 import SystemMessages from './SystemMessages'
 import FileManager from './FileManager'
 import PKIBundleViewer from './PKIBundleViewer'
 import { Trash2, Package } from 'lucide-react'
+import { useCertificates } from '../../contexts/CertificateContext'
 import styles from './FloatingPanel.module.css'
 
 const FloatingPanel = ({ isAuthenticated }) => {
+  const { clearAllFiles } = useCertificates()
   const [showPKIBundle, setShowPKIBundle] = useState(false)
 
-  const clearAllFiles = () => {
-    // Call the global clear function from FileUpload
-    if (window.clearAllFiles) {
-      window.clearAllFiles()
+  const handleClearAllFiles = async () => {
+    if (window.confirm('Are you sure you want to clear all files? This action cannot be undone.')) {
+      await clearAllFiles()
     }
   }
 
@@ -51,7 +53,7 @@ const FloatingPanel = ({ isAuthenticated }) => {
           
           <button 
             className={styles.clearAllButton}
-            onClick={clearAllFiles}
+            onClick={handleClearAllFiles}
           >
             <Trash2 size={16} />
             Clear All Files

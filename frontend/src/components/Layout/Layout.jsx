@@ -6,11 +6,13 @@ import FloatingPanel from '../FloatingPanel/FloatingPanel'
 import FileUpload from '../FileUpload/FileUpload'
 import CertificateDetails from '../CertificateDetails/CertificateDetails'
 import ValidationPanel from '../ValidationPanel/ValidationPanel'
+import { CertificateProvider, useCertificates } from '../../contexts/CertificateContext'
 import api from '../../services/api'
 import styles from './Layout.module.css'
 
-const Layout = () => {
-  const [certificates, setCertificates] = useState([])
+// Inner Layout component that uses the context
+const LayoutContent = () => {
+  const { certificates } = useCertificates()
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [isCheckingAuth, setIsCheckingAuth] = useState(true)
   const [currentUser, setCurrentUser] = useState(null)
@@ -40,19 +42,6 @@ const Layout = () => {
     }
 
     checkAuth()
-  }, [])
-
-  // Listen for file updates from FileUpload component
-  useEffect(() => {
-    const handleFilesUpdated = (event) => {
-      setCertificates(event.detail.files || [])
-    }
-
-    window.addEventListener('filesUpdated', handleFilesUpdated)
-    
-    return () => {
-      window.removeEventListener('filesUpdated', handleFilesUpdated)
-    }
   }, [])
 
   // Create sorted certificates for display
@@ -88,7 +77,6 @@ const Layout = () => {
     delete api.defaults.headers.common['Authorization']
     setIsAuthenticated(false)
     setCurrentUser(null)
-    setCertificates([])
   }
 
   // Show loading while checking authentication
@@ -138,6 +126,15 @@ const Layout = () => {
       <FloatingPanel isAuthenticated={isAuthenticated} />
       <Footer />
     </div>
+  )
+}
+
+// Main Layout component that provides the context
+const Layout = () => {
+  return (
+    <CertificateProvider>
+      <LayoutContent />
+    </CertificateProvider>
   )
 }
 

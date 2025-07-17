@@ -1,27 +1,11 @@
-import React, { useState, useEffect } from 'react'
+// frontend/src/components/FloatingPanel/FileManager.jsx
+import React from 'react'
 import { File, Trash2 } from 'lucide-react'
+import { useCertificates } from '../../contexts/CertificateContext'
 import styles from './FloatingPanel.module.css'
 
 const FileManager = () => {
-  const [files, setFiles] = useState([])
-
-  useEffect(() => {
-    // Initialize with any existing files
-    if (window.uploadedFiles) {
-      setFiles(window.uploadedFiles)
-    }
-
-    // Listen for file updates
-    const handleFilesUpdated = (event) => {
-      setFiles(event.detail.files)
-    }
-
-    window.addEventListener('filesUpdated', handleFilesUpdated)
-    
-    return () => {
-      window.removeEventListener('filesUpdated', handleFilesUpdated)
-    }
-  }, [])
+  const { certificates, deleteCertificate } = useCertificates()
 
   const formatFileSize = (bytes) => {
     if (bytes === 0) return '0 Bytes'
@@ -51,89 +35,36 @@ const FileManager = () => {
       case 'Certificate Chain':
         return '#2563eb' // Blue-600 - Certificate chains
       case 'Private Key':
-        return '#dc2626' // Red-600 - Private keys (security)
-      case 'Public Key':
-        return '#059669' // Emerald-600 - Public keys
+        return '#dc2626' // Red-600 - Private keys (sensitive)
       default:
-        return '#6b7280' // Gray-500 - Unknown types
+        return '#6b7280' // Gray-500 - Unknown/other types
     }
   }
 
-  const getCertificateOrder = (file) => {
-    const type = file.type || ''
-    const details = file.analysis?.details || {}
-    
-    // CSR = 1
-    if (type === 'CSR') return 1
-    
-    // Private Key = 2  
-    if (type === 'Private Key') return 2
-    
-    // For certificates, check if it's a CA
-    if (type === 'Certificate' || type === 'CA Certificate' || type === 'PKCS12 Certificate') {
-      const isCA = details.extensions?.basicConstraints?.isCA || false
-      const issuer = details.issuer?.commonName || ''
-      const subject = details.subject?.commonName || ''
-      
-      if (!isCA) {
-        // End-entity certificate = 3
-        return 3
-      } else {
-        // CA certificates - determine hierarchy
-        if (issuer === subject) {
-          // Self-signed = Root CA = 6
-          return 6
-        } else {
-          // Check if it's an issuing CA (likely to issue end-entity certs)
-          const subjectLower = subject.toLowerCase()
-          if (subjectLower.includes('issuing') || subjectLower.includes('leaf')) {
-            // Issuing CA = 4
-            return 4
-          } else {
-            // Intermediate CA = 5
-            return 5
-          }
-        }
-      }
-    }
-    
-    // Certificate Chain = 7 (after all individual certificates)
-    if (type === 'Certificate Chain') return 7
-    
-    // Everything else = 8
-    return 8
-  }
-
-  const sortedFiles = [...files].sort((a, b) => {
-    const orderA = getCertificateOrder(a)
-    const orderB = getCertificateOrder(b)
-    
-    if (orderA !== orderB) {
-      return orderA - orderB
-    }
-    
-    // If same order, sort by filename
-    return (a.name || '').localeCompare(b.name || '')
-  })
-
-  const deleteFile = async (fileId) => {
-    if (window.deleteFile) {
-      await window.deleteFile(fileId)
+  const handleDeleteFile = async (fileId) => {
+    if (window.confirm('Are you sure you want to delete this certificate?')) {
+      await deleteCertificate(fileId)
     }
   }
 
-  if (files.length === 0) {
+  if (certificates.length === 0) {
     return (
       <div className={styles.fileInfoSection}>
         <div className={styles.fileInfoCard}>
-          <div className={styles.statusRow}>
-            <span style={{ color: '#6b7280' }}>
-              <File size={16} />
-            </span>
+          <div className={styles.fileInfoHeader}>
+            <File size={16} style={{ color: '#6b7280' }} />
             <span style={{ color: '#6b7280', fontWeight: '500' }}>
-              No files uploaded
+              No Files
             </span>
           </div>
+          <p style={{ 
+            margin: 0, 
+            fontSize: '0.75rem', 
+            color: '#9ca3af',
+            textAlign: 'center' 
+          }}>
+            Upload certificates to get started
+          </p>
         </div>
       </div>
     )
@@ -145,48 +76,86 @@ const FileManager = () => {
         <div className={styles.fileInfoHeader}>
           <File size={16} style={{ color: '#6b7280' }} />
           <span style={{ color: '#6b7280', fontWeight: '500' }}>
-            Files: {files.length}
+            Files ({certificates.length})
           </span>
         </div>
         
         <div className={styles.fileDetailsList}>
-          {sortedFiles.map((file, index) => (
-            <div key={file.id} className={styles.fileDetail}>
-              <div className={styles.fileHeader}>
-                <span className={styles.fileNumber}>#{index + 1}</span>
-                <button 
-                  className={styles.deleteButton}
-                  onClick={() => deleteFile(file.id)}
-                  title="Delete file"
-                >
-                  <Trash2 size={12} />
-                </button>
+          {certificates.map((file, index) => {
+            const analysis = file.analysis || {}
+            const type = analysis.type || 'Unknown'
+            const isValid = file.success && analysis.isValid !== false
+            const typeColor = getTypeColor(type, isValid)
+            
+            return (
+              <div key={file.id || index} className={styles.fileDetail}>
+                <div className={styles.fileHeader}>
+                  <span className={styles.fileNumber}>#{index + 1}</span>
+                  <button 
+                    className={styles.deleteButton}
+                    onClick={() => handleDeleteFile(file.id)}
+                    title="Delete certificate"
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+                
+                <div className={styles.fileDetailRow}>
+                  <span className={styles.fileDetailLabel}>Name:</span>
+                  <span className={styles.fileDetailValue}>
+                    {file.filename || file.name}
+                  </span>
+                </div>
+                
+                <div className={styles.fileDetailRow}>
+                  <span className={styles.fileDetailLabel}>Type:</span>
+                  <span 
+                    className={styles.fileDetailValue}
+                    style={{ color: typeColor, fontWeight: '500' }}
+                  >
+                    {getFileType(type, isValid)}
+                  </span>
+                </div>
+                
+                {analysis.details?.subject?.commonName && (
+                  <div className={styles.fileDetailRow}>
+                    <span className={styles.fileDetailLabel}>CN:</span>
+                    <span className={styles.fileDetailValue}>
+                      {analysis.details.subject.commonName}
+                    </span>
+                  </div>
+                )}
+                
+                {analysis.details?.validity?.daysUntilExpiry !== undefined && (
+                  <div className={styles.fileDetailRow}>
+                    <span className={styles.fileDetailLabel}>Expires:</span>
+                    <span 
+                      className={styles.fileDetailValue}
+                      style={{ 
+                        color: analysis.details.validity.daysUntilExpiry < 30 ? '#dc2626' : '#059669',
+                        fontWeight: '500'
+                      }}
+                    >
+                      {analysis.details.validity.daysUntilExpiry} days
+                    </span>
+                  </div>
+                )}
+                
+                {analysis.keySize && (
+                  <div className={styles.fileDetailRow}>
+                    <span className={styles.fileDetailLabel}>Size:</span>
+                    <span className={styles.fileDetailValue}>
+                      {analysis.keySize} bits
+                    </span>
+                  </div>
+                )}
+                
+                {index < certificates.length - 1 && (
+                  <div className={styles.fileDivider} />
+                )}
               </div>
-              
-              <div className={styles.fileDetailRow}>
-                <span className={styles.fileDetailLabel}>Name:</span>
-                <span className={styles.fileDetailValue}>{file.name}</span>
-              </div>
-              <div className={styles.fileDetailRow}>
-                <span className={styles.fileDetailLabel}>Size:</span>
-                <span className={styles.fileDetailValue}>{formatFileSize(file.size)}</span>
-              </div>
-              <div className={styles.fileDetailRow}>
-                <span className={styles.fileDetailLabel}>Type:</span>
-                <span 
-                  className={styles.fileDetailValue}
-                  style={{ color: getTypeColor(file.type, file.isValid) }}
-                >
-                  {getFileType(file.type, file.isValid)}
-                </span>
-              </div>
-              <div className={styles.fileDetailRow}>
-                <span className={styles.fileDetailLabel}>Format:</span>
-                <span className={styles.fileDetailValue}>{file.format}</span>
-              </div>
-              {index < sortedFiles.length - 1 && <div className={styles.fileDivider}></div>}
-            </div>
-          ))}
+            )
+          })}
         </div>
       </div>
     </div>

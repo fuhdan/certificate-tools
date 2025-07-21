@@ -44,20 +44,135 @@ const LayoutContent = () => {
     checkAuth()
   }, [])
 
-  // Create sorted certificates for display
+  // Helper function to determine certificate order in PKI hierarchy
+  const getCertificateOrder = (cert) => {
+    const analysis = cert.analysis
+    const type = analysis?.type
+    const details = analysis?.details
+    
+    // 1. Private Key
+    if (type === 'Private Key') {
+      return 1
+    }
+    
+    // 2. CSR
+    if (type === 'CSR') {
+      return 2
+    }
+    
+    // 3. Certificate (End Entity) - not a CA
+    if (type === 'Certificate' && !details?.extensions?.basicConstraints?.isCA) {
+      return 3
+    }
+    
+    // 4. Issuing CA 
+    if (type === 'IssuingCA') {
+      return 4
+    }
+    
+    // 5. Intermediate CA
+    if (type === 'IntermediateCA') {
+      return 5
+    }
+    
+    // 6. Root CA
+    if (type === 'RootCA') {
+      return 6
+    }
+    
+    // Legacy CA Certificate types - determine by basic constraints
+    if (type === 'CA Certificate' || (type === 'Certificate' && details?.extensions?.basicConstraints?.isCA)) {
+      const subjectCN = details?.subject?.commonName || ''
+      const issuerCN = details?.issuer?.commonName || ''
+      
+      // Root CA: self-signed (subject == issuer)
+      if (subjectCN === issuerCN) {
+        return 6
+      }
+      
+      // Otherwise treat as intermediate
+      return 5
+    }
+    
+    // 7. Certificate Chain
+    if (type === 'Certificate Chain') {
+      return 7
+    }
+    
+    // 8. Everything else
+    return 8
+  }
+
+  // Create sorted certificates for display using the correct PKI hierarchy order
   const sortedCertificates = certificates.slice().sort((a, b) => {
     const typeA = a.analysis?.type || ''
     const typeB = b.analysis?.type || ''
     
-    const typeOrder = {
-      'Private Key': 1,
-      'CSR': 2,
-      'Certificate': 3,
-      'CA Certificate': 4,
-      'Certificate Chain': 5
+    // DEBUG: Log what we're working with
+    console.log('SORTING DEBUG:')
+    console.log('Certificate A:', a.filename, 'Type:', typeA, 'isCA:', a.analysis?.details?.extensions?.basicConstraints?.isCA)
+    console.log('Certificate B:', b.filename, 'Type:', typeB, 'isCA:', b.analysis?.details?.extensions?.basicConstraints?.isCA)
+    
+    // Special handling for Certificate type - check if it's End-Entity vs CA
+    const getTypeOrder = (cert) => {
+      const type = cert.analysis?.type || ''
+      const isCA = cert.analysis?.details?.extensions?.basicConstraints?.isCA
+      const filename = cert.filename || ''
+      
+      // Private Key
+      if (type === 'Private Key') {
+        console.log(`${filename} -> Order 1 (Private Key)`)
+        return 1
+      }
+      
+      // CSR
+      if (type === 'CSR') {
+        console.log(`${filename} -> Order 2 (CSR)`)
+        return 2
+      }
+      
+      // Certificate types - determine by isCA flag
+      if (type === 'Certificate' || type === 'PKCS12 Certificate') {
+        if (isCA === false || isCA === undefined) {
+          console.log(`${filename} -> Order 3 (End-Entity Certificate, isCA: ${isCA})`)
+          return 3 // End-Entity Certificate
+        } else {
+          // It's a CA certificate, check subject/issuer to determine type
+          const subject = cert.analysis?.details?.subject?.commonName || ''
+          const issuer = cert.analysis?.details?.issuer?.commonName || ''
+          
+          if (subject === issuer) {
+            console.log(`${filename} -> Order 6 (Root CA, subject=issuer)`)
+            return 6 // Root CA (self-signed)
+          } else if (subject.includes('Issuing')) {
+            console.log(`${filename} -> Order 4 (Issuing CA)`)
+            return 4 // Issuing CA
+          } else {
+            console.log(`${filename} -> Order 5 (Intermediate CA)`)
+            return 5 // Intermediate CA
+          }
+        }
+      }
+      
+      // Specific types
+      const typeOrder = {
+        'IssuingCA': 4,
+        'IntermediateCA': 5,
+        'RootCA': 6,
+        'CA Certificate': 7,
+        'Certificate Chain': 8
+      }
+      
+      const order = typeOrder[type] || 999
+      console.log(`${filename} -> Order ${order} (${type})`)
+      return order
     }
     
-    return (typeOrder[typeA] || 999) - (typeOrder[typeB] || 999)
+    const orderA = getTypeOrder(a)
+    const orderB = getTypeOrder(b)
+    
+    console.log(`Final comparison: ${orderA} vs ${orderB}`)
+    return orderA - orderB
   })
 
   const handleLoginSuccess = async () => {

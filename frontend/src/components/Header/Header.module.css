@@ -105,7 +105,7 @@
   box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
   border: 1px solid #e5e7eb;
   width: 280px;
-  z-index: 1000;
+  z-index: 1100;
   animation: dropdownSlide 0.2s ease-out;
 }
 

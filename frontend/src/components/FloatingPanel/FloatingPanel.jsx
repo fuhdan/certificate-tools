@@ -4,15 +4,18 @@ import ConnectionStatus from './ConnectionStatus'
 import SystemMessages from './SystemMessages'
 import FileManager from './FileManager'
 import PKIBundleViewer from './PKIBundleViewer'
-import { Trash2, Package, Settings, Download, Files, Monitor } from 'lucide-react'
+import AdvancedModal from './AdvancedModal'
+import { Trash2, Package, Settings, Download, Files, Monitor, Wrench } from 'lucide-react'
 import { useCertificates } from '../../contexts/CertificateContext'
 import styles from './FloatingPanel.module.css'
 
 const FloatingPanel = ({ isAuthenticated }) => {
   const { clearAllFiles, certificates } = useCertificates()
   const [showPKIBundle, setShowPKIBundle] = useState(false)
+  const [showAdvanced, setShowAdvanced] = useState(false)
   const [hasRequiredForLinux, setHasRequiredForLinux] = useState(false)
   const [hasRequiredForWindows, setHasRequiredForWindows] = useState(false)
+  const [hasAnyFiles, setHasAnyFiles] = useState(false)
 
   // Check if we have required files for different formats
   useEffect(() => {
@@ -58,6 +61,9 @@ const FloatingPanel = ({ isAuthenticated }) => {
     
     // Windows (IIS/PKCS#12) needs: end-entity + private key + CA certificates + root CA
     setHasRequiredForWindows(hasEndEntityCert && hasPrivateKey && hasCACertificates && hasRootCA)
+    
+    // Advanced button: enable when any files are uploaded
+    setHasAnyFiles(certificates.length > 0)
   }, [certificates])
 
   // Add test system message on component mount
@@ -96,6 +102,14 @@ const FloatingPanel = ({ isAuthenticated }) => {
 
   const handleClosePKIBundle = () => {
     setShowPKIBundle(false)
+  }
+
+  const handleShowAdvanced = () => {
+    setShowAdvanced(true)
+  }
+
+  const handleCloseAdvanced = () => {
+    setShowAdvanced(false)
   }
 
   return (
@@ -156,6 +170,15 @@ const FloatingPanel = ({ isAuthenticated }) => {
                 <Package size={16} />
                 Windows (IIS)
               </button>
+              <button 
+                className={`${styles.downloadButton} ${!hasAnyFiles ? styles.disabled : ''}`}
+                onClick={handleShowAdvanced}
+                disabled={!hasAnyFiles}
+                title={hasAnyFiles ? "Advanced download options" : "Upload files to enable advanced options"}
+              >
+                <Wrench size={16} />
+                Advanced
+              </button>
             </div>
           </div>
 
@@ -174,6 +197,10 @@ const FloatingPanel = ({ isAuthenticated }) => {
 
       {showPKIBundle && isAuthenticated && (
         <PKIBundleViewer onClose={handleClosePKIBundle} />
+      )}
+
+      {showAdvanced && (
+        <AdvancedModal onClose={handleCloseAdvanced} />
       )}
     </>
   )

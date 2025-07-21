@@ -41,7 +41,7 @@ const FileUpload = () => {
     }
     
     // Extension check
-    const allowedExtensions = ['.pem', '.crt', '.cer', '.der', '.p12', '.pfx', '.jks', '.csr', '.key', '.p8', '.pk8']
+    const allowedExtensions = ['.pem', '.crt', '.cer', '.der', '.p12', '.pfx', '.jks', '.csr', '.key', '.p8', '.pk8', '.p7b', '.p7c', '.p7s', '.pkcs7', '.spc']
     const fileExtension = file.name.toLowerCase().substring(file.name.lastIndexOf('.'))
     
     if (!allowedExtensions.includes(fileExtension)) {
@@ -223,7 +223,7 @@ const FileUpload = () => {
           ref={inputRef}
           type="file"
           multiple
-          accept=".pem,.crt,.cer,.der,.p12,.pfx,.jks,.csr,.key,.p8,.pk8"
+          accept=".pem,.crt,.cer,.der,.p12,.pfx,.jks,.csr,.key,.p8,.pk8,.p7b,.p7c,.p7s,.pkcs7,.spc"
           onChange={handleChange}
           className={styles.hiddenInput}
           disabled={isAnalyzing || needsPassword}
@@ -252,7 +252,7 @@ const FileUpload = () => {
           
           {!needsPassword && !isAnalyzing && (
             <div className={styles.supportedFormats}>
-              Supports: PEM, CRT, CER, DER, P12, PFX, JKS, CSR, KEY, P8, PK8
+              Supports: PEM, CRT, CER, DER, P12, PFX, JKS, CSR, KEY, P8, PK8, P7B, P7C, P7S, PKCS7, SPC
             </div>
           )}
         </div>

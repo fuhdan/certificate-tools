@@ -2,8 +2,12 @@ services:
   nginx:
     build: ./nginx
     ports:
-      - "80:80"
-      - "443:443"
+      - target: 80
+        published: 80
+        protocol: TCP
+      - target: 443
+        published: 443
+        protocol: TCP
     depends_on:
       - frontend
       - backend-fastapi  # Updated to match service name
@@ -22,6 +26,10 @@ services:
   # Updated backend service to use FastAPI instead of Node.js
   backend-fastapi:  # Changed service name for clarity
     build: ./backend-fastapi
+    ports:
+      - target: 8000
+        published: 8000
+        protocol: TCP
     environment:
       - PYTHONPATH=/app
       - DEBUG=OFF

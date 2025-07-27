@@ -1,7 +1,5 @@
 .panel {
   position: fixed;
-  top: 20%;
-  right: 1rem;
   width: 250px;
   min-width: 200px;
   max-width: 600px;
@@ -17,6 +15,47 @@
   flex-direction: column;
   resize: both;
   overflow: hidden;
+  transition: all 0.3s ease;
+}
+
+.panel.minimized {
+  position: fixed;
+  bottom: 1rem;
+  left: 1rem;
+  right: auto;
+  top: auto;
+  width: 200px;
+  height: auto;
+  min-height: auto;
+  resize: none;
+  cursor: move;
+  background: none;
+  border: none;
+  box-shadow: none;
+  overflow: visible;
+  transform: none !important;
+}
+
+.panel.minimized .header {
+  border-radius: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.panel.minimized .header.connected {
+  background-color: rgb(22, 163, 74);
+}
+
+.panel.minimized .header.disconnected {
+  background-color: rgb(164, 0, 29);
+}
+
+.panel.minimized .content {
+  display: none;
+}
+
+.panel.minimized .resizeHandle {
+  display: none;
 }
 
 .header {
@@ -42,6 +81,26 @@
   align-items: center;
   gap: 0.25rem;
   opacity: 0.7;
+}
+
+.minimizeButton {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: white;
+  border-radius: 4px;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-left: 0.5rem;
+}
+
+.minimizeButton:hover {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.3);
 }
 
 .content {
@@ -176,21 +235,7 @@
   background-color: rgb(0, 90, 130);
 }
 
-.pkiBundleButton.disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-  background: #f3f4f6;
-  color: #9ca3af;
-  border-color: #e5e7eb;
-}
-
-.pkiBundleButton.disabled:hover {
-  background: #f3f4f6;
-  color: #9ca3af;
-  border-color: #e5e7eb;
-  transform: none;
-}
-
+.pkiBundleButton.disabled,
 .pkiBundleButton:disabled {
   opacity: 0.5;
   cursor: not-allowed;
@@ -199,6 +244,7 @@
   border-color: #e5e7eb;
 }
 
+.pkiBundleButton.disabled:hover,
 .pkiBundleButton:disabled:hover {
   background: #f3f4f6;
   color: #9ca3af;
@@ -412,116 +458,6 @@
 
 .fileContainer:last-child {
   margin-bottom: 0;
-}
-
-/* File Header - Shows filename */
-.fileHeader {
-  margin-bottom: 0.5rem;
-}
-
-.fileName {
-  font-weight: 600;
-  color: #1f2937;
-  font-size: 0.875rem;
-  word-break: break-all;
-}
-
-/* File Info - Size, Password, Format */
-.fileInfo {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  margin-bottom: 0.75rem;
-  padding-bottom: 0.75rem;
-  border-bottom: 1px solid #f3f4f6;
-}
-
-.fileSize {
-  font-size: 0.75rem;
-  color: #374151;
-  font-weight: 500;
-}
-
-.fileMetadata {
-  font-size: 0.75rem;
-  color: #6b7280;
-}
-
-/* Certificate Types List */
-.certificateTypesList {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-/* Individual Certificate Type Item */
-.certificateTypeItem {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 0.5rem;
-  background-color: #f9fafb;
-  border-radius: 4px;
-  border: 1px solid #f3f4f6;
-}
-
-.certificateTypeLabel {
-  font-size: 0.75rem;
-  color: #374151;
-  font-weight: 500;
-}
-
-/* Delete Button for individual certificate types */
-.deleteTypeButton {
-  background-color: transparent;
-  border: none;
-  color: #dc2626;
-  cursor: pointer;
-  padding: 0.25rem;
-  border-radius: 4px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background-color 0.2s ease;
-}
-
-.deleteTypeButton:hover {
-  background-color: rgba(220, 38, 38, 0.1);
-}
-
-.deleteTypeButton:active {
-  background-color: rgba(220, 38, 38, 0.2);
-}
-
-/* Divider between file groups */
-.fileGroupDivider {
-  height: 1px;
-  background-color: #e5e7eb;
-  margin: 0.75rem 0;
-}
-
-.fileContainer {
-  background-color: #ffffff;
-  border: 1px solid #e5e7eb;
-  border-radius: 6px;
-  padding: 0.75rem;
-  margin-bottom: 0.75rem;
-}
-
-.fileContainer:last-child {
-  margin-bottom: 0;
-}
-
-/* File Header - Shows filename */
-.fileHeader {
-  margin-bottom: 0.5rem;
-}
-
-.fileName {
-  font-weight: 600;
-  color: #1f2937;
-  font-size: 0.875rem;
-  word-break: break-all;
 }
 
 /* File Info - Size, Password, Format */

@@ -39,13 +39,48 @@ const PKIBundleViewer = ({ onClose }) => {
     }
   }
 
+  // Improved clipboard function with fallback for non-HTTPS environments
   const copyToClipboard = async () => {
+    const text = JSON.stringify(pkiBundle, null, 2)
+    
     try {
-      await navigator.clipboard.writeText(JSON.stringify(pkiBundle, null, 2))
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
+      // Modern clipboard API (works in HTTPS and localhost)
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text)
+        setCopied(true)
+        setTimeout(() => setCopied(false), 2000)
+        return
+      }
     } catch (err) {
-      console.error('Failed to copy to clipboard:', err)
+      console.warn('Modern clipboard API failed, trying fallback:', err)
+    }
+    
+    // Fallback method for non-HTTPS environments
+    try {
+      // Create a temporary textarea element
+      const textArea = document.createElement('textarea')
+      textArea.value = text
+      textArea.style.position = 'fixed'
+      textArea.style.left = '-999999px'
+      textArea.style.top = '-999999px'
+      document.body.appendChild(textArea)
+      textArea.focus()
+      textArea.select()
+      
+      // Try the old execCommand method
+      const successful = document.execCommand('copy')
+      document.body.removeChild(textArea)
+      
+      if (successful) {
+        setCopied(true)
+        setTimeout(() => setCopied(false), 2000)
+      } else {
+        throw new Error('execCommand failed')
+      }
+    } catch (err) {
+      console.error('All clipboard methods failed:', err)
+      // Show user a message to manually copy
+      alert('Copy failed. Please manually select and copy the JSON text.')
     }
   }
 

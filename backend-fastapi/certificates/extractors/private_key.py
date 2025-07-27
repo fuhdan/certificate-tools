@@ -60,12 +60,23 @@ def extract_private_key_details(private_key) -> Dict[str, Any]:
                 
                 # Additional EC debugging info
                 logger.debug(f"EC curve class: {type(curve).__name__}")
-                if hasattr(curve, 'oid'):
-                    logger.debug(f"EC curve OID: {curve.oid.dotted_string}")
+                # Fix: Avoid direct oid access, use getattr with default
+                curve_oid = getattr(curve, 'oid', None)
+                if curve_oid is not None:
+                    logger.debug(f"EC curve OID: {curve_oid.dotted_string}")
+                else:
+                    logger.debug("EC curve has no OID attribute or OID is None")
                 
-                # Log EC key parameters
-                private_value = private_key.private_value()
-                logger.debug(f"EC private value bit length: {private_value.bit_length()}")
+                # Fix: Avoid direct private_value access, use getattr with safe handling
+                try:
+                    private_value_method = getattr(private_key, 'private_value', None)
+                    if private_value_method is not None:
+                        private_value = private_value_method()
+                        logger.debug(f"EC private value bit length: {private_value.bit_length()}")
+                    else:
+                        logger.debug("EC private key does not have private_value method")
+                except Exception as pv_error:
+                    logger.debug(f"Error accessing private_value(): {pv_error}")
                 
                 public_key = private_key.public_key()
                 public_numbers = public_key.public_numbers()
@@ -177,7 +188,12 @@ def validate_private_key_consistency(private_key) -> Dict[str, Any]:
                 if isinstance(private_key, rsa.RSAPrivateKey):
                     # Test RSA signing capability
                     test_data = b"test_signature_capability"
-                    signature = private_key.sign(test_data, hashes.SHA256())
+                    # Fix: Add the missing algorithm parameter for RSA signing
+                    from cryptography.hazmat.primitives.asymmetric import padding
+                    signature = private_key.sign(test_data, padding.PSS(
+                        mgf=padding.MGF1(hashes.SHA256()),
+                        salt_length=padding.PSS.MAX_LENGTH
+                    ), hashes.SHA256())
                     validation["canSign"] = True
                     logger.debug(f"RSA signing test successful, signature length: {len(signature)}")
                     

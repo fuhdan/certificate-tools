@@ -210,6 +210,11 @@ def analyze_der_formats(file_content: bytes, password: Optional[str]) -> Dict[st
     logger.debug(f"Password provided: {'YES' if password else 'NO'}")
     logger.debug(f"Content header (32 bytes): {file_content[:32].hex()}")
     
+    # Initialize error variables to avoid unbound variable errors
+    cert_err: Optional[Exception] = None
+    csr_err: Optional[Exception] = None
+    key_err: Optional[Exception] = None
+    
     # Analyze ASN.1 structure
     if len(file_content) >= 2:
         tag = file_content[0]
@@ -231,7 +236,8 @@ def analyze_der_formats(file_content: bytes, password: Optional[str]) -> Dict[st
         result = analyze_der_certificate(file_content)
         logger.info("Successfully parsed as DER certificate")
         return result
-    except Exception as cert_err:
+    except Exception as e:
+        cert_err = e
         logger.debug(f"DER certificate parsing failed: {cert_err}")
     
     # Try CSR second
@@ -240,7 +246,8 @@ def analyze_der_formats(file_content: bytes, password: Optional[str]) -> Dict[st
         result = analyze_der_csr(file_content)
         logger.info("Successfully parsed as DER CSR")
         return result
-    except Exception as csr_err:
+    except Exception as e:
+        csr_err = e
         logger.debug(f"DER CSR parsing failed: {csr_err}")
     
     # Try private key third
@@ -250,7 +257,8 @@ def analyze_der_formats(file_content: bytes, password: Optional[str]) -> Dict[st
         if result.get('isValid') or result.get('requiresPassword'):
             logger.info(f"Successfully processed as DER private key: {result.get('type')}")
             return result
-    except Exception as key_err:
+    except Exception as e:
+        key_err = e
         logger.debug(f"DER private key parsing failed: {key_err}")
     
     # If all specific formats fail
@@ -258,9 +266,9 @@ def analyze_der_formats(file_content: bytes, password: Optional[str]) -> Dict[st
     logger.error(f"File analysis:")
     logger.error(f"  Length: {len(file_content)} bytes")
     logger.error(f"  Header: {file_content[:64].hex()}")
-    logger.error(f"  Last certificate error: {cert_err if 'cert_err' in locals() else 'N/A'}")
-    logger.error(f"  Last CSR error: {csr_err if 'csr_err' in locals() else 'N/A'}")
-    logger.error(f"  Last key error: {key_err if 'key_err' in locals() else 'N/A'}")
+    logger.error(f"  Last certificate error: {cert_err}")
+    logger.error(f"  Last CSR error: {csr_err}")
+    logger.error(f"  Last key error: {key_err}")
     
     return {
         "type": "Unknown Binary",
@@ -268,8 +276,8 @@ def analyze_der_formats(file_content: bytes, password: Optional[str]) -> Dict[st
         "content_hash": generate_file_hash(file_content),
         "error": "Could not parse as any known DER format",
         "format_hints": {
-            "certificate_error": str(cert_err) if 'cert_err' in locals() else None,
-            "csr_error": str(csr_err) if 'csr_err' in locals() else None,
-            "private_key_error": str(key_err) if 'key_err' in locals() else None
+            "certificate_error": str(cert_err) if cert_err else None,
+            "csr_error": str(csr_err) if csr_err else None,
+            "private_key_error": str(key_err) if key_err else None
         }
     }

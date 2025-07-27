@@ -37,9 +37,9 @@ def validate_private_key_certificate_match(private_key, certificate: x509.Certif
             )
         
         # Validate based on key type
-        if isinstance(private_public_key, rsa.RSAPublicKey):
+        if isinstance(private_public_key, rsa.RSAPublicKey) and isinstance(cert_public_key, rsa.RSAPublicKey):
             return validate_rsa_keys(private_public_key, cert_public_key)
-        elif isinstance(private_public_key, ec.EllipticCurvePublicKey):
+        elif isinstance(private_public_key, ec.EllipticCurvePublicKey) and isinstance(cert_public_key, ec.EllipticCurvePublicKey):
             return validate_ec_keys(private_public_key, cert_public_key)
         else:
             error_msg = f"Unsupported key type: {type(private_public_key).__name__}"

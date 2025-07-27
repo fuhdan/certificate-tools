@@ -4,6 +4,7 @@
 import logging
 from typing import Dict, Any
 from cryptography import x509
+from cryptography.x509 import oid
 
 logger = logging.getLogger(__name__)
 
@@ -17,12 +18,12 @@ def compare_subject_names(csr: x509.CertificateSigningRequest, certificate: x509
         cert_cn = None
         
         for attribute in csr.subject:
-            if attribute.oid._name == 'commonName':
+            if attribute.oid == oid.NameOID.COMMON_NAME:
                 csr_cn = attribute.value
                 break
         
         for attribute in certificate.subject:
-            if attribute.oid._name == 'commonName':
+            if attribute.oid == oid.NameOID.COMMON_NAME:
                 cert_cn = attribute.value
                 break
         
@@ -52,36 +53,42 @@ def compare_sans(csr: x509.CertificateSigningRequest, certificate: x509.Certific
         # Extract SANs from CSR
         csr_sans = []
         try:
-            csr_san_ext = csr.extensions.get_extension_for_oid(x509.oid.ExtensionOID.SUBJECT_ALTERNATIVE_NAME)
-            for san in csr_san_ext.value:
-                if isinstance(san, x509.DNSName):
-                    csr_sans.append(f"DNS:{san.value}")
-                elif isinstance(san, x509.IPAddress):
-                    csr_sans.append(f"IP:{str(san.value)}")
-                elif isinstance(san, x509.RFC822Name):
-                    csr_sans.append(f"Email:{san.value}")
-                elif isinstance(san, x509.UniformResourceIdentifier):
-                    csr_sans.append(f"URI:{san.value}")
-                else:
-                    csr_sans.append(f"Other:{str(san)}")
+            csr_san_ext = csr.extensions.get_extension_for_oid(oid.ExtensionOID.SUBJECT_ALTERNATIVE_NAME)
+            san_values = csr_san_ext.value
+            # Type cast to help Pylance understand this is a SubjectAlternativeName which is iterable
+            if isinstance(san_values, x509.SubjectAlternativeName):
+                for san in san_values:
+                    if isinstance(san, x509.DNSName):
+                        csr_sans.append(f"DNS:{san.value}")
+                    elif isinstance(san, x509.IPAddress):
+                        csr_sans.append(f"IP:{str(san.value)}")
+                    elif isinstance(san, x509.RFC822Name):
+                        csr_sans.append(f"Email:{san.value}")
+                    elif isinstance(san, x509.UniformResourceIdentifier):
+                        csr_sans.append(f"URI:{san.value}")
+                    else:
+                        csr_sans.append(f"Other:{str(san)}")
         except x509.ExtensionNotFound:
             logger.debug("No SAN extension found in CSR")
         
         # Extract SANs from certificate
         cert_sans = []
         try:
-            cert_san_ext = certificate.extensions.get_extension_for_oid(x509.oid.ExtensionOID.SUBJECT_ALTERNATIVE_NAME)
-            for san in cert_san_ext.value:
-                if isinstance(san, x509.DNSName):
-                    cert_sans.append(f"DNS:{san.value}")
-                elif isinstance(san, x509.IPAddress):
-                    cert_sans.append(f"IP:{str(san.value)}")
-                elif isinstance(san, x509.RFC822Name):
-                    cert_sans.append(f"Email:{san.value}")
-                elif isinstance(san, x509.UniformResourceIdentifier):
-                    cert_sans.append(f"URI:{san.value}")
-                else:
-                    cert_sans.append(f"Other:{str(san)}")
+            cert_san_ext = certificate.extensions.get_extension_for_oid(oid.ExtensionOID.SUBJECT_ALTERNATIVE_NAME)
+            san_values = cert_san_ext.value
+            # Type cast to help Pylance understand this is a SubjectAlternativeName which is iterable
+            if isinstance(san_values, x509.SubjectAlternativeName):
+                for san in san_values:
+                    if isinstance(san, x509.DNSName):
+                        cert_sans.append(f"DNS:{san.value}")
+                    elif isinstance(san, x509.IPAddress):
+                        cert_sans.append(f"IP:{str(san.value)}")
+                    elif isinstance(san, x509.RFC822Name):
+                        cert_sans.append(f"Email:{san.value}")
+                    elif isinstance(san, x509.UniformResourceIdentifier):
+                        cert_sans.append(f"URI:{san.value}")
+                    else:
+                        cert_sans.append(f"Other:{str(san)}")
         except x509.ExtensionNotFound:
             logger.debug("No SAN extension found in certificate")
         

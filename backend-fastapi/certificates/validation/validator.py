@@ -3,6 +3,8 @@
 
 import logging
 from typing import Dict, Any, List
+from cryptography import x509
+from cryptography.x509 import oid
 from .models import ValidationResult
 from .private_key_csr import validate_private_key_csr_match
 from .csr_certificate import validate_csr_certificate_match
@@ -32,6 +34,11 @@ def run_validations(certificates: List[Dict[str, Any]]) -> List[ValidationResult
         cert_type = analysis.get('type', '')
         cert_id = cert.get('id')
         filename = cert.get('filename', 'NO_FILENAME')
+        
+        # Skip if cert_id is None
+        if cert_id is None:
+            logger.warning(f"Skipping certificate with no ID: {filename}")
+            continue
         
         # Get crypto objects from separate storage
         crypto_objects = CertificateStorage.get_crypto_objects(cert_id)
@@ -377,7 +384,7 @@ def _get_subject_cn(cert):
     """Extract subject common name"""
     try:
         for attribute in cert.subject:
-            if attribute.oid._name == 'commonName':
+            if attribute.oid == oid.NameOID.COMMON_NAME:
                 return attribute.value
         return "Unknown"
     except Exception:
@@ -387,7 +394,7 @@ def _get_issuer_cn(cert):
     """Extract issuer common name"""
     try:
         for attribute in cert.issuer:
-            if attribute.oid._name == 'commonName':
+            if attribute.oid == oid.NameOID.COMMON_NAME:
                 return attribute.value
         return "Unknown"
     except Exception:
@@ -396,8 +403,7 @@ def _get_issuer_cn(cert):
 def _is_ca_certificate(cert):
     """Check if certificate is a CA certificate"""
     try:
-        from cryptography import x509
-        basic_constraints = cert.extensions.get_extension_for_oid(x509.oid.ExtensionOID.BASIC_CONSTRAINTS).value
+        basic_constraints = cert.extensions.get_extension_for_oid(oid.ExtensionOID.BASIC_CONSTRAINTS).value
         return basic_constraints.ca
     except:
         return False

@@ -15,7 +15,7 @@ class PKIBundleManager:
     """Manages automatic PKI bundle generation and storage"""
     
     @staticmethod
-    def auto_generate_pki_bundle(uploaded_certificates: List[Dict[str, Any]] = None):
+    def auto_generate_pki_bundle(uploaded_certificates: Optional[List[Dict[str, Any]]] = None):
         """Automatically generate and store PKI bundle when certificates change"""
         logger.info(f"=== AUTO-GENERATING PKI BUNDLE ===")
         
@@ -82,7 +82,11 @@ class PKIBundleManager:
             filename = cert.get('filename', 'unknown')
             
             # Get crypto objects
-            crypto_objects = CryptoObjectsStorage.get_crypto_objects(cert_id)
+            if cert_id is not None:
+                crypto_objects = CryptoObjectsStorage.get_crypto_objects(cert_id)
+            else:
+                logger.warning(f"Certificate {filename} has no ID, cannot retrieve crypto objects")
+                crypto_objects = {}
             
             # Generate PEM content
             pem_content = PKIBundleManager._extract_pem_content(
@@ -138,7 +142,9 @@ class PKIBundleManager:
         return None
     
     @staticmethod
-    def _normalize_file_type(cert_type: str, details: Dict = None) -> str:
+    def _normalize_file_type(cert_type: str, details: Optional[Dict] = None) -> str:
+        if details is None:
+            details = {}
         """Determine the correct PKI component type"""
         if cert_type == 'CSR':
             return 'CSR'

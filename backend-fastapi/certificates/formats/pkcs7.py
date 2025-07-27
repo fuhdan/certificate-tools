@@ -8,6 +8,7 @@ import hashlib
 import json
 from typing import Dict, Any, Optional, List
 from cryptography import x509
+from cryptography.x509 import oid
 from cryptography.hazmat.primitives import serialization
 
 from ..extractors.certificate import extract_x509_details
@@ -374,7 +375,7 @@ def _determine_certificate_type(cert) -> str:
     
     try:
         basic_constraints = cert.extensions.get_extension_for_oid(
-            x509.oid.ExtensionOID.BASIC_CONSTRAINTS
+            oid.ExtensionOID.BASIC_CONSTRAINTS
         ).value
         is_ca = basic_constraints.ca
         logger.debug(f"Basic Constraints found - CA: {is_ca}")

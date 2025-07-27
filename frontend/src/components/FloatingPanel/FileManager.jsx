@@ -15,34 +15,116 @@ const FileManager = () => {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
   }
 
-  const getFileType = (type, isValid) => {
-    if (!isValid && type !== 'Unknown') {
-      return `${type} (Invalid)`
+  const getCertificateType = (analysis) => {
+    if (!analysis || !analysis.type) return 'Unknown'
+    
+    const type = analysis.type
+    const details = analysis.details || {}
+    
+    // Map certificate types to simplified names
+    switch (type) {
+      case 'CSR':
+        return 'CSR'
+      case 'Private Key':
+        return 'Private Key'
+      case 'Certificate':
+        // Check if it's a CA certificate
+        const isCA = details.extensions?.basicConstraints?.isCA || false
+        if (isCA) {
+          // Try to determine CA level
+          const issuer = details.issuer?.commonName || ''
+          const subject = details.subject?.commonName || ''
+          
+          if (issuer === subject) {
+            return 'Root CA'
+          } else {
+            return 'Intermediate CA'
+          }
+        }
+        return 'Cert'
+      case 'CA Certificate':
+        // Check if root or intermediate - determine specific CA type
+        const issuerCA = details.issuer?.commonName || ''
+        const subjectCA = details.subject?.commonName || ''
+        
+        if (issuerCA === subjectCA) {
+          return 'Root CA'
+        } else {
+          // Try to identify as Issuing CA vs Intermediate CA
+          const subjectOrgUnit = details.subject?.organizationalUnit || ''
+          const issuerOrgUnit = details.issuer?.organizationalUnit || ''
+          
+          // If subject contains "Issuing" or similar patterns
+          if (subjectOrgUnit.toLowerCase().includes('issuing') || 
+              subjectCA.toLowerCase().includes('issuing')) {
+            return 'Issuing CA'
+          }
+          return 'Intermediate CA'
+        }
+      case 'PKCS12 Certificate':
+        return 'Cert'
+      default:
+        return type
     }
-    return type || 'Unknown'
   }
 
-  const getTypeColor = (type, isValid) => {
-    if (!isValid) return '#dc2626' // Red for invalid
+  const getFormat = (analysis) => {
+    if (!analysis) return 'Unknown'
     
-    switch (type) {
-      case 'Certificate':
-        return '#1e40af' // Blue-700 - Primary certificates
-      case 'CA Certificate':
-        return '#1d4ed8' // Blue-600 - CA certificates (darker blue)
-      case 'CSR':
-        return '#3b82f6' // Blue-500 - Certificate requests (medium blue)
-      case 'Certificate Chain':
-        return '#2563eb' // Blue-600 - Certificate chains
-      case 'Private Key':
-        return '#dc2626' // Red-600 - Private keys (sensitive)
-      default:
-        return '#6b7280' // Gray-500 - Unknown/other types
+    // Check the format from analysis
+    const format = analysis.format || 'Unknown'
+    
+    // Most certificates are stored as PEM in our system
+    if (format === 'PKCS12') {
+      return 'PKCS12'
     }
+    
+    return 'PEM'
+  }
+
+  const hasPassword = (fileGroup) => {
+    // Check if any certificate in the group was uploaded with a password
+    // Use the backend-provided usedPassword flag
+    const usedPassword = fileGroup.certificates.some(cert => 
+      cert.analysis?.usedPassword === true
+    )
+    return usedPassword ? 'Yes' : 'No'
+  }
+
+  // Group certificates by filename (original uploaded file)
+  const groupCertificatesByFile = () => {
+    const groups = {}
+    
+    certificates.forEach(cert => {
+      const filename = cert.filename || cert.name || 'Unknown'
+      // Remove any suffix like " (Private Key)" or " (Certificate)" from filename
+      const cleanFilename = filename.replace(/\s*\([^)]*\)$/, '')
+      
+      if (!groups[cleanFilename]) {
+        groups[cleanFilename] = {
+          filename: cleanFilename,
+          totalSize: 0,
+          certificates: [],
+          format: 'PEM' // Default
+        }
+      }
+      
+      groups[cleanFilename].certificates.push(cert)
+      // Use the actual file size from the first certificate's analysis
+      if (cert.analysis?.size > 0) {
+        groups[cleanFilename].totalSize = cert.analysis.size
+      }
+      // Set format based on any certificate in the group
+      if (cert.analysis?.format === 'PKCS12') {
+        groups[cleanFilename].format = 'PKCS12'
+      }
+    })
+    
+    return Object.values(groups)
   }
 
   const handleDeleteFile = async (fileId) => {
-    if (window.confirm('Are you sure you want to delete this certificate?')) {
+    if (window.confirm('Are you sure you want to delete this certificate component?')) {
       await deleteCertificate(fileId)
     }
   }
@@ -70,92 +152,72 @@ const FileManager = () => {
     )
   }
 
+  const fileGroups = groupCertificatesByFile()
+
   return (
     <div className={styles.fileInfoSection}>
       <div className={styles.fileInfoCard}>
         <div className={styles.fileInfoHeader}>
           <File size={16} style={{ color: '#6b7280' }} />
           <span style={{ color: '#6b7280', fontWeight: '500' }}>
-            Files ({certificates.length})
+            Files ({fileGroups.length})
           </span>
         </div>
         
         <div className={styles.fileDetailsList}>
-          {certificates.map((file, index) => {
-            const analysis = file.analysis || {}
-            const type = analysis.type || 'Unknown'
-            const isValid = file.success && analysis.isValid !== false
-            const typeColor = getTypeColor(type, isValid)
-            
-            return (
-              <div key={file.id || index} className={styles.fileDetail}>
-                <div className={styles.fileHeader}>
-                  <span className={styles.fileNumber}>#{index + 1}</span>
-                  <button 
-                    className={styles.deleteButton}
-                    onClick={() => handleDeleteFile(file.id)}
-                    title="Delete certificate"
-                  >
-                    <Trash2 size={12} />
-                  </button>
+          {fileGroups.map((fileGroup, groupIndex) => (
+            <div key={fileGroup.filename} className={styles.fileContainer}>
+              {/* File Header - Filename and Size */}
+              <div className={styles.fileHeader}>
+                <div className={styles.fileName}>
+                  {fileGroup.filename}
                 </div>
-                
-                <div className={styles.fileDetailRow}>
-                  <span className={styles.fileDetailLabel}>Name:</span>
-                  <span className={styles.fileDetailValue}>
-                    {file.filename || file.name}
-                  </span>
-                </div>
-                
-                <div className={styles.fileDetailRow}>
-                  <span className={styles.fileDetailLabel}>Type:</span>
-                  <span 
-                    className={styles.fileDetailValue}
-                    style={{ color: typeColor, fontWeight: '500' }}
-                  >
-                    {getFileType(type, isValid)}
-                  </span>
-                </div>
-                
-                {analysis.details?.subject?.commonName && (
-                  <div className={styles.fileDetailRow}>
-                    <span className={styles.fileDetailLabel}>CN:</span>
-                    <span className={styles.fileDetailValue}>
-                      {analysis.details.subject.commonName}
-                    </span>
-                  </div>
-                )}
-                
-                {analysis.details?.validity?.daysUntilExpiry !== undefined && (
-                  <div className={styles.fileDetailRow}>
-                    <span className={styles.fileDetailLabel}>Expires:</span>
-                    <span 
-                      className={styles.fileDetailValue}
-                      style={{ 
-                        color: analysis.details.validity.daysUntilExpiry < 30 ? '#dc2626' : '#059669',
-                        fontWeight: '500'
-                      }}
-                    >
-                      {analysis.details.validity.daysUntilExpiry} days
-                    </span>
-                  </div>
-                )}
-                
-                {analysis.keySize && (
-                  <div className={styles.fileDetailRow}>
-                    <span className={styles.fileDetailLabel}>Size:</span>
-                    <span className={styles.fileDetailValue}>
-                      {analysis.keySize} bits
-                    </span>
-                  </div>
-                )}
-                
-                {index < certificates.length - 1 && (
-                  <div className={styles.fileDivider} />
-                )}
               </div>
-            )
-          })}
+              
+              <div className={styles.fileInfo}>
+                <div className={styles.fileSize}>
+                  {formatFileSize(fileGroup.totalSize)}
+                </div>
+                
+                <div className={styles.fileMetadata}>
+                  <span>Password: {hasPassword(fileGroup)}</span>
+                </div>
+                
+                <div className={styles.fileMetadata}>
+                  <span>Format: {fileGroup.format}</span>
+                </div>
+              </div>
+              
+              {/* Certificate Types List */}
+              <div className={styles.certificateTypesList}>
+                {fileGroup.certificates.map((cert, certIndex) => {
+                  const analysis = cert.analysis || {}
+                  const certType = getCertificateType(analysis)
+                  
+                  return (
+                    <div key={cert.id || certIndex} className={styles.certificateTypeItem}>
+                      <span className={styles.certificateTypeLabel}>
+                        Type: {certType}
+                      </span>
+                      
+                      <button
+                        className={styles.deleteTypeButton}
+                        onClick={() => handleDeleteFile(cert.id)}
+                        title={`Delete ${certType}`}
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+              
+              {/* Divider between file groups */}
+              {groupIndex < fileGroups.length - 1 && (
+                <div className={styles.fileGroupDivider} />
+              )}
+            </div>
+          ))}
         </div>
       </div>
     </div>

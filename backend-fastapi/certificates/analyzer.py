@@ -55,7 +55,8 @@ def analyze_uploaded_certificate(file_content: bytes, filename: str, password: O
         "hash": hashlib.sha256(file_content).hexdigest(),
         "content_hash": None,
         "details": None,
-        "requiresPassword": False
+        "requiresPassword": False,
+        "usedPassword": bool(password)
         # NOTE: crypto_objects will be stored separately, not in this response
     }
     

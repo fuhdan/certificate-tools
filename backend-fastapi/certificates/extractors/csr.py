@@ -2,9 +2,9 @@
 # CSR detail extraction functions with comprehensive debugging
 
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, cast
 from cryptography import x509
-from cryptography.x509.oid import ExtensionOID
+from cryptography.x509.oid import ExtensionOID, ExtendedKeyUsageOID
 from .certificate import extract_public_key_details
 
 logger = logging.getLogger(__name__)
@@ -74,10 +74,11 @@ def extract_csr_details(csr: x509.CertificateSigningRequest) -> Dict[str, Any]:
         try:
             logger.debug("Checking for Subject Alternative Name extension in CSR...")
             san_ext = csr.extensions.get_extension_for_oid(ExtensionOID.SUBJECT_ALTERNATIVE_NAME)
-            san = san_ext.value
+            # Cast to the correct type to help with type checking
+            san = cast(x509.SubjectAlternativeName, san_ext.value)
             san_list = []
             
-            logger.debug(f"Found SAN extension with {len(san)} entries")
+            logger.debug(f"Found SAN extension")
             for i, name in enumerate(san):
                 if isinstance(name, x509.DNSName):
                     san_entry = {"type": 2, "typeName": "DNS", "value": name.value}
@@ -106,13 +107,13 @@ def extract_csr_details(csr: x509.CertificateSigningRequest) -> Dict[str, Any]:
             logger.debug("No Subject Alternative Name extension found in CSR")
         except Exception as san_error:
             logger.error(f"Error processing SAN extension in CSR: {san_error}")
-            logger.error(f"SAN extension details: {san_ext if 'san_ext' in locals() else 'Not available'}")
 
         # Process Basic Constraints extension (if present in CSR)
         try:
             logger.debug("Checking for Basic Constraints extension in CSR...")
             bc_ext = csr.extensions.get_extension_for_oid(ExtensionOID.BASIC_CONSTRAINTS)
-            bc_value = bc_ext.value
+            # Cast to the correct type to help with type checking
+            bc_value = cast(x509.BasicConstraints, bc_ext.value)
             is_ca = bc_value.ca
             path_length = bc_value.path_length
             
@@ -130,7 +131,8 @@ def extract_csr_details(csr: x509.CertificateSigningRequest) -> Dict[str, Any]:
         try:
             logger.debug("Checking for Key Usage extension in CSR...")
             ku_ext = csr.extensions.get_extension_for_oid(ExtensionOID.KEY_USAGE)
-            ku_value = ku_ext.value
+            # Cast to the correct type to help with type checking
+            ku_value = cast(x509.KeyUsage, ku_ext.value)
             
             key_usage = {
                 "digitalSignature": ku_value.digital_signature,
@@ -151,24 +153,25 @@ def extract_csr_details(csr: x509.CertificateSigningRequest) -> Dict[str, Any]:
         try:
             logger.debug("Checking for Extended Key Usage extension in CSR...")
             eku_ext = csr.extensions.get_extension_for_oid(ExtensionOID.EXTENDED_KEY_USAGE)
-            eku_value = eku_ext.value
+            # Cast to the correct type to help with type checking
+            eku_value = cast(x509.ExtendedKeyUsage, eku_ext.value)
             eku_usages = []
             
-            logger.debug(f"Found Extended Key Usage with {len(eku_value)} usages")
+            logger.debug(f"Found Extended Key Usage extension")
             for i, usage_oid in enumerate(eku_value):
                 usage_name = usage_oid.dotted_string  # Default to OID string
                 
                 # Map known OIDs to readable names
-                if hasattr(x509.oid.ExtendedKeyUsageOID, 'SERVER_AUTH') and usage_oid == x509.oid.ExtendedKeyUsageOID.SERVER_AUTH:
+                if usage_oid == ExtendedKeyUsageOID.SERVER_AUTH:
                     usage_name = "serverAuth"
                     logger.debug(f"    EKU [{i}]: Server Authentication")
-                elif hasattr(x509.oid.ExtendedKeyUsageOID, 'CLIENT_AUTH') and usage_oid == x509.oid.ExtendedKeyUsageOID.CLIENT_AUTH:
+                elif usage_oid == ExtendedKeyUsageOID.CLIENT_AUTH:
                     usage_name = "clientAuth"
                     logger.debug(f"    EKU [{i}]: Client Authentication")
-                elif hasattr(x509.oid.ExtendedKeyUsageOID, 'CODE_SIGNING') and usage_oid == x509.oid.ExtendedKeyUsageOID.CODE_SIGNING:
+                elif usage_oid == ExtendedKeyUsageOID.CODE_SIGNING:
                     usage_name = "codeSigning"
                     logger.debug(f"    EKU [{i}]: Code Signing")
-                elif hasattr(x509.oid.ExtendedKeyUsageOID, 'EMAIL_PROTECTION') and usage_oid == x509.oid.ExtendedKeyUsageOID.EMAIL_PROTECTION:
+                elif usage_oid == ExtendedKeyUsageOID.EMAIL_PROTECTION:
                     usage_name = "emailProtection"
                     logger.debug(f"    EKU [{i}]: Email Protection")
                 else:
@@ -202,13 +205,14 @@ def extract_csr_details(csr: x509.CertificateSigningRequest) -> Dict[str, Any]:
         details["extensions"] = extensions
         logger.debug(f"Total CSR extensions processed: {len(extensions)}")
         
-        # CSR version (if available)
-        try:
-            if hasattr(csr, 'version'):
-                details["version"] = csr.version
-                logger.debug(f"CSR version: {csr.version}")
-        except Exception as version_error:
-            logger.debug(f"Could not extract CSR version: {version_error}")
+        # CSR version (if available) - Note: CSRs typically don't have a version attribute
+        # This is commented out since CSRs don't have a version attribute in the cryptography library
+        # try:
+        #     if hasattr(csr, 'version'):
+        #         details["version"] = csr.version
+        #         logger.debug(f"CSR version: {csr.version}")
+        # except Exception as version_error:
+        #     logger.debug(f"Could not extract CSR version: {version_error}")
         
     except Exception as e:
         logger.error(f"Error extracting CSR details: {e}")

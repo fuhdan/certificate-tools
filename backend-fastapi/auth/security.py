@@ -63,7 +63,9 @@ def verify_token(token: str) -> Optional[str]:
     """Verify JWT token and return username"""
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        return username
+        username = payload.get("sub")
+        if isinstance(username, str):
+            return username
+        return None
     except (InvalidTokenError, ExpiredSignatureError):
         return None

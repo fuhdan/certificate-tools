@@ -90,18 +90,24 @@ class CertificateStorage:
     
     @staticmethod
     def replace(existing_cert: Dict[str, Any], new_cert: Dict[str, Any]) -> Dict[str, Any]:
-        """Replace existing certificate with auto PKI bundle generation"""
+        """Replace existing certificate with new one"""
         logger.info(f"=== STORAGE REPLACE OPERATION ===")
-        logger.info(f"Replacing certificate:")
-        logger.info(f"  OLD: {existing_cert.get('filename')} (ID: {existing_cert.get('id')})")
-        logger.info(f"  NEW: {new_cert.get('filename')} (ID: {new_cert.get('id')})")
+        existing_filename = existing_cert.get('filename', 'NO_FILENAME')
+        new_filename = new_cert.get('filename', 'NO_FILENAME')
+        
+        logger.info(f"Replacing certificate: {existing_filename} -> {new_filename}")
         
         existing_hash = existing_cert.get('analysis', {}).get('content_hash', 'NO_HASH')
         new_hash = new_cert.get('analysis', {}).get('content_hash', 'NO_HASH')
         logger.debug(f"Content hashes - OLD: {existing_hash[:16]}... NEW: {new_hash[:16]}...")
         
-        # Remove crypto objects for the old certificate
-        CryptoObjectsStorage.remove_crypto_objects(existing_cert.get('id'))
+        # Fix: Ensure we have a valid cert_id before calling remove_crypto_objects
+        existing_cert_id = existing_cert.get('id')
+        if existing_cert_id is not None:
+            # Remove crypto objects for the old certificate
+            CryptoObjectsStorage.remove_crypto_objects(existing_cert_id)
+        else:
+            logger.warning("Existing certificate has no ID, cannot remove crypto objects")
         
         result = None
         # Find and replace

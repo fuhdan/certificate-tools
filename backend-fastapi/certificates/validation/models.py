@@ -2,13 +2,13 @@
 # Validation result models
 
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
 class ValidationResult:
     """Validation result container"""
-    def __init__(self, is_valid: bool, validation_type: str, details: Dict[str, Any] = None, error: str = None):
+    def __init__(self, is_valid: bool, validation_type: str, details: Optional[Dict[str, Any]] = None, error: Optional[str] = None):
         self.is_valid = is_valid
         self.validation_type = validation_type
         self.details = details or {}

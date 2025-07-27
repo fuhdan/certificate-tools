@@ -3,9 +3,9 @@
 
 import datetime
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, cast
 from cryptography import x509
-from cryptography.x509.oid import ExtendedKeyUsageOID
+from cryptography.x509.oid import ExtendedKeyUsageOID, ExtensionOID
 from cryptography.hazmat.primitives.asymmetric import rsa, ec
 
 logger = logging.getLogger(__name__)
@@ -67,11 +67,14 @@ def extract_x509_details(cert: x509.Certificate) -> Dict[str, Any]:
         # Subject information
         logger.debug("Extracting subject information...")
         subject_attrs = {}
-        for attribute in cert.subject:
+        subject_count = len(cert.subject)
+        logger.debug(f"Found {subject_count} subject attributes")
+        
+        for i, attribute in enumerate(cert.subject):
             attr_name = attribute.oid._name
             attr_value = attribute.value
             subject_attrs[attr_name] = attr_value
-            logger.debug(f"  Subject attribute: {attr_name} = {attr_value}")
+            logger.debug(f"  Subject attribute [{i}]: {attr_name} = {attr_value}")
         
         details["subject"] = {
             "commonName": subject_attrs.get("commonName", "N/A"),
@@ -87,31 +90,36 @@ def extract_x509_details(cert: x509.Certificate) -> Dict[str, Any]:
         # Issuer information
         logger.debug("Extracting issuer information...")
         issuer_attrs = {}
-        for attribute in cert.issuer:
+        issuer_count = len(cert.issuer)
+        logger.debug(f"Found {issuer_count} issuer attributes")
+        
+        for i, attribute in enumerate(cert.issuer):
             attr_name = attribute.oid._name
             attr_value = attribute.value
             issuer_attrs[attr_name] = attr_value
-            logger.debug(f"  Issuer attribute: {attr_name} = {attr_value}")
+            logger.debug(f"  Issuer attribute [{i}]: {attr_name} = {attr_value}")
         
         details["issuer"] = {
             "commonName": issuer_attrs.get("commonName", "N/A"),
             "organization": issuer_attrs.get("organizationName", "N/A"),
             "organizationalUnit": issuer_attrs.get("organizationalUnitName", "N/A"),
-            "country": issuer_attrs.get("countryName", "N/A")
+            "country": issuer_attrs.get("countryName", "N/A"),
+            "state": issuer_attrs.get("stateOrProvinceName", "N/A"),
+            "locality": issuer_attrs.get("localityName", "N/A"),
+            "emailAddress": issuer_attrs.get("emailAddress", "N/A")
         }
         logger.debug(f"Issuer details: {details['issuer']}")
         
-        # Validity period
+        # Validity information
         logger.debug("Extracting validity information...")
         not_before = cert.not_valid_before_utc.isoformat()
         not_after = cert.not_valid_after_utc.isoformat()
-        current_time = datetime.datetime.now(datetime.timezone.utc)
-        is_expired = cert.not_valid_after_utc < current_time
-        days_until_expiry = (cert.not_valid_after_utc - current_time).days
+        now = datetime.datetime.now(datetime.timezone.utc)
+        is_expired = now > cert.not_valid_after_utc
+        days_until_expiry = (cert.not_valid_after_utc - now).days
         
-        logger.debug(f"  Valid from: {not_before}")
-        logger.debug(f"  Valid until: {not_after}")
-        logger.debug(f"  Current time: {current_time.isoformat()}")
+        logger.debug(f"  Not before: {not_before}")
+        logger.debug(f"  Not after: {not_after}")
         logger.debug(f"  Is expired: {is_expired}")
         logger.debug(f"  Days until expiry: {days_until_expiry}")
         
@@ -196,11 +204,16 @@ def extract_x509_details(cert: x509.Certificate) -> Dict[str, Any]:
         # Extended Key Usage (separate try block as it's optional)
         try:
             logger.debug("Checking for Extended Key Usage extension...")
-            eku_ext = cert.extensions.get_extension_for_oid(x509.oid.ExtensionOID.EXTENDED_KEY_USAGE).value
+            # Fix: Get the extension object first, then access its value
+            eku_ext = cert.extensions.get_extension_for_oid(ExtensionOID.EXTENDED_KEY_USAGE)
+            # Use cast to tell type checker the correct type
+            eku_value = cast(x509.ExtendedKeyUsage, eku_ext.value)
             eku_usages = []
-            logger.debug(f"Found Extended Key Usage with {len(eku_ext)} usages")
+            logger.debug(f"Found Extended Key Usage extension")
             
-            for j, usage_oid in enumerate(eku_ext):
+            # Use a counter instead of enumerate to avoid type issues
+            j = 0
+            for usage_oid in eku_value:
                 if usage_oid == ExtendedKeyUsageOID.SERVER_AUTH:
                     usage_name = "serverAuth"
                     logger.debug(f"    EKU [{j}]: Server Authentication")
@@ -224,6 +237,7 @@ def extract_x509_details(cert: x509.Certificate) -> Dict[str, Any]:
                     logger.debug(f"    EKU [{j}]: Unknown OID {usage_oid.dotted_string}")
                 
                 eku_usages.append(usage_name)
+                j += 1
             
             extensions["extendedKeyUsage"] = eku_usages
             logger.debug(f"Extended Key Usage processed: {eku_usages}")
@@ -251,9 +265,12 @@ def is_ca_certificate(cert: x509.Certificate) -> bool:
     logger.debug("=== CA CERTIFICATE CHECK ===")
     
     try:
-        basic_constraints = cert.extensions.get_extension_for_oid(
-            x509.oid.ExtensionOID.BASIC_CONSTRAINTS
-        ).value
+        # Fix: Get the extension object first, then access its value
+        basic_constraints_ext = cert.extensions.get_extension_for_oid(
+            ExtensionOID.BASIC_CONSTRAINTS
+        )
+        # Use cast to tell type checker the correct type
+        basic_constraints = cast(x509.BasicConstraints, basic_constraints_ext.value)
         is_ca = basic_constraints.ca
         logger.debug(f"Basic Constraints found - CA: {is_ca}")
         return is_ca

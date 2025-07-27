@@ -2,8 +2,9 @@
 # Certificate chain validation with COMPREHENSIVE cryptographic details
 
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, cast
 from cryptography import x509
+from cryptography.x509.oid import ExtensionOID, NameOID
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding, rsa, ec, ed25519, ed448
 from cryptography.exceptions import InvalidSignature
@@ -27,7 +28,11 @@ def validate_certificate_chain(certificates: List[Dict[str, Any]]) -> List[Valid
         cert_id = cert.get('id')
         
         # Get crypto objects from storage
-        crypto_objects = CertificateStorage.get_crypto_objects(cert_id)
+        if cert_id is not None:
+            crypto_objects = CertificateStorage.get_crypto_objects(cert_id)
+        else:
+            logger.warning(f"Certificate has no ID, cannot retrieve crypto objects")
+            crypto_objects = {}
         
         if 'Certificate' in cert_type and 'Chain' not in cert_type and analysis.get('isValid') and 'certificate' in crypto_objects:
             cert_obj = crypto_objects['certificate']
@@ -337,8 +342,9 @@ def _verify_ed_signature(public_key, signature: bytes, data: bytes):
 def _is_ca_certificate(cert: x509.Certificate) -> bool:
     """Check if certificate is a CA certificate"""
     try:
-        basic_constraints = cert.extensions.get_extension_for_oid(x509.oid.ExtensionOID.BASIC_CONSTRAINTS)
-        return basic_constraints.value.ca
+        basic_constraints_ext = cert.extensions.get_extension_for_oid(ExtensionOID.BASIC_CONSTRAINTS)
+        basic_constraints = cast(x509.BasicConstraints, basic_constraints_ext.value)
+        return basic_constraints.ca
     except x509.ExtensionNotFound:
         return False
 
@@ -346,7 +352,7 @@ def _get_subject_cn(cert: x509.Certificate) -> str:
     """Extract Common Name from certificate subject"""
     try:
         for attribute in cert.subject:
-            if attribute.oid == x509.oid.NameOID.COMMON_NAME:
+            if attribute.oid == NameOID.COMMON_NAME:
                 return attribute.value
         return str(cert.subject)
     except Exception:
@@ -356,7 +362,7 @@ def _get_issuer_cn(cert: x509.Certificate) -> str:
     """Extract Common Name from certificate issuer"""
     try:
         for attribute in cert.issuer:
-            if attribute.oid == x509.oid.NameOID.COMMON_NAME:
+            if attribute.oid == NameOID.COMMON_NAME:
                 return attribute.value
         return str(cert.issuer)
     except Exception:
@@ -391,8 +397,9 @@ def _get_key_size(public_key) -> int:
 def _get_subject_key_identifier(cert: x509.Certificate) -> Optional[str]:
     """Extract Subject Key Identifier from certificate"""
     try:
-        ski_ext = cert.extensions.get_extension_for_oid(x509.oid.ExtensionOID.SUBJECT_KEY_IDENTIFIER)
-        return ski_ext.value.digest.hex().upper()
+        ski_ext = cert.extensions.get_extension_for_oid(ExtensionOID.SUBJECT_KEY_IDENTIFIER)
+        ski_value = cast(x509.SubjectKeyIdentifier, ski_ext.value)
+        return ski_value.digest.hex().upper()
     except x509.ExtensionNotFound:
         return None
     except Exception as e:
@@ -402,9 +409,10 @@ def _get_subject_key_identifier(cert: x509.Certificate) -> Optional[str]:
 def _get_authority_key_identifier(cert: x509.Certificate) -> Optional[str]:
     """Extract Authority Key Identifier from certificate"""
     try:
-        aki_ext = cert.extensions.get_extension_for_oid(x509.oid.ExtensionOID.AUTHORITY_KEY_IDENTIFIER)
-        if aki_ext.value.key_identifier:
-            return aki_ext.value.key_identifier.hex().upper()
+        aki_ext = cert.extensions.get_extension_for_oid(ExtensionOID.AUTHORITY_KEY_IDENTIFIER)
+        aki_value = cast(x509.AuthorityKeyIdentifier, aki_ext.value)
+        if aki_value.key_identifier:
+            return aki_value.key_identifier.hex().upper()
         return None
     except x509.ExtensionNotFound:
         return None

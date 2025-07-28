@@ -289,7 +289,7 @@ def validate_certificates_simple(session_id: str = Depends(get_session_id)):
                 cert_copy['crypto_objects'] = {}
             certificates_with_crypto.append(cert_copy)
         
-        validations = run_validations(certificates_with_crypto)
+        validations = run_validations(certificates_with_crypto, session_id)
         
         # CRITICAL DEBUG: Log exactly what we're returning
         logger.info(f"[{session_id}] === FINAL VALIDATION RESULTS ===")
@@ -364,7 +364,7 @@ def validate_certificates(
                 cert_copy['crypto_objects'] = {}
             certificates_with_crypto.append(cert_copy)
         
-        validations = run_validations(certificates_with_crypto)
+        validations = run_validations(certificates_with_crypto, session_id)
         
         logger.info(f"[{session_id}] Validation completed: {len(validations)} results for user {current_user.username}")
         

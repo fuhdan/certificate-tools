@@ -12,9 +12,9 @@ from .models import ValidationResult
 
 logger = logging.getLogger(__name__)
 
-def validate_certificate_chain(certificates: List[Dict[str, Any]]) -> List[ValidationResult]:
+def validate_certificate_chain(certificates: List[Dict[str, Any]], session_id: str) -> List[ValidationResult]:
     """Validate certificate chains with FULL signature verification details"""
-    logger.info(f"=== COMPREHENSIVE CERTIFICATE CHAIN VALIDATION ===")
+    logger.info(f"[{session_id}] === COMPREHENSIVE CERTIFICATE CHAIN VALIDATION ===")
     
     validations = []
     

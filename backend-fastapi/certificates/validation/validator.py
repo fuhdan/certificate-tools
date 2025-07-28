@@ -14,10 +14,10 @@ from .chain_validation import validate_certificate_chain
 
 logger = logging.getLogger(__name__)
 
-def run_validations(certificates: List[Dict[str, Any]]) -> List[ValidationResult]:
-    """Run INTELLIGENT validations - works with certificates data independently of sessions"""
-    logger.info(f"=== RUNNING INTELLIGENT VALIDATIONS ===")
-    logger.debug(f"Total certificates to analyze: {len(certificates)}")
+def run_validations(certificates: List[Dict[str, Any]], session_id: str) -> List[ValidationResult]:
+    """Run INTELLIGENT validations - works with certificates data within session scope"""
+    logger.info(f"[{session_id}] === RUNNING INTELLIGENT VALIDATIONS ===")
+    logger.debug(f"[{session_id}] Total certificates to analyze: {len(certificates)}")
     
     validations = []
     
@@ -133,7 +133,7 @@ def run_validations(certificates: List[Dict[str, Any]]) -> List[ValidationResult
         logger.info("Running Private Key ↔ CSR validations...")
         for pk_item in private_keys:
             for csr_item in csrs:
-                validation = _validate_private_key_csr(pk_item, csr_item)
+                validation = _validate_private_key_csr(pk_item, csr_item, session_id)
                 validations.append(validation)
     
     # 2. INTELLIGENT: CSR ↔ End-Entity Certificate (only end-entity certs)
@@ -141,7 +141,7 @@ def run_validations(certificates: List[Dict[str, Any]]) -> List[ValidationResult
         logger.info("Running CSR ↔ End-Entity Certificate validations...")
         for csr_item in csrs:
             for cert_item in end_entity_certs:
-                validation = _validate_csr_certificate(csr_item, cert_item)
+                validation = _validate_csr_certificate(csr_item, cert_item, session_id)
                 validations.append(validation)
     
     # 3. INTELLIGENT: Private Key ↔ End-Entity Certificate (only end-entity certs)
@@ -149,7 +149,7 @@ def run_validations(certificates: List[Dict[str, Any]]) -> List[ValidationResult
         logger.info("Running Private Key ↔ End-Entity Certificate validations...")
         for pk_item in private_keys:
             for cert_item in end_entity_certs:
-                validation = _validate_private_key_certificate(pk_item, cert_item)
+                validation = _validate_private_key_certificate(pk_item, cert_item, session_id)
                 validations.append(validation)
     
     # 4. FIXED: Certificate Chain Validation (individual certificates)
@@ -162,7 +162,7 @@ def run_validations(certificates: List[Dict[str, Any]]) -> List[ValidationResult
             for cert_info in all_certs:
                 cert_list.append(cert_info['cert_data'])
             
-            chain_validations = validate_certificate_chain(cert_list)
+            chain_validations = validate_certificate_chain(cert_list, session_id)
             validations.extend(chain_validations)
             logger.info(f"Completed {len(chain_validations)} certificate chain validations")
         except Exception as e:
@@ -197,7 +197,7 @@ def run_validations(certificates: List[Dict[str, Any]]) -> List[ValidationResult
     logger.info(f"Completed {len(validations)} INTELLIGENT validations")
     return validations
 
-def _validate_private_key_csr(pk_item: Dict, csr_item: Dict) -> ValidationResult:
+def _validate_private_key_csr(pk_item: Dict, csr_item: Dict, session_id: str) -> ValidationResult:
     """Validate private key against CSR with proper error handling"""
     try:
         validation = validate_private_key_csr_match(
@@ -227,7 +227,7 @@ def _validate_private_key_csr(pk_item: Dict, csr_item: Dict) -> ValidationResult
             }
         )
 
-def _validate_csr_certificate(csr_item: Dict, cert_item: Dict) -> ValidationResult:
+def _validate_csr_certificate(csr_item: Dict, cert_item: Dict, session_id: str) -> ValidationResult:
     """Validate CSR against certificate with proper error handling"""
     try:
         validation = validate_csr_certificate_match(
@@ -257,7 +257,7 @@ def _validate_csr_certificate(csr_item: Dict, cert_item: Dict) -> ValidationResu
             }
         )
 
-def _validate_private_key_certificate(pk_item: Dict, cert_item: Dict) -> ValidationResult:
+def _validate_private_key_certificate(pk_item: Dict, cert_item: Dict, session_id: str) -> ValidationResult:
     """Validate private key against certificate with proper error handling"""
     try:
         validation = validate_private_key_certificate_match(
@@ -531,3 +531,63 @@ def _order_certificates(cert_info: List[Dict]) -> List[Dict]:
     
     logger.info(f"Ordered chain: {' → '.join([cert['subject'] for cert in ordered])}")
     return ordered
+
+class CertificateValidator:
+    """Session-aware certificate validator"""
+    
+    @staticmethod
+    def validate_all_certificates(session_id: str) -> List[Dict[str, Any]]:
+        """Run validation checks for all certificates in session"""
+        from certificates.storage import CertificateStorage
+        certificates = CertificateStorage.get_all(session_id)
+        validations = run_validations(certificates, session_id)
+        return [validation.to_dict() for validation in validations]
+
+def validate_certificate_key_match(cert_id: str, key_id: str, session_id: str) -> ValidationResult:
+    """Validate certificate matches private key within session"""
+    from certificates.storage import CertificateStorage
+    cert_crypto = CertificateStorage.get_crypto_objects(cert_id, session_id)
+    key_crypto = CertificateStorage.get_crypto_objects(key_id, session_id)
+    
+    return validate_private_key_certificate_match(
+        key_crypto['private_key'],
+        cert_crypto['certificate']
+    )
+
+def validate_csr_key_match(csr_id: str, key_id: str, session_id: str) -> ValidationResult:
+    """Validate CSR matches private key within session"""
+    from certificates.storage import CertificateStorage
+    csr_crypto = CertificateStorage.get_crypto_objects(csr_id, session_id)
+    key_crypto = CertificateStorage.get_crypto_objects(key_id, session_id)
+    
+    return validate_private_key_csr_match(
+        key_crypto['private_key'],
+        csr_crypto['csr']
+    )
+
+def validate_certificate_issued_from_csr(cert_id: str, csr_id: str, session_id: str) -> ValidationResult:
+    """Validate certificate was issued from CSR within session"""
+    from certificates.storage import CertificateStorage
+    cert_crypto = CertificateStorage.get_crypto_objects(cert_id, session_id)
+    csr_crypto = CertificateStorage.get_crypto_objects(csr_id, session_id)
+    
+    return validate_csr_certificate_match(
+        csr_crypto['csr'],
+        cert_crypto['certificate']
+    )
+
+def validate_private_key_matches_certificate(cert_id: str, session_id: str) -> ValidationResult:
+    """Validate private key matches certificate within session"""
+    from certificates.storage import CertificateStorage
+    crypto_objects = CertificateStorage.get_crypto_objects(cert_id, session_id)
+    
+    return validate_private_key_certificate_match(
+        crypto_objects['private_key'],
+        crypto_objects['certificate']
+    )
+
+def validate_certificate_trust_chain(session_id: str) -> List[ValidationResult]:
+    """Validate certificate trust chain within session"""
+    from certificates.storage import CertificateStorage
+    certificates = CertificateStorage.get_all(session_id)
+    return validate_certificate_chain(certificates, session_id)

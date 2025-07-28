@@ -1,5 +1,4 @@
 # config.py
-# EXISTING - NO MERGE NEEDED (but can be enhanced)
 # Configuration settings for the application
 
 import os
@@ -20,6 +19,9 @@ class Settings:
     
     # API
     API_PREFIX: str = "/api"
+    
+    # Session Management
+    DEFAULT_SESSION_ID: str = "00000000-0000-4000-8000-000000000000"
     
     # File upload limits
     MAX_FILE_SIZE: int = 10 * 1024 * 1024  # 10MB

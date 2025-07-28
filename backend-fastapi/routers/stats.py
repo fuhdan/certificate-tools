@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends
 from auth.models import User
 from auth.dependencies import get_current_active_user
 from config import settings
+from middleware.session_middleware import get_session_id
 
 logger = logging.getLogger(__name__)
 
@@ -32,11 +33,14 @@ def get_uptime():
         return int(time.time() - _local_start_time)
 
 @router.get("/api/stats", tags=["statistics"])
-def get_system_stats(current_user: Annotated[User, Depends(get_current_active_user)]):
+def get_system_stats(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    session_id: str = Depends(get_session_id)
+):
     """Get system statistics"""
     from certificates.storage import CertificateStorage
     
-    storage_summary = CertificateStorage.get_summary()
+    storage_summary = CertificateStorage.get_summary(session_id)
     
     return {
         "success": True,

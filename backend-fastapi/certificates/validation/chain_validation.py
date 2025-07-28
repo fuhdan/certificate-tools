@@ -18,21 +18,14 @@ def validate_certificate_chain(certificates: List[Dict[str, Any]]) -> List[Valid
     
     validations = []
     
-    # Find certificates that could form chains
-    from certificates.storage import CertificateStorage
-    
+    # Find certificates that could form chains - USE EMBEDDED CRYPTO OBJECTS
     cert_objects = []
     for cert in certificates:
         analysis = cert.get('analysis', {})
         cert_type = analysis.get('type', '')
-        cert_id = cert.get('id')
         
-        # Get crypto objects from storage
-        if cert_id is not None:
-            crypto_objects = CertificateStorage.get_crypto_objects(cert_id)
-        else:
-            logger.warning(f"Certificate has no ID, cannot retrieve crypto objects")
-            crypto_objects = {}
+        # Get crypto objects from embedded data (provided by router) - NO STORAGE ACCESS
+        crypto_objects = cert.get('crypto_objects', {})
         
         if 'Certificate' in cert_type and 'Chain' not in cert_type and analysis.get('isValid') and 'certificate' in crypto_objects:
             cert_obj = crypto_objects['certificate']

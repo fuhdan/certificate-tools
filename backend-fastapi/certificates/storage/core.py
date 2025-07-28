@@ -1,9 +1,10 @@
 # backend-fastapi/certificates/storage/core.py
-# Core storage functionality - main operations
+# Core storage functionality - main operations with session support
 
 import logging
 from typing import Dict, Any, List, Optional
 
+from config import settings
 from .crypto_storage import CryptoObjectsStorage
 from .hierarchy import HierarchyManager
 from .pki_bundle import PKIBundleManager
@@ -11,317 +12,496 @@ from .utils import StorageUtils
 
 logger = logging.getLogger(__name__)
 
-# In-memory storage
-uploaded_certificates: List[Dict[str, Any]] = []
-
 class CertificateStorage:
-    """Main certificate storage class with modular components"""
+    """Main certificate storage class with session-aware modular components"""
     
     @staticmethod
-    def get_all() -> List[Dict[str, Any]]:
-        """Get all certificates sorted by PKI hierarchy"""
-        logger.debug(f"=== STORAGE GET_ALL OPERATION ===")
-        logger.debug(f"Storage.get_all() called - returning {len(uploaded_certificates)} certificates")
+    def _validate_session_id(session_id: str):
+        """Validate session ID parameter"""
+        if not session_id or not isinstance(session_id, str):
+            raise ValueError("Invalid session_id provided")
+    
+    @staticmethod
+    def get_all(session_id: str) -> List[Dict[str, Any]]:
+        """Get all certificates for specific session sorted by PKI hierarchy"""
+        CertificateStorage._validate_session_id(session_id)
+        
+        logger.debug(f"=== STORAGE GET_ALL OPERATION [{session_id}] ===")
+        
+        # Get session data from SessionManager
+        from session_manager import SessionManager
+        session_data = SessionManager.get_or_create_session(session_id)
+        certificates = session_data.get("certificates", [])
+        
+        logger.debug(f"[{session_id}] Storage.get_all() called - returning {len(certificates)} certificates")
         
         # Log current unsorted state
-        logger.debug(f"Current unsorted certificates:")
-        for i, cert in enumerate(uploaded_certificates):
+        logger.debug(f"[{session_id}] Current unsorted certificates:")
+        for i, cert in enumerate(certificates):
             analysis = cert.get('analysis', {})
             order = HierarchyManager.get_certificate_order(cert)
             logger.debug(f"  [{i}] {cert.get('filename')} - order: {order} - type: {analysis.get('type')} - hash: {analysis.get('content_hash', 'NO_HASH')[:16]}...")
         
         # Sort certificates by PKI hierarchy order
-        logger.debug(f"Sorting certificates by PKI hierarchy...")
-        sorted_certs = sorted(uploaded_certificates, key=lambda cert: (
+        logger.debug(f"[{session_id}] Sorting certificates by PKI hierarchy...")
+        sorted_certs = sorted(certificates, key=lambda cert: (
             HierarchyManager.get_certificate_order(cert),
             cert.get('filename', '')
         ))
         
         # Log sorted state
-        logger.info(f"Certificate hierarchy order after sorting:")
+        logger.info(f"[{session_id}] Certificate hierarchy order after sorting:")
         for i, cert in enumerate(sorted_certs):
             order = HierarchyManager.get_certificate_order(cert)
             analysis = cert.get('analysis', {})
             logger.info(f"  [{i}] Order {order}: {cert.get('filename')} - {analysis.get('type')}")
         
-        logger.debug(f"Returning {len(sorted_certs)} sorted certificates")
+        logger.debug(f"[{session_id}] Returning {len(sorted_certs)} sorted certificates")
         return sorted_certs
     
     @staticmethod
-    def add(certificate_data: Dict[str, Any]) -> Dict[str, Any]:
+    def add(certificate_data: Dict[str, Any], session_id: str) -> Dict[str, Any]:
         """Add certificate with PKI hierarchy enforcement and auto PKI bundle generation"""
-        logger.debug(f"=== STORAGE ADD WITH HIERARCHY ENFORCEMENT ===")
-        logger.debug(f"Adding certificate: {certificate_data.get('filename')}")
-        logger.debug(f"Certificate ID: {certificate_data.get('id')}")
-        logger.debug(f"Certificate type: {certificate_data.get('analysis', {}).get('type')}")
-        logger.debug(f"Content hash: {certificate_data.get('analysis', {}).get('content_hash', 'NO_HASH')}")
+        CertificateStorage._validate_session_id(session_id)
+        
+        logger.debug(f"=== STORAGE ADD WITH HIERARCHY ENFORCEMENT [{session_id}] ===")
+        logger.debug(f"[{session_id}] Adding certificate: {certificate_data.get('filename')}")
+        
+        # Get session data from SessionManager
+        from session_manager import SessionManager
+        session_data = SessionManager.get_or_create_session(session_id)
+        
+        # Initialize certificates list if it doesn't exist
+        if "certificates" not in session_data:
+            session_data["certificates"] = []
+        certificates = session_data["certificates"]
+        
+        # Log certificate type and analysis
+        analysis = certificate_data.get('analysis', {})
+        logger.debug(f"[{session_id}] Certificate type: {analysis.get('type')}")
+        logger.debug(f"[{session_id}] Certificate valid: {analysis.get('isValid')}")
+        logger.debug(f"[{session_id}] Content hash: {analysis.get('content_hash', 'NO_HASH')[:16]}...")
         
         # Validate certificate data structure
         StorageUtils.validate_certificate_data(certificate_data)
         
         # Check if this certificate should replace an existing one
-        logger.debug(f"Checking if certificate should replace existing one...")
+        logger.debug(f"[{session_id}] Checking if certificate should replace existing one...")
         existing_to_replace = HierarchyManager.should_replace_certificate(
-            certificate_data, uploaded_certificates
+            certificate_data, certificates
         )
         
         result = None
         if existing_to_replace:
-            logger.info(f"REPLACEMENT OPERATION: {existing_to_replace.get('filename')} -> {certificate_data.get('filename')}")
-            result = CertificateStorage.replace(existing_to_replace, certificate_data)
-            logger.info(f"Certificate replacement completed successfully")
+            logger.info(f"[{session_id}] REPLACEMENT OPERATION: {existing_to_replace.get('filename')} -> {certificate_data.get('filename')}")
+            result = CertificateStorage.replace(existing_to_replace, certificate_data, session_id)
+            logger.info(f"[{session_id}] Certificate replacement completed successfully")
         else:
             # Add as new certificate
-            logger.info(f"ADDITION OPERATION: Adding new certificate {certificate_data.get('filename')}")
-            initial_count = len(uploaded_certificates)
-            uploaded_certificates.append(certificate_data)
-            final_count = len(uploaded_certificates)
+            logger.info(f"[{session_id}] ADDITION OPERATION: Adding new certificate {certificate_data.get('filename')}")
+            initial_count = len(certificates)
+            certificates.append(certificate_data)
+            final_count = len(certificates)
             
-            logger.info(f"Certificate added successfully")
-            logger.info(f"Storage count: {initial_count} -> {final_count}")
-            logger.debug(f"Storage state after add:")
-            StorageUtils.log_storage_state(uploaded_certificates)
+            logger.info(f"[{session_id}] Certificate added successfully")
+            logger.info(f"[{session_id}] Storage count: {initial_count} -> {final_count}")
+            logger.debug(f"[{session_id}] Storage state after add:")
+            StorageUtils.log_storage_state(certificates, session_id)
             result = certificate_data
         
-        # Auto-generate PKI bundle after any add/replace operation
-        PKIBundleManager.auto_generate_pki_bundle(uploaded_certificates)
+        # Auto-generate PKI bundle for this session (FIXED: correct parameter order)
+        session_certificates = CertificateStorage.get_all(session_id)
+        PKIBundleManager.auto_generate_pki_bundle(session_id, session_certificates)
         
         return result
     
     @staticmethod
-    def replace(existing_cert: Dict[str, Any], new_cert: Dict[str, Any]) -> Dict[str, Any]:
-        """Replace existing certificate with new one"""
-        logger.info(f"=== STORAGE REPLACE OPERATION ===")
-        existing_filename = existing_cert.get('filename', 'NO_FILENAME')
-        new_filename = new_cert.get('filename', 'NO_FILENAME')
+    def find_by_hash(content_hash: str, session_id: str) -> Optional[Dict[str, Any]]:
+        """Find certificate by content hash within session"""
+        CertificateStorage._validate_session_id(session_id)
         
-        logger.info(f"Replacing certificate: {existing_filename} -> {new_filename}")
+        logger.debug(f"=== STORAGE HASH LOOKUP [{session_id}] ===")
+        logger.debug(f"[{session_id}] Searching for hash: {content_hash[:16]}...")
         
-        existing_hash = existing_cert.get('analysis', {}).get('content_hash', 'NO_HASH')
-        new_hash = new_cert.get('analysis', {}).get('content_hash', 'NO_HASH')
-        logger.debug(f"Content hashes - OLD: {existing_hash[:16]}... NEW: {new_hash[:16]}...")
+        # Get session data from SessionManager
+        from session_manager import SessionManager
+        session_data = SessionManager.get_or_create_session(session_id)
+        certificates = session_data.get("certificates", [])
         
-        # Fix: Ensure we have a valid cert_id before calling remove_crypto_objects
-        existing_cert_id = existing_cert.get('id')
-        if existing_cert_id is not None:
-            # Remove crypto objects for the old certificate
-            CryptoObjectsStorage.remove_crypto_objects(existing_cert_id)
-        else:
-            logger.warning("Existing certificate has no ID, cannot remove crypto objects")
-        
-        result = None
-        # Find and replace
-        for i, cert in enumerate(uploaded_certificates):
-            if cert.get('id') == existing_cert.get('id'):
-                logger.info(f"Found certificate to replace at index {i}")
-                logger.debug(f"Before replace - cert at [{i}]: {cert.get('filename')}")
-                
-                uploaded_certificates[i] = new_cert
-                
-                logger.debug(f"After replace - cert at [{i}]: {uploaded_certificates[i].get('filename')}")
-                logger.info(f"Certificate replaced successfully")
-                logger.debug(f"Storage state after replace:")
-                StorageUtils.log_storage_state(uploaded_certificates)
-                result = new_cert
-                break
-        
-        if result is None:
-            # If not found, just add it
-            logger.warning(f"Original certificate not found for replacement, adding as new")
-            uploaded_certificates.append(new_cert)
-            logger.info(f"Certificate added as new instead of replaced")
-            result = new_cert
-        
-        # Auto-generate PKI bundle after replace operation
-        PKIBundleManager.auto_generate_pki_bundle(uploaded_certificates)
-        
-        return result
-    
-    @staticmethod
-    def find_by_hash(content_hash: str) -> Optional[Dict[str, Any]]:
-        """Find certificate by content hash"""
-        logger.debug(f"=== STORAGE HASH LOOKUP ===")
-        logger.debug(f"Searching for content_hash: {content_hash}")
-        logger.debug(f"Total certificates in storage: {len(uploaded_certificates)}")
-        
-        for i, cert in enumerate(uploaded_certificates):
+        # Check each certificate's hash
+        for i, cert in enumerate(certificates):
             cert_hash = cert.get('analysis', {}).get('content_hash')
             cert_filename = cert.get('filename', 'NO_FILENAME')
-            logger.debug(f"  [{i}] {cert_filename} - hash: {cert_hash}")
+            logger.debug(f"  [{i}] {cert_filename} - hash: {cert_hash[:16] if cert_hash else 'NO_HASH'}...")
             
             if cert_hash == content_hash:
-                logger.info(f"HASH MATCH FOUND: {cert_filename} matches {content_hash[:16]}...")
-                logger.debug(f"Matched certificate details:")
+                logger.info(f"[{session_id}] HASH MATCH FOUND: {cert_filename}")
+                logger.debug(f"[{session_id}] Matched certificate details:")
                 logger.debug(f"  ID: {cert.get('id')}")
                 logger.debug(f"  Filename: {cert.get('filename')}")
                 logger.debug(f"  Type: {cert.get('analysis', {}).get('type')}")
                 logger.debug(f"  Upload time: {cert.get('uploadedAt')}")
                 return cert
         
-        logger.debug(f"No hash match found for: {content_hash[:16]}...")
+        logger.debug(f"[{session_id}] No hash match found for: {content_hash[:16]}...")
         return None
     
     @staticmethod
-    def find_by_id(cert_id: str) -> Optional[Dict[str, Any]]:
-        """Find certificate by ID"""
-        logger.debug(f"=== STORAGE ID LOOKUP ===")
-        logger.debug(f"Searching for ID: {cert_id}")
+    def find_by_id(cert_id: str, session_id: str) -> Optional[Dict[str, Any]]:
+        """Find certificate by ID within session"""
+        CertificateStorage._validate_session_id(session_id)
         
-        for i, cert in enumerate(uploaded_certificates):
+        logger.debug(f"=== STORAGE ID LOOKUP [{session_id}] ===")
+        logger.debug(f"[{session_id}] Searching for ID: {cert_id}")
+        
+        # Get session data from SessionManager
+        from session_manager import SessionManager
+        session_data = SessionManager.get_or_create_session(session_id)
+        certificates = session_data.get("certificates", [])
+        
+        for i, cert in enumerate(certificates):
             cert_id_stored = cert.get('id')
             cert_filename = cert.get('filename', 'NO_FILENAME')
             logger.debug(f"  [{i}] {cert_filename} - ID: {cert_id_stored}")
             
             if cert_id_stored == cert_id:
-                logger.info(f"ID MATCH FOUND: {cert_filename}")
+                logger.info(f"[{session_id}] ID MATCH FOUND: {cert_filename}")
                 return cert
         
-        logger.debug(f"No ID match found for: {cert_id}")
+        logger.debug(f"[{session_id}] No ID match found for: {cert_id}")
         return None
     
     @staticmethod
-    def remove_by_id(cert_id: str) -> bool:
+    def remove_by_id(cert_id: str, session_id: str) -> bool:
         """Remove certificate by ID with crypto objects cleanup"""
-        logger.info(f"=== STORAGE REMOVE OPERATION ===")
-        logger.info(f"Removing certificate with ID: {cert_id}")
+        CertificateStorage._validate_session_id(session_id)
         
-        # Remove crypto objects first
-        CryptoObjectsStorage.remove_crypto_objects(cert_id)
+        logger.info(f"=== STORAGE REMOVE OPERATION [{session_id}] ===")
+        logger.info(f"[{session_id}] Removing certificate with ID: {cert_id}")
         
-        global uploaded_certificates
-        initial_count = len(uploaded_certificates)
+        # Remove crypto objects first (session-aware)
+        CryptoObjectsStorage.remove_crypto_objects(cert_id, session_id)
+        
+        # Get session data from SessionManager
+        from session_manager import SessionManager
+        session_data = SessionManager.get_or_create_session(session_id)
+        certificates = session_data.get("certificates", [])
+        
+        initial_count = len(certificates)
         
         # Find the certificate to remove
         cert_to_remove = None
-        for cert in uploaded_certificates:
+        for cert in certificates:
             if cert.get('id') == cert_id:
                 cert_to_remove = cert
                 break
         
         if cert_to_remove:
-            logger.info(f"Found certificate to remove: {cert_to_remove.get('filename')}")
-            logger.debug(f"Certificate details:")
+            logger.info(f"[{session_id}] Found certificate to remove: {cert_to_remove.get('filename')}")
+            logger.debug(f"[{session_id}] Certificate details:")
             logger.debug(f"  Type: {cert_to_remove.get('analysis', {}).get('type')}")
             logger.debug(f"  Hash: {cert_to_remove.get('analysis', {}).get('content_hash', 'NO_HASH')[:16]}...")
         else:
-            logger.warning(f"Certificate with ID {cert_id} not found for removal")
+            logger.warning(f"[{session_id}] Certificate with ID {cert_id} not found for removal")
         
-        # Remove the certificate
-        uploaded_certificates = [cert for cert in uploaded_certificates if cert.get('id') != cert_id]
-        final_count = len(uploaded_certificates)
+        # Remove the certificate from session storage
+        certificates[:] = [cert for cert in certificates if cert.get('id') != cert_id]
+        final_count = len(certificates)
         success = final_count < initial_count
         
-        logger.info(f"Remove operation result: {'SUCCESS' if success else 'FAILED'}")
-        logger.info(f"Storage count: {initial_count} -> {final_count}")
+        logger.info(f"[{session_id}] Remove operation result: {'SUCCESS' if success else 'FAILED'}")
+        logger.info(f"[{session_id}] Storage count: {initial_count} -> {final_count}")
         
         if success:
-            logger.debug(f"Storage state after removal:")
-            StorageUtils.log_storage_state(uploaded_certificates)
-            # Auto-generate PKI bundle after removal
-            PKIBundleManager.auto_generate_pki_bundle(uploaded_certificates)
+            logger.debug(f"[{session_id}] Storage state after removal:")
+            StorageUtils.log_storage_state(certificates, session_id)
+            # Auto-generate PKI bundle after removal (FIXED: correct parameter order)
+            session_certificates = CertificateStorage.get_all(session_id)
+            PKIBundleManager.auto_generate_pki_bundle(session_id, session_certificates)
         
         return success
     
     @staticmethod
-    def clear_all() -> bool:
-        """Clear all certificates, crypto objects, and PKI bundle"""
-        logger.info(f"=== STORAGE CLEAR ALL OPERATION ===")
+    def remove(cert_id: str, session_id: str) -> bool:
+        """Remove certificate from session storage (alias for remove_by_id)"""
+        return CertificateStorage.remove_by_id(cert_id, session_id)
+    
+    @staticmethod
+    def replace(existing_cert: Dict[str, Any], new_cert: Dict[str, Any], session_id: str) -> Dict[str, Any]:
+        """Replace existing certificate with new one in session"""
+        CertificateStorage._validate_session_id(session_id)
         
-        # Clear crypto objects first
-        CryptoObjectsStorage.clear_all_crypto_objects()
+        logger.info(f"=== STORAGE REPLACE OPERATION [{session_id}] ===")
+        logger.info(f"[{session_id}] Replacing {existing_cert.get('filename')} with {new_cert.get('filename')}")
         
-        global uploaded_certificates
-        count = len(uploaded_certificates)
+        # Get session data from SessionManager
+        from session_manager import SessionManager
+        session_data = SessionManager.get_or_create_session(session_id)
+        certificates = session_data.get("certificates", [])
         
-        logger.info(f"Clearing {count} certificates from storage")
-        for i, cert in enumerate(uploaded_certificates):
+        existing_hash = existing_cert.get('analysis', {}).get('content_hash', 'NO_HASH')
+        new_hash = new_cert.get('analysis', {}).get('content_hash', 'NO_HASH')
+        logger.debug(f"[{session_id}] Content hashes - OLD: {existing_hash[:16]}... NEW: {new_hash[:16]}...")
+        
+        # Remove crypto objects for the old certificate (session-aware)
+        old_cert_id = existing_cert.get('id')
+        if old_cert_id:
+            CryptoObjectsStorage.remove_crypto_objects(old_cert_id, session_id)
+        
+        result = None
+        # Find and replace the certificate
+        for i, cert in enumerate(certificates):
+            if cert.get('id') == existing_cert.get('id'):
+                logger.info(f"[{session_id}] Found certificate to replace at index {i}")
+                logger.debug(f"[{session_id}] Before replace - cert at [{i}]: {cert.get('filename')}")
+                
+                certificates[i] = new_cert
+                
+                logger.debug(f"[{session_id}] After replace - cert at [{i}]: {certificates[i].get('filename')}")
+                logger.info(f"[{session_id}] Certificate replaced successfully")
+                logger.debug(f"[{session_id}] Storage state after replace:")
+                StorageUtils.log_storage_state(certificates, session_id)
+                result = new_cert
+                break
+        
+        if result is None:
+            # If not found, just add it
+            logger.warning(f"[{session_id}] Original certificate not found for replacement, adding as new")
+            certificates.append(new_cert)
+            logger.info(f"[{session_id}] Certificate added as new instead of replaced")
+            result = new_cert
+        
+        # Auto-generate PKI bundle after replace operation (FIXED: correct parameter order)
+        session_certificates = CertificateStorage.get_all(session_id)
+        PKIBundleManager.auto_generate_pki_bundle(session_id, session_certificates)
+        
+        return result
+    
+    @staticmethod
+    def clear_all(session_id: str) -> bool:
+        """Clear all certificates, crypto objects, and PKI bundle for session"""
+        CertificateStorage._validate_session_id(session_id)
+        
+        logger.info(f"=== STORAGE CLEAR ALL OPERATION [{session_id}] ===")
+        
+        # Get session data from SessionManager
+        from session_manager import SessionManager
+        session_data = SessionManager.get_or_create_session(session_id)
+        certificates = session_data.get("certificates", [])
+        
+        count = len(certificates)
+        
+        logger.info(f"[{session_id}] Clearing {count} certificates from session storage")
+        for i, cert in enumerate(certificates):
             logger.debug(f"  Clearing [{i}]: {cert.get('filename')} - {cert.get('analysis', {}).get('type')}")
+            # Remove crypto objects for each certificate (session-aware)
+            cert_id = cert.get('id')
+            if cert_id:
+                CryptoObjectsStorage.remove_crypto_objects(cert_id, session_id)
         
-        uploaded_certificates = []
+        # Clear certificates from session
+        certificates.clear()
         
-        # Clear PKI bundle
-        PKIBundleManager.clear_pki_bundle()
+        # Clear PKI bundle (session-aware)
+        PKIBundleManager.clear_pki_bundle(session_id)
         
-        logger.info(f"All certificates, crypto objects, and PKI bundle cleared successfully")
-        logger.debug(f"Storage is now empty: {len(uploaded_certificates)} certificates")
+        logger.info(f"[{session_id}] All certificates, crypto objects, and PKI bundle cleared successfully")
+        logger.debug(f"[{session_id}] Session storage is now empty: {len(certificates)} certificates")
         return True
     
     @staticmethod
-    def count() -> int:
-        """Get count of certificates"""
-        count = len(uploaded_certificates)
-        logger.debug(f"Storage count requested: {count} certificates")
+    def count(session_id: str) -> int:
+        """Get count of certificates in session"""
+        CertificateStorage._validate_session_id(session_id)
+        
+        # Get session data from SessionManager
+        from session_manager import SessionManager
+        session_data = SessionManager.get_or_create_session(session_id)
+        certificates = session_data.get("certificates", [])
+        
+        count = len(certificates)
+        logger.debug(f"[{session_id}] Storage count requested: {count} certificates")
         return count
     
     @staticmethod
-    def get_summary() -> Dict[str, Any]:
-        """Get storage summary"""
-        logger.debug(f"=== STORAGE SUMMARY GENERATION ===")
-        total = len(uploaded_certificates)
-        valid_count = sum(1 for cert in uploaded_certificates 
+    def get_summary(session_id: str) -> Dict[str, Any]:
+        """Get storage summary for session"""
+        CertificateStorage._validate_session_id(session_id)
+        
+        logger.debug(f"=== STORAGE SUMMARY GENERATION [{session_id}] ===")
+        
+        # Get session data from SessionManager
+        from session_manager import SessionManager
+        session_data = SessionManager.get_or_create_session(session_id)
+        certificates = session_data.get("certificates", [])
+        
+        total = len(certificates)
+        valid_count = sum(1 for cert in certificates 
                          if cert.get('analysis', {}).get('isValid', False))
         
         types = {}
         orders = {}
-        for cert in uploaded_certificates:
+        for cert in certificates:
             cert_type = cert.get('analysis', {}).get('type', 'Unknown')
             cert_order = HierarchyManager.get_certificate_order(cert)
+            
             types[cert_type] = types.get(cert_type, 0) + 1
             orders[cert_order] = orders.get(cert_order, 0) + 1
         
-        # Add crypto objects info
-        crypto_count = CryptoObjectsStorage.get_crypto_objects_count()
+        # Add crypto objects info (session-aware)
+        crypto_count = CryptoObjectsStorage.get_crypto_objects_count(session_id)
         
         summary = {
             "total": total,
             "valid": valid_count,
             "invalid": total - valid_count,
             "types": types,
-            "hierarchy_distribution": orders,
+            "hierarchy_orders": orders,
             "crypto_objects_stored": crypto_count,
-            "has_pki_bundle": PKIBundleManager.has_pki_bundle()
+            "has_pki_bundle": PKIBundleManager.has_pki_bundle(session_id),
+            "session_id": session_id
         }
         
-        logger.debug(f"Storage summary:")
-        logger.debug(f"  Total: {summary['total']}")
-        logger.debug(f"  Valid: {summary['valid']}")
-        logger.debug(f"  Invalid: {summary['invalid']}")
-        logger.debug(f"  Types: {summary['types']}")
-        logger.debug(f"  Hierarchy distribution: {summary['hierarchy_distribution']}")
-        logger.debug(f"  Crypto objects stored: {summary['crypto_objects_stored']}")
-        logger.debug(f"  Has PKI bundle: {summary['has_pki_bundle']}")
-        
+        logger.debug(f"[{session_id}] Storage summary: {summary}")
         return summary
     
-    # Delegate crypto operations to CryptoObjectsStorage
     @staticmethod
-    def store_crypto_objects(cert_id: str, crypto_objects: Dict[str, Any]):
-        """Store cryptographic objects separately"""
-        CryptoObjectsStorage.store_crypto_objects(cert_id, crypto_objects)
+    def store_crypto_objects(cert_id: str, crypto_objects: Dict[str, Any], session_id: str):
+        """Store cryptographic objects for certificate in session"""
+        CertificateStorage._validate_session_id(session_id)
+        CryptoObjectsStorage.store_crypto_objects(cert_id, crypto_objects, session_id)
     
     @staticmethod
-    def get_crypto_objects(cert_id: str) -> Dict[str, Any]:
-        """Retrieve cryptographic objects for validation"""
-        return CryptoObjectsStorage.get_crypto_objects(cert_id)
-    
-    # Delegate PKI bundle operations to PKIBundleManager
-    @staticmethod
-    def get_pki_bundle() -> Dict[str, Any]:
-        """Get the current PKI bundle"""
-        return PKIBundleManager.get_pki_bundle()
+    def get_crypto_objects(cert_id: str, session_id: str) -> Dict[str, Any]:
+        """Get cryptographic objects for certificate from session"""
+        CertificateStorage._validate_session_id(session_id)
+        return CryptoObjectsStorage.get_crypto_objects(cert_id, session_id)
     
     @staticmethod
-    def has_pki_bundle() -> bool:
-        """Check if PKI bundle exists"""
-        return PKIBundleManager.has_pki_bundle()
+    def has_crypto_objects(cert_id: str, session_id: str) -> bool:
+        """Check if crypto objects exist for certificate in session"""
+        CertificateStorage._validate_session_id(session_id)
+        return CryptoObjectsStorage.has_crypto_objects(cert_id, session_id)
+    
+    @staticmethod
+    def remove_crypto_objects(cert_id: str, session_id: str) -> bool:
+        """Remove crypto objects for certificate from session"""
+        CertificateStorage._validate_session_id(session_id)
+        return CryptoObjectsStorage.remove_crypto_objects(cert_id, session_id)
+    
+    @staticmethod
+    def clear_all_crypto_objects(session_id: str):
+        """Clear all crypto objects from session"""
+        CertificateStorage._validate_session_id(session_id)
+        return CryptoObjectsStorage.clear_crypto_objects(session_id)
+    
+    @staticmethod
+    def get_crypto_objects_debug(session_id: str) -> Dict[str, Any]:
+        """Get debug info for crypto objects in session"""
+        CertificateStorage._validate_session_id(session_id)
+        return CryptoObjectsStorage.debug_crypto_objects(session_id)
+    
+    # Delegate PKI bundle operations to PKIBundleManager (session-aware)
+    @staticmethod
+    def get_pki_bundle(session_id: str) -> Dict[str, Any]:
+        """Get the current PKI bundle for session"""
+        CertificateStorage._validate_session_id(session_id)
+        return PKIBundleManager.get_pki_bundle(session_id)
+    
+    @staticmethod
+    def has_pki_bundle(session_id: str) -> bool:
+        """Check if PKI bundle exists for session"""
+        CertificateStorage._validate_session_id(session_id)
+        return PKIBundleManager.has_pki_bundle(session_id)
     
     # Delegate debug operations to StorageUtils
     @staticmethod
-    def debug_hierarchy_enforcement(filename: str):
+    def debug_hierarchy_enforcement(session_id: str, filename: str):
         """Debug helper for hierarchy enforcement issues"""
-        StorageUtils.debug_hierarchy_enforcement(uploaded_certificates, filename)
+        CertificateStorage._validate_session_id(session_id)
+        
+        # Get session data from SessionManager
+        from session_manager import SessionManager
+        session_data = SessionManager.get_or_create_session(session_id)
+        certificates = session_data.get("certificates", [])
+        
+        StorageUtils.debug_hierarchy_enforcement(certificates, filename, session_id)
     
     @staticmethod
-    def debug_crypto_objects():
+    def debug_crypto_objects(session_id: str):
         """Debug helper for crypto objects storage"""
-        CryptoObjectsStorage.debug_crypto_objects()
+        CertificateStorage._validate_session_id(session_id)
+        return CryptoObjectsStorage.debug_crypto_objects(session_id)
+    
+    # Backward compatibility methods (deprecated - will be removed)
+    @staticmethod
+    def get_all_legacy() -> List[Dict[str, Any]]:
+        """Legacy method - deprecated, use get_all(session_id) instead"""
+        logger.warning("get_all_legacy() called - this method is deprecated")
+        # For backward compatibility, create a default session
+        default_session = settings.DEFAULT_SESSION_ID
+        return CertificateStorage.get_all(default_session)
+    
+    @staticmethod
+    def add_legacy(certificate_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Legacy method - deprecated, use add(certificate_data, session_id) instead"""
+        logger.warning("add_legacy() called - this method is deprecated")
+        # For backward compatibility, create a default session
+        default_session = settings.DEFAULT_SESSION_ID
+        return CertificateStorage.add(certificate_data, default_session)
+    
+    @staticmethod
+    def find_by_hash_legacy(content_hash: str) -> Optional[Dict[str, Any]]:
+        """Legacy method - deprecated, use find_by_hash(content_hash, session_id) instead"""
+        logger.warning("find_by_hash_legacy() called - this method is deprecated")
+        # For backward compatibility, create a default session
+        default_session = settings.DEFAULT_SESSION_ID
+        return CertificateStorage.find_by_hash(content_hash, default_session)
+    
+    @staticmethod
+    def find_by_id_legacy(cert_id: str) -> Optional[Dict[str, Any]]:
+        """Legacy method - deprecated, use find_by_id(cert_id, session_id) instead"""
+        logger.warning("find_by_id_legacy() called - this method is deprecated")
+        # For backward compatibility, create a default session
+        default_session = settings.DEFAULT_SESSION_ID
+        return CertificateStorage.find_by_id(cert_id, default_session)
+    
+    @staticmethod
+    def replace_legacy(existing_cert: Dict[str, Any], new_cert: Dict[str, Any]) -> Dict[str, Any]:
+        """Legacy method - deprecated, use replace(existing_cert, new_cert, session_id) instead"""
+        logger.warning("replace_legacy() called - this method is deprecated")
+        # For backward compatibility, create a default session
+        default_session = settings.DEFAULT_SESSION_ID
+        return CertificateStorage.replace(existing_cert, new_cert, default_session)
+    
+    @staticmethod
+    def remove_by_id_legacy(cert_id: str) -> bool:
+        """Legacy method - deprecated, use remove_by_id(cert_id, session_id) instead"""
+        logger.warning("remove_by_id_legacy() called - this method is deprecated")
+        # For backward compatibility, create a default session
+        default_session = settings.DEFAULT_SESSION_ID
+        return CertificateStorage.remove_by_id(cert_id, default_session)
+    
+    @staticmethod
+    def clear_all_legacy() -> bool:
+        """Legacy method - deprecated, use clear_all(session_id) instead"""
+        logger.warning("clear_all_legacy() called - this method is deprecated")
+        # For backward compatibility, create a default session
+        default_session = settings.DEFAULT_SESSION_ID
+        return CertificateStorage.clear_all(default_session)
+    
+    @staticmethod
+    def count_legacy() -> int:
+        """Legacy method - deprecated, use count(session_id) instead"""
+        logger.warning("count_legacy() called - this method is deprecated")
+        # For backward compatibility, create a default session
+        default_session = settings.DEFAULT_SESSION_ID
+        return CertificateStorage.count(default_session)
+    
+    @staticmethod
+    def get_summary_legacy() -> Dict[str, Any]:
+        """Legacy method - deprecated, use get_summary(session_id) instead"""
+        logger.warning("get_summary_legacy() called - this method is deprecated")
+        # For backward compatibility, create a default session
+        default_session = settings.DEFAULT_SESSION_ID
+        return CertificateStorage.get_summary(default_session)

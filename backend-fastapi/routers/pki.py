@@ -3,22 +3,23 @@
 
 import datetime
 import logging
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import JSONResponse
+from certificates.storage import CertificateStorage
+from certificates.storage.pki_bundle import PKIBundleManager
+from middleware.session_middleware import get_session_id
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 @router.get("/pki-bundle", tags=["pki"])
-def get_pki_bundle():
+def get_pki_bundle(session_id: str = Depends(get_session_id)):
     """Get current PKI bundle - regenerates automatically if needed"""
-    from certificates.storage import CertificateStorage
-    from certificates.storage.pki_bundle import PKIBundleManager
-    
+
     try:
         # Always get the latest certificates from storage
-        all_certificates = CertificateStorage.get_all()
+        all_certificates = CertificateStorage.get_all(session_id)
         
         if not all_certificates:
             return {
@@ -29,11 +30,11 @@ def get_pki_bundle():
         
         # Force regeneration to ensure bundle includes ALL current certificates
         logger.info(f"Forcing PKI bundle regeneration for {len(all_certificates)} certificates")
-        PKIBundleManager.auto_generate_pki_bundle(all_certificates)
+        PKIBundleManager.auto_generate_pki_bundle(session_id, all_certificates)
         
         # Get the freshly generated bundle
-        bundle = PKIBundleManager.get_pki_bundle()
-        has_bundle = PKIBundleManager.has_pki_bundle()
+        bundle = PKIBundleManager.get_pki_bundle(session_id)
+        has_bundle = PKIBundleManager.has_pki_bundle(session_id)
         
         if not has_bundle or not bundle:
             return {
@@ -60,14 +61,12 @@ def get_pki_bundle():
         )
 
 @router.get("/pki-bundle/download", tags=["pki"])
-def download_pki_bundle():
+def download_pki_bundle(session_id: str = Depends(get_session_id)):
     """Download PKI bundle as JSON file"""
-    from certificates.storage import CertificateStorage
-    from certificates.storage.pki_bundle import PKIBundleManager
     
     try:
         # Always get the latest certificates from storage
-        all_certificates = CertificateStorage.get_all()
+        all_certificates = CertificateStorage.get_all(session_id)
         
         if not all_certificates:
             raise HTTPException(
@@ -76,10 +75,10 @@ def download_pki_bundle():
             )
         
         # Force regeneration to ensure bundle includes ALL current certificates
-        PKIBundleManager.auto_generate_pki_bundle(all_certificates)
+        PKIBundleManager.auto_generate_pki_bundle(session_id, all_certificates)
         
         # Get the freshly generated bundle
-        bundle = PKIBundleManager.get_pki_bundle()
+        bundle = PKIBundleManager.get_pki_bundle(session_id)
         
         if not bundle:
             raise HTTPException(
@@ -107,12 +106,11 @@ def download_pki_bundle():
         )
 
 @router.get("/pki-bundle/validation", tags=["pki"])
-def validate_pki_bundle():
+def validate_pki_bundle(session_id: str = Depends(get_session_id)):
     """Validate PKI bundle completeness"""
-    from certificates.storage.pki_bundle import PKIBundleManager
     
     try:
-        validation = PKIBundleManager.validate_pki_bundle()
+        validation = PKIBundleManager.validate_pki_bundle(session_id)
         
         return {
             "success": True,

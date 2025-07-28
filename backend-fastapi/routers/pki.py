@@ -8,13 +8,17 @@ from fastapi.responses import JSONResponse
 from certificates.storage import CertificateStorage
 from certificates.storage.pki_bundle import PKIBundleManager
 from middleware.session_middleware import get_session_id
+from auth.dependencies import get_current_user
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 @router.get("/pki-bundle", tags=["pki"])
-def get_pki_bundle(session_id: str = Depends(get_session_id)):
+def get_pki_bundle(
+    session_id: str = Depends(get_session_id),
+    current_user: str = Depends(get_current_user)  # Add admin authentication
+):
     """Get current PKI bundle - regenerates automatically if needed"""
 
     try:
@@ -29,7 +33,7 @@ def get_pki_bundle(session_id: str = Depends(get_session_id)):
             }
         
         # Force regeneration to ensure bundle includes ALL current certificates
-        logger.info(f"Forcing PKI bundle regeneration for {len(all_certificates)} certificates")
+        logger.info(f"[{session_id}] Admin {current_user} forcing PKI bundle regeneration for {len(all_certificates)} certificates")
         PKIBundleManager.auto_generate_pki_bundle(session_id, all_certificates)
         
         # Get the freshly generated bundle
@@ -43,16 +47,20 @@ def get_pki_bundle(session_id: str = Depends(get_session_id)):
                 "bundle": None
             }
         
-        logger.info(f"PKI bundle retrieved with {len(bundle.get('components', []))} components")
+        logger.info(f"[{session_id}] Admin {current_user} retrieved PKI bundle with {len(bundle.get('components', []))} components")
         
         return {
             "success": True,
             "bundle": bundle,
-            "timestamp": datetime.datetime.now().isoformat()
+            "timestamp": datetime.datetime.now().isoformat(),
+            "session_info": {
+                "has_bundle": has_bundle,
+                "component_count": len(bundle.get('components', []))
+            }
         }
         
     except Exception as e:
-        logger.error(f"PKI bundle fetch error: {e}")
+        logger.error(f"[{session_id}] PKI bundle fetch error for admin {current_user}: {e}")
         import traceback
         logger.error(f"Full traceback: {traceback.format_exc()}")
         raise HTTPException(
@@ -61,7 +69,10 @@ def get_pki_bundle(session_id: str = Depends(get_session_id)):
         )
 
 @router.get("/pki-bundle/download", tags=["pki"])
-def download_pki_bundle(session_id: str = Depends(get_session_id)):
+def download_pki_bundle(
+    session_id: str = Depends(get_session_id),
+    current_user: str = Depends(get_current_user)  # Add admin authentication
+):
     """Download PKI bundle as JSON file"""
     
     try:
@@ -86,7 +97,7 @@ def download_pki_bundle(session_id: str = Depends(get_session_id)):
                 detail="Failed to generate PKI bundle from uploaded certificates."
             )
         
-        logger.info(f"PKI bundle download: {len(bundle.get('components', []))} components")
+        logger.info(f"[{session_id}] Admin {current_user} downloaded PKI bundle with {len(bundle.get('components', []))} components")
         
         # Return the bundle as a downloadable JSON response
         return JSONResponse(
@@ -96,8 +107,10 @@ def download_pki_bundle(session_id: str = Depends(get_session_id)):
             }
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"PKI bundle download error: {e}")
+        logger.error(f"[{session_id}] PKI bundle download error for admin {current_user}: {e}")
         import traceback
         logger.error(f"Full traceback: {traceback.format_exc()}")
         raise HTTPException(

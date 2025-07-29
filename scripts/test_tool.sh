@@ -20,6 +20,9 @@ API_BASE_URL="http://vercingetorix1.danielf.local"
 API_USERNAME="admin"
 API_PASSWORD="admin123"
 
+# CA filter for certificate tests
+CA_FILTER="IssuingCA1"  # Default filter, can be overridden by command-line argument
+
 # Test Statistics
 TOTAL_TESTS=0
 PASSED_TESTS=0
@@ -47,6 +50,7 @@ show_help() {
     echo "  --api-username USER   API username (default: admin)"
     echo "  --api-password PASS   API password (default: admin123)"
     echo "  --password PASS       Certificate password (default: changeme123)"
+    echo "  --ca CA_FILTER        Filter for CA certificates (default: IssuingCA1), all for all certificates"
     echo ""
     exit 0
 }
@@ -81,6 +85,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --password)
             PASSWORD="$2"
+            shift 2
+            ;;
+        --ca)
+            CA_FILTER="$2"
             shift 2
             ;;
         *)
@@ -743,6 +751,201 @@ test_concurrent_access() {
     fi
 }
 
+test_certificate_types_and_validation() {
+    
+    if [ "$CA_FILTER" = "all" ]; then
+        echo -e "${YELLOW}Testing certificates, keys, and CSRs from all CAs...${NC}"
+        local cert_files=($(find "$CERT_DIR" -name "*" \( -name "*.crt.pem" -o -name "*.crt.der" -o -name "*.p12" -o -name "*.p7b" -o -name "*.p7c" -o -name "*.key.pem" -o -name "*.key.nopass.pem" -o -name "*.key.der" -o -name "*.key.nopass.der" -o -name "*.key.p8" -o -name "*.key.nopass.p8" -o -name "*.csr.pem" -o -name "*.csr.der" \)))
+    else
+        echo -e "${YELLOW}Testing certificates, keys, and CSRs from $CA_FILTER...${NC}"
+        local cert_files=($(find "$CERT_DIR" -name "*${CA_FILTER}*" \( -name "*.crt.pem" -o -name "*.crt.der" -o -name "*.p12" -o -name "*.p7b" -o -name "*.p7c" -o -name "*.key.pem" -o -name "*.key.nopass.pem" -o -name "*.key.der" -o -name "*.key.nopass.der" -o -name "*.key.p8" -o -name "*.key.nopass.p8" -o -name "*.csr.pem" -o -name "*.csr.der" \)))
+    fi
+    
+    local token=$(get_auth_token)
+    if [ -z "$token" ]; then
+        log_test "Certificate Types Test" "FAIL" "Authentication failed"
+        return
+    fi
+    
+    if [ ${#cert_files[@]} -eq 0 ]; then
+        log_test "Certificate Types Test" "SKIP" "No certificates, keys, or CSRs found for $CA_FILTER in $CERT_DIR"
+        return
+    fi
+    
+    echo "  Found ${#cert_files[@]} files for $CA_FILTER:"
+    for cert_file in "${cert_files[@]}"; do
+        echo "    $(basename "$cert_file")"
+    done
+    echo ""
+    
+    local session_id=$(generate_session_id)
+    
+    # Test each file
+    for cert_file in "${cert_files[@]}"; do
+        if [ -f "$cert_file" ]; then
+            local cert_type=$(detect_certificate_type "$cert_file")
+            test_single_certificate "$cert_file" "$session_id" "$token" "$cert_type"
+        fi
+    done
+}
+
+# Test individual certificate with APPLICATION
+test_single_certificate() {
+    local cert_file="$1"
+    local session_id="$2" 
+    local token="$3"
+    local cert_type="$4"
+    
+    local filename=$(basename "$cert_file")
+    echo "    Testing $cert_type: $filename"
+    
+    # Upload to APPLICATION
+    local response=$(curl -s -X POST "$API_BASE_URL/api/analyze-certificate" \
+        -H "Authorization: Bearer $token" \
+        -H "X-Session-ID: $session_id" \
+        -F "certificate=@$cert_file" \
+        -F "password=$PASSWORD" \
+        -w "%{http_code}" \
+        --connect-timeout 30 2>/dev/null)
+    
+    local http_code="${response: -3}"
+    local response_body="${response%???}"
+    
+    # Save APPLICATION response
+    local cert_log="$TEST_OUTPUT_DIR/cert_${cert_type}_${filename//[^a-zA-Z0-9]/_}.log"
+    echo "API Response (HTTP $http_code):" > "$cert_log"
+    echo "$response_body" >> "$cert_log"
+    
+    # Parse JSON properly using python3
+    local success=$(echo "$response_body" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    print(data.get('success', 'unknown'))
+except:
+    print('parse_error')
+" 2>/dev/null)
+    
+    local is_valid=$(echo "$response_body" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    cert = data.get('certificate', {})
+    analysis = cert.get('analysis', {})
+    print(analysis.get('isValid', 'unknown'))
+except:
+    print('parse_error')
+" 2>/dev/null)
+    
+    local requires_password=$(echo "$response_body" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    print(data.get('requiresPassword', 'unknown'))
+except:
+    print('parse_error')
+" 2>/dev/null)
+    
+    local message=$(echo "$response_body" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    print(data.get('message', ''))
+except:
+    print('parse_error')
+" 2>/dev/null)
+    
+    # Analyze APPLICATION response content
+    case "$http_code" in
+        "200"|"201")
+            if [ "$success" = "True" ] && [ "$is_valid" = "True" ]; then
+                local cert_details=$(extract_certificate_details "$response_body")
+                log_test "Certificate Types/$cert_type/$filename" "PASS" "APPLICATION processed successfully. $cert_details. See $cert_log"
+            elif [ "$success" = "False" ] && [ "$requires_password" = "True" ]; then
+                log_test "Certificate Types/$cert_type/$filename" "INFO" "PASSWORD REQUIRED: $message. See $cert_log"
+            elif [ "$success" = "False" ]; then
+                log_test "Certificate Types/$cert_type/$filename" "FAIL" "APPLICATION rejected: $message. See $cert_log"
+            else
+                log_test "Certificate Types/$cert_type/$filename" "FAIL" "APPLICATION returned unclear response (success=$success, isValid=$is_valid). See $cert_log"
+            fi
+            ;;
+        "400"|"422")
+            log_test "Certificate Types/$cert_type/$filename" "FAIL" "APPLICATION rejected (HTTP $http_code). See $cert_log"
+            ;;
+        *)
+            log_test "Certificate Types/$cert_type/$filename" "FAIL" "APPLICATION error (HTTP $http_code). See $cert_log"
+            ;;
+    esac
+}
+
+# Detect certificate/key/CSR type by filename
+detect_certificate_type() {
+    local cert_file="$1"
+    local filename=$(basename "$cert_file")
+    
+    case "$filename" in
+        *.crt.pem)
+            echo "PEM_CERT"
+            ;;
+        *.crt.der)
+            echo "DER_CERT"
+            ;;
+        *.p12)
+            echo "PKCS12"
+            ;;
+        *.p7b)
+            echo "PKCS7"
+            ;;
+        *.p7c)
+            echo "PKCS7"
+            ;;
+        *.key.pem)
+            echo "PEM_KEY"
+            ;;
+        *.key.nopass.pem)
+            echo "PEM_KEY_NOPASS"
+            ;;
+        *.key.der)
+            echo "DER_KEY"
+            ;;
+        *.key.nopass.der)
+            echo "DER_KEY_NOPASS"
+            ;;
+        *.key.p8)
+            echo "PKCS8_KEY"
+            ;;
+        *.key.nopass.p8)
+            echo "PKCS8_KEY_NOPASS"
+            ;;
+        *.csr.pem)
+            echo "PEM_CSR"
+            ;;
+        *.csr.der)
+            echo "DER_CSR"
+            ;;
+        *)
+            echo "UNKNOWN"
+            ;;
+    esac
+}
+
+# Extract useful details from API response
+extract_certificate_details() {
+    local response="$1"
+    
+    # Try to extract key information using simple parsing
+    local subject=$(echo "$response" | grep -o '"subject":"[^"]*"' | cut -d'"' -f4 | head -1)
+    local expiry=$(echo "$response" | grep -o '"expires":"[^"]*"' | cut -d'"' -f4 | head -1)
+    local issuer=$(echo "$response" | grep -o '"issuer":"[^"]*"' | cut -d'"' -f4 | head -1)
+    
+    local details=""
+    [ -n "$subject" ] && details="Subject: $subject"
+    [ -n "$expiry" ] && details="$details, Expires: $expiry"
+    [ -n "$issuer" ] && details="$details, Issuer: $issuer"
+    
+    echo "$details"
+}
+
 # Generate comprehensive summary
 generate_summary() {
     echo ""
@@ -774,11 +977,34 @@ generate_summary() {
     echo -e "   Certificates Endpoint: /api/certificates"
     echo ""
     
-    # Certificate Files
-    echo -e "${YELLOW}📋 CERTIFICATE FILES${NC}"
-    local cert_count=$(find "$CERT_DIR" -name "*.crt.pem" 2>/dev/null | wc -l)
-    echo -e "   PEM Certificates Found: ${BLUE}$cert_count${NC}"
-    echo -e "   Certificate Directory: ${BLUE}$CERT_DIR${NC}"
+    # Certificate Files Found (using filter)
+    echo -e "${YELLOW}📋 CERTIFICATE FILES TESTED${NC}"
+    if [ "$CA_FILTER" = "all" ]; then
+        local filter_pattern="*"
+    else
+        local filter_pattern="*${CA_FILTER}*"
+    fi
+    
+    local pem_certs=($(find "$CERT_DIR" -name "$filter_pattern" -name "*.crt.pem"))
+    local der_certs=($(find "$CERT_DIR" -name "$filter_pattern" -name "*.crt.der"))
+    local pkcs12_certs=($(find "$CERT_DIR" -name "$filter_pattern" -name "*.p12"))
+    local pkcs7_certs=($(find "$CERT_DIR" -name "$filter_pattern" \( -name "*.p7b" -o -name "*.p7c" \)))
+    local pem_keys=($(find "$CERT_DIR" -name "$filter_pattern" \( -name "*.key.pem" -o -name "*.key.nopass.pem" \)))
+    local der_keys=($(find "$CERT_DIR" -name "$filter_pattern" \( -name "*.key.der" -o -name "*.key.nopass.der" \)))
+    local pkcs8_keys=($(find "$CERT_DIR" -name "$filter_pattern" \( -name "*.key.p8" -o -name "*.key.nopass.p8" \)))
+    local pem_csrs=($(find "$CERT_DIR" -name "$filter_pattern" -name "*.csr.pem"))
+    local der_csrs=($(find "$CERT_DIR" -name "$filter_pattern" -name "*.csr.der"))
+    
+    echo -e "   PEM Certificates Found:        ${#pem_certs[@]}"
+    echo -e "   DER Certificates Found:        ${#der_certs[@]}"
+    echo -e "   PKCS#12 Files Found:           ${#pkcs12_certs[@]}"
+    echo -e "   PKCS#7 Files Found:            ${#pkcs7_certs[@]}"
+    echo -e "   PEM Private Keys Found:        ${#pem_keys[@]}"
+    echo -e "   DER Private Keys Found:        ${#der_keys[@]}"
+    echo -e "   PKCS#8 Private Keys Found:     ${#pkcs8_keys[@]}"
+    echo -e "   PEM CSRs Found:                ${#pem_csrs[@]}"
+    echo -e "   DER CSRs Found:                ${#der_csrs[@]}"
+    echo -e "   Certificate Directory: $CERT_DIR"
     echo ""
     
     # Output Files
@@ -850,6 +1076,7 @@ if test_authentication; then
     test_session_isolation
     test_concurrent_access
     test_invalid_session_id
+    test_certificate_types_and_validation
 else
     echo -e "${RED}Skipping session tests due to authentication failure${NC}"
 fi

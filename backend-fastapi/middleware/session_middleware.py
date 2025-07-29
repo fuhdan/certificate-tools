@@ -73,9 +73,9 @@ async def get_session_id(request: Request) -> str:
         logger.warning(
             f"Invalid session ID format: {session_id} for {request_info}"
         )
-        session_id = str(uuid.uuid4())
-        logger.info(
-            f"Generated replacement session ID: {session_id} for {request_info}"
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid session ID format. Expected UUID v4, got: {session_id[:50]}..."
         )
     else:
         # Valid existing session ID
@@ -123,7 +123,10 @@ async def get_optional_session_id(request: Request) -> Optional[str]:
             f"Invalid session ID format for optional endpoint: {session_id} "
             f"for {request_info}"
         )
-        return None
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid session ID format. Expected UUID v4, got: {session_id[:50]}..."
+        )
     
     # Valid session ID - update activity if session exists
     try:

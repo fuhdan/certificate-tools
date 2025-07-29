@@ -1,424 +1,246 @@
 """
 backend-fastapi/routers/downloads.py
-Download endpoints integration with SecureZipCreator service
+Download endpoints for certificate bundles with secure ZIP packaging - CWT-24 Implementation
 """
 
-from fastapi import APIRouter, HTTPException, Response, Header
-from fastapi.responses import StreamingResponse
 import logging
 from typing import Optional
+from fastapi import APIRouter, HTTPException, Response, Depends
+from fastapi.responses import StreamingResponse
+
+from middleware.session_middleware import get_session_id
+from certificates.storage.core import CertificateStorage
+from certificates.storage.crypto_storage import CryptoObjectsStorage
 from services.secure_zip_creator import secure_zip_creator, SecureZipCreatorError
+from services.instruction_generator import InstructionGenerator
 
 logger = logging.getLogger(__name__)
-router = APIRouter()
+router = APIRouter(prefix="/api/downloads", tags=["downloads"])
 
 
-@router.get("/download/apache-bundle/{certificate_id}")
+@router.post("/apache/{session_id}")
 async def download_apache_bundle(
-    certificate_id: str,
-    custom_password: Optional[str] = Header(None, alias="X-Zip-Password")
+    session_id: str,
+    session_id_validated: str = Depends(get_session_id)
 ):
     """
-    Download Apache certificate bundle as password-protected ZIP.
+    Generate Apache-compatible certificate bundle as password-protected ZIP file.
     
-    Headers:
-        X-Zip-Password: Custom password for ZIP file (optional)
+    CWT-24: Backend API: Apache/Linux Download Endpoint (UPDATED)
+    
+    Args:
+        session_id: Session identifier from URL path
+        session_id_validated: Validated session ID from dependency injection
     
     Returns:
-        Password-protected ZIP file with Apache certificate bundle
-        Password returned in X-Zip-Password response header
+        Password-protected ZIP file containing:
+        - certificate.crt - End entity certificate (PEM)
+        - private-key.key - Private key (PEM) 
+        - ca-bundle.crt - CA certificate chain (PEM)
+        - APACHE_INSTALLATION_GUIDE.txt - Detailed Apache instructions
+        - NGINX_INSTALLATION_GUIDE.txt - Detailed Nginx instructions
+        
+    Response Headers:
+        X-Zip-Password: Generated secure random password (16+ characters)
+        
+    Security:
+        - AES-256 encryption for ZIP files
+        - Session-proof implementation
+        - Clean logging: function start + success summary
     """
+    logger.info(f"Apache bundle download started for session: {session_id}")
+    
     try:
-        # Fetch certificate data (mock implementation)
-        certificate_data = await get_certificate_data(certificate_id)
+        # Validate session_id from path matches validated session
+        if session_id != session_id_validated:
+            logger.warning(f"Session ID mismatch: path={session_id}, validated={session_id_validated}")
+            raise HTTPException(
+                status_code=400, 
+                detail="Session ID validation failed"
+            )
         
-        if not certificate_data:
-            raise HTTPException(status_code=404, detail="Certificate not found")
+        # Get all certificates from session
+        certificates = CertificateStorage.get_all(session_id)
         
-        # Generate installation guides
-        apache_guide = generate_apache_installation_guide(certificate_data)
-        nginx_guide = generate_nginx_installation_guide(certificate_data)
+        if not certificates:
+            logger.warning(f"No certificates found in session: {session_id}")
+            raise HTTPException(
+                status_code=404,
+                detail="No certificates found in session"
+            )
         
-        # Create password-protected ZIP bundle
+        # Debug: Log certificate types
+        logger.debug(f"Found {len(certificates)} certificates in session:")
+        for i, cert in enumerate(certificates):
+            cert_type = cert.get('analysis', {}).get('type')
+            filename = cert.get('filename', 'unknown')
+            logger.debug(f"  [{i}] {filename} - type: {cert_type}")
+        
+        # Find the primary certificate (first end-entity certificate)
+        primary_cert = None
+        for cert in certificates:
+            cert_type = cert.get('analysis', {}).get('type')
+            # Check for various end-entity certificate types
+            if cert_type in ['certificate', 'Certificate', 'end_entity_certificate', 'PKCS12 Certificate']:
+                primary_cert = cert
+                break
+        
+        # If no explicit end-entity cert found, look for certificates that aren't CA certificates
+        if not primary_cert:
+            for cert in certificates:
+                cert_type = cert.get('analysis', {}).get('type')
+                # Skip CA certificates and private keys, look for actual certificates
+                if cert_type and 'CA' not in cert_type and 'Private' not in cert_type and 'Key' not in cert_type:
+                    primary_cert = cert
+                    break
+        
+        if not primary_cert:
+            logger.warning(f"No end-entity certificate found in session: {session_id}")
+            # Debug: Show what certificates we do have
+            logger.debug("Available certificate types:")
+            for cert in certificates:
+                cert_type = cert.get('analysis', {}).get('type')
+                filename = cert.get('filename', 'unknown')
+                logger.debug(f"  - {filename}: {cert_type}")
+            raise HTTPException(
+                status_code=404,
+                detail="No end-entity certificate found in session"
+            )
+        
+        logger.info(f"Using primary certificate: {primary_cert.get('filename')} (type: {primary_cert.get('analysis', {}).get('type')})")
+        
+        # Extract certificate data
+        certificate_data = _extract_certificate_data(primary_cert, certificates, session_id)
+        
+        # Generate installation guides using InstructionGenerator service
+        instruction_generator = InstructionGenerator()
+        
+        apache_guide = instruction_generator.generate_instructions(
+            server_type="apache",
+            certificate_data=certificate_data
+        )
+        
+        nginx_guide = instruction_generator.generate_instructions(
+            server_type="nginx", 
+            certificate_data=certificate_data
+        )
+        
+        # Create password-protected ZIP bundle with AES-256 encryption
         zip_data, password = secure_zip_creator.create_apache_bundle(
             certificate=certificate_data['certificate'],
             private_key=certificate_data['private_key'],
             ca_bundle=certificate_data['ca_bundle'],
             apache_guide=apache_guide,
-            nginx_guide=nginx_guide,
-            password=custom_password
+            nginx_guide=nginx_guide
         )
         
-        logger.info(f"Apache bundle created for certificate {certificate_id}")
+        logger.info(f"Apache bundle created successfully for session: {session_id}")
         
         # Return ZIP file with password in header
         return Response(
             content=zip_data,
             media_type="application/zip",
             headers={
-                "Content-Disposition": f"attachment; filename=apache-bundle-{certificate_id}.zip",
+                "Content-Disposition": f"attachment; filename=apache-bundle-{session_id}.zip",
                 "X-Zip-Password": password,
                 "Content-Length": str(len(zip_data))
             }
         )
         
     except SecureZipCreatorError as e:
-        logger.error(f"ZIP creation failed for certificate {certificate_id}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to create certificate bundle")
+        logger.error(f"ZIP creation failed for session {session_id}: {e}")
+        raise HTTPException(
+            status_code=500, 
+            detail="Failed to create certificate bundle"
+        )
     
     except Exception as e:
-        logger.error(f"Unexpected error downloading Apache bundle {certificate_id}: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
-
-
-@router.get("/download/iis-bundle/{certificate_id}")
-async def download_iis_bundle(
-    certificate_id: str,
-    custom_password: Optional[str] = Header(None, alias="X-Zip-Password")
-):
-    """
-    Download IIS certificate bundle as password-protected ZIP.
-    
-    Headers:
-        X-Zip-Password: Custom password for ZIP file (optional)
-    
-    Returns:
-        Password-protected ZIP file with IIS certificate bundle
-        Password returned in X-Zip-Password response header
-    """
-    try:
-        # Fetch certificate data
-        certificate_data = await get_certificate_data(certificate_id)
-        
-        if not certificate_data:
-            raise HTTPException(status_code=404, detail="Certificate not found")
-        
-        # Generate P12 bundle and guides
-        p12_bundle = await generate_p12_bundle(certificate_data)
-        iis_guide = generate_iis_installation_guide(certificate_data)
-        cert_info = generate_certificate_info(certificate_data)
-        
-        # Create password-protected ZIP bundle
-        zip_data, password = secure_zip_creator.create_iis_bundle(
-            p12_bundle=p12_bundle,
-            iis_guide=iis_guide,
-            cert_info=cert_info,
-            password=custom_password
+        logger.error(f"Unexpected error creating Apache bundle for session {session_id}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error"
         )
-        
-        logger.info(f"IIS bundle created for certificate {certificate_id}")
-        
-        # Return ZIP file with password in header
-        return Response(
-            content=zip_data,
-            media_type="application/zip",
-            headers={
-                "Content-Disposition": f"attachment; filename=iis-bundle-{certificate_id}.zip",
-                "X-Zip-Password": password,
-                "Content-Length": str(len(zip_data))
-            }
-        )
-        
-    except SecureZipCreatorError as e:
-        logger.error(f"ZIP creation failed for certificate {certificate_id}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to create certificate bundle")
-    
-    except Exception as e:
-        logger.error(f"Unexpected error downloading IIS bundle {certificate_id}: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@router.get("/download/custom-bundle/{certificate_id}")
-async def download_custom_bundle(
-    certificate_id: str,
-    bundle_type: str = "apache",
-    custom_password: Optional[str] = Header(None, alias="X-Zip-Password")
-):
+def _extract_certificate_data(primary_cert, all_certificates, session_id):
     """
-    Download custom certificate bundle as password-protected ZIP.
+    Extract certificate data needed for bundle creation.
     
     Args:
-        certificate_id: Certificate identifier
-        bundle_type: Type of bundle (apache, iis, nginx, etc.)
+        primary_cert: Primary end-entity certificate
+        all_certificates: All certificates in session
+        session_id: Session identifier
         
-    Headers:
-        X-Zip-Password: Custom password for ZIP file (optional)
+    Returns:
+        Dictionary containing certificate, private_key, ca_bundle, and metadata
     """
     try:
-        certificate_data = await get_certificate_data(certificate_id)
-        
-        if not certificate_data:
-            raise HTTPException(status_code=404, detail="Certificate not found")
-        
-        # Build custom file set based on bundle type
-        files = {}
-        
-        if bundle_type.lower() in ["apache", "nginx"]:
-            files.update({
-                'certificate.crt': certificate_data['certificate'],
-                'private-key.key': certificate_data['private_key'],
-                'ca-bundle.crt': certificate_data['ca_bundle'],
-                'installation-guide.txt': generate_installation_guide(bundle_type, certificate_data)
-            })
-        elif bundle_type.lower() == "iis":
-            p12_bundle = await generate_p12_bundle(certificate_data)
-            files.update({
-                'certificate-bundle.p12': p12_bundle,
-                'installation-guide.txt': generate_iis_installation_guide(certificate_data),
-                'certificate-info.txt': generate_certificate_info(certificate_data)
-            })
-        else:
-            raise HTTPException(status_code=400, detail=f"Unsupported bundle type: {bundle_type}")
-        
-        # Create password-protected ZIP
-        zip_data, password = secure_zip_creator.create_protected_zip(
-            files=files,
-            password=custom_password
+        # Get crypto objects for primary certificate
+        crypto_objects = CryptoObjectsStorage.get_crypto_objects(
+            primary_cert['id'], 
+            session_id
         )
         
-        logger.info(f"Custom {bundle_type} bundle created for certificate {certificate_id}")
+        if not crypto_objects:
+            raise ValueError("No cryptographic objects found for certificate")
         
-        return Response(
-            content=zip_data,
-            media_type="application/zip",
-            headers={
-                "Content-Disposition": f"attachment; filename={bundle_type}-bundle-{certificate_id}.zip",
-                "X-Zip-Password": password,
-                "Content-Length": str(len(zip_data))
-            }
-        )
+        # Extract certificate PEM
+        certificate_obj = crypto_objects.get('certificate')
+        if not certificate_obj:
+            raise ValueError("Certificate object not found")
         
-    except SecureZipCreatorError as e:
-        logger.error(f"ZIP creation failed for {bundle_type} bundle {certificate_id}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to create certificate bundle")
-    
+        from cryptography.hazmat.primitives import serialization
+        certificate_pem = certificate_obj.public_bytes(
+            encoding=serialization.Encoding.PEM
+        ).decode('utf-8')
+        
+        # Extract private key PEM
+        private_key_obj = crypto_objects.get('private_key')
+        if not private_key_obj:
+            raise ValueError("Private key not found")
+        
+        private_key_pem = private_key_obj.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption()
+        ).decode('utf-8')
+        
+        # Build CA bundle from other certificates
+        ca_bundle_parts = []
+        
+        for cert in all_certificates:
+            cert_type = cert.get('analysis', {}).get('type')
+            # Include CA certificates and intermediate certificates
+            if (cert_type and ('CA' in cert_type or 'ca_certificate' in cert_type or 
+                              'intermediate_certificate' in cert_type or 'IssuingCA' in cert_type or 
+                              'IntermediateCA' in cert_type or 'RootCA' in cert_type)):
+                cert_crypto = CryptoObjectsStorage.get_crypto_objects(
+                    cert['id'],
+                    session_id
+                )
+                
+                if cert_crypto and 'certificate' in cert_crypto:
+                    ca_cert_pem = cert_crypto['certificate'].public_bytes(
+                        encoding=serialization.Encoding.PEM
+                    ).decode('utf-8')
+                    ca_bundle_parts.append(ca_cert_pem)
+        
+        ca_bundle = '\n'.join(ca_bundle_parts) if ca_bundle_parts else ''
+        
+        # Extract certificate metadata
+        analysis = primary_cert.get('analysis', {})
+        
+        return {
+            'certificate': certificate_pem,
+            'private_key': private_key_pem,
+            'ca_bundle': ca_bundle,
+            'domain_name': analysis.get('subject', {}).get('common_name', 'example.com'),
+            'subject': analysis.get('subject', {}),
+            'issuer': analysis.get('issuer', {}),
+            'expiry_date': analysis.get('validity', {}).get('not_after'),
+            'filename': primary_cert.get('filename', 'certificate')
+        }
+        
     except Exception as e:
-        logger.error(f"Unexpected error downloading {bundle_type} bundle {certificate_id}: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
-
-
-@router.post("/download/batch-certificates")
-async def download_batch_certificates(
-    certificate_ids: list[str],
-    custom_password: Optional[str] = Header(None, alias="X-Zip-Password")
-):
-    """
-    Download multiple certificates as a single password-protected ZIP.
-    
-    Body:
-        certificate_ids: List of certificate IDs to include
-        
-    Headers:
-        X-Zip-Password: Custom password for ZIP file (optional)
-    """
-    try:
-        if not certificate_ids:
-            raise HTTPException(status_code=400, detail="No certificate IDs provided")
-        
-        if len(certificate_ids) > 50:  # Limit batch size
-            raise HTTPException(status_code=400, detail="Too many certificates requested (max 50)")
-        
-        files = {}
-        
-        # Collect all certificate files
-        for cert_id in certificate_ids:
-            certificate_data = await get_certificate_data(cert_id)
-            
-            if not certificate_data:
-                logger.warning(f"Certificate {cert_id} not found, skipping")
-                continue
-            
-            # Add files with certificate ID prefix
-            files[f"{cert_id}/certificate.crt"] = certificate_data['certificate']
-            files[f"{cert_id}/private-key.key"] = certificate_data['private_key']
-            files[f"{cert_id}/ca-bundle.crt"] = certificate_data['ca_bundle']
-            files[f"{cert_id}/installation-guide.txt"] = generate_apache_installation_guide(certificate_data)
-        
-        if not files:
-            raise HTTPException(status_code=404, detail="No valid certificates found")
-        
-        # Estimate memory usage
-        memory_estimate = secure_zip_creator.get_memory_usage_estimate(files)
-        if memory_estimate > 100 * 1024 * 1024:  # 100MB limit
-            raise HTTPException(status_code=413, detail="Batch too large, reduce number of certificates")
-        
-        # Create password-protected ZIP
-        zip_data, password = secure_zip_creator.create_protected_zip(
-            files=files,
-            password=custom_password
-        )
-        
-        logger.info(f"Batch ZIP created with {len(certificate_ids)} certificates")
-        
-        return Response(
-            content=zip_data,
-            media_type="application/zip",
-            headers={
-                "Content-Disposition": f"attachment; filename=certificates-batch-{len(certificate_ids)}.zip",
-                "X-Zip-Password": password,
-                "Content-Length": str(len(zip_data))
-            }
-        )
-        
-    except SecureZipCreatorError as e:
-        logger.error(f"Batch ZIP creation failed: {e}")
-        raise HTTPException(status_code=500, detail="Failed to create certificate batch")
-    
-    except Exception as e:
-        logger.error(f"Unexpected error in batch download: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
-
-
-# Helper functions (mock implementations)
-
-async def get_certificate_data(certificate_id: str) -> dict:
-    """Mock function to fetch certificate data"""
-    # In real implementation, this would fetch from database
-    return {
-        'certificate': b'-----BEGIN CERTIFICATE-----\nMOCK_CERT_DATA\n-----END CERTIFICATE-----',
-        'private_key': b'-----BEGIN PRIVATE KEY-----\nMOCK_KEY_DATA\n-----END PRIVATE KEY-----',
-        'ca_bundle': b'-----BEGIN CERTIFICATE-----\nMOCK_CA_DATA\n-----END CERTIFICATE-----',
-        'domain': f'example-{certificate_id}.com',
-        'issuer': 'Mock CA',
-        'expires': '2025-12-31'
-    }
-
-
-def generate_apache_installation_guide(certificate_data: dict) -> str:
-    """Generate Apache installation guide"""
-    return f"""
-Apache SSL Certificate Installation Guide
-=========================================
-
-Domain: {certificate_data['domain']}
-Issuer: {certificate_data['issuer']}
-Expires: {certificate_data['expires']}
-
-Installation Steps:
-1. Copy certificate.crt to /etc/ssl/certs/
-2. Copy private-key.key to /etc/ssl/private/
-3. Copy ca-bundle.crt to /etc/ssl/certs/
-
-Apache Configuration:
-<VirtualHost *:443>
-    ServerName {certificate_data['domain']}
-    
-    SSLEngine on
-    SSLCertificateFile /etc/ssl/certs/certificate.crt
-    SSLCertificateKeyFile /etc/ssl/private/private-key.key
-    SSLCertificateChainFile /etc/ssl/certs/ca-bundle.crt
-    
-    # Additional SSL settings
-    SSLProtocol all -SSLv2 -SSLv3
-    SSLCipherSuite ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256
-</VirtualHost>
-
-Restart Apache after configuration:
-sudo systemctl restart apache2
-"""
-
-
-def generate_nginx_installation_guide(certificate_data: dict) -> str:
-    """Generate Nginx installation guide"""
-    return f"""
-Nginx SSL Certificate Installation Guide
-========================================
-
-Domain: {certificate_data['domain']}
-Issuer: {certificate_data['issuer']}
-Expires: {certificate_data['expires']}
-
-Installation Steps:
-1. Copy certificate.crt to /etc/nginx/ssl/
-2. Copy private-key.key to /etc/nginx/ssl/
-3. Copy ca-bundle.crt to /etc/nginx/ssl/
-
-Nginx Configuration:
-server {{
-    listen 443 ssl;
-    server_name {certificate_data['domain']};
-    
-    ssl_certificate /etc/nginx/ssl/certificate.crt;
-    ssl_certificate_key /etc/nginx/ssl/private-key.key;
-    ssl_trusted_certificate /etc/nginx/ssl/ca-bundle.crt;
-    
-    # Modern SSL configuration
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256;
-    ssl_prefer_server_ciphers off;
-}}
-
-Reload Nginx after configuration:
-sudo nginx -t && sudo systemctl reload nginx
-"""
-
-
-def generate_iis_installation_guide(certificate_data: dict) -> str:
-    """Generate IIS installation guide"""
-    return f"""
-IIS SSL Certificate Installation Guide
-======================================
-
-Domain: {certificate_data['domain']}
-Issuer: {certificate_data['issuer']}
-Expires: {certificate_data['expires']}
-
-Installation Steps:
-1. Open IIS Manager
-2. Select your server in the left panel
-3. Double-click "Server Certificates"
-4. Click "Import..." in the Actions panel
-5. Browse to certificate-bundle.p12
-6. Enter the certificate password when prompted
-7. Select your website
-8. Click "Bindings..." in Actions panel
-9. Add/Edit HTTPS binding
-10. Select the imported certificate
-
-Certificate Password:
-The P12 bundle is protected with a secure password.
-Use the password provided with this download.
-
-Verification:
-After installation, test your SSL certificate at:
-https://{certificate_data['domain']}
-"""
-
-
-def generate_certificate_info(certificate_data: dict) -> str:
-    """Generate certificate information"""
-    return f"""
-Certificate Information
-======================
-
-Domain: {certificate_data['domain']}
-Issuer: {certificate_data['issuer']}
-Expiration Date: {certificate_data['expires']}
-
-Security Features:
-- 2048-bit RSA key
-- SHA-256 signature algorithm
-- Extended Validation (EV)
-
-Support:
-For technical support, contact your certificate provider.
-Keep this information secure and do not share passwords.
-"""
-
-
-async def generate_p12_bundle(certificate_data: dict) -> bytes:
-    """Mock function to generate P12 bundle"""
-    # In real implementation, this would create actual P12 bundle
-    return b'MOCK_P12_BUNDLE_DATA'
-
-
-def generate_installation_guide(bundle_type: str, certificate_data: dict) -> str:
-    """Generate installation guide based on bundle type"""
-    if bundle_type.lower() == "apache":
-        return generate_apache_installation_guide(certificate_data)
-    elif bundle_type.lower() == "nginx":
-        return generate_nginx_installation_guide(certificate_data)
-    elif bundle_type.lower() == "iis":
-        return generate_iis_installation_guide(certificate_data)
-    else:
-        return f"Installation guide for {bundle_type} server type."
+        logger.error(f"Failed to extract certificate data: {e}")
+        raise ValueError(f"Certificate data extraction failed: {e}")

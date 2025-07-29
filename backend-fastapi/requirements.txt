@@ -7,3 +7,4 @@ passlib[bcrypt]==1.7.4
 python-jose[cryptography]==3.5.0
 cryptography==45.0.5
 pydantic==2.11.7
+pyzipper==0.3.6

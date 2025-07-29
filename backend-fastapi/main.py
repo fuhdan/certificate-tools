@@ -9,7 +9,7 @@ from config import settings
 from routers import (
     auth_router,
     certificates_router,
-    downloads_router,    # Add the new downloads router
+    downloads_router,
     health_router,
     pki_router,
     stats_router
@@ -49,7 +49,7 @@ app.add_middleware(
 app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(certificates_router)
-app.include_router(downloads_router)    # Add the downloads router
+app.include_router(downloads_router)
 app.include_router(pki_router)
 app.include_router(stats_router)
 
@@ -68,7 +68,7 @@ def read_root():
             "health": "/health",
             "login": "/token",
             "certificates": "/api/certificates",
-            "downloads": "/download",        # Add downloads endpoint info
+            "downloads": "/api/downloads",
             "docs": "/docs"
         }
     }

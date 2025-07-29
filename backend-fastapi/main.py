@@ -9,6 +9,7 @@ from config import settings
 from routers import (
     auth_router,
     certificates_router,
+    downloads_router,    # Add the new downloads router
     health_router,
     pki_router,
     stats_router
@@ -48,6 +49,7 @@ app.add_middleware(
 app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(certificates_router)
+app.include_router(downloads_router)    # Add the downloads router
 app.include_router(pki_router)
 app.include_router(stats_router)
 
@@ -66,6 +68,7 @@ def read_root():
             "health": "/health",
             "login": "/token",
             "certificates": "/api/certificates",
+            "downloads": "/download",        # Add downloads endpoint info
             "docs": "/docs"
         }
     }
@@ -80,11 +83,13 @@ async def startup_event():
     logger.info(f"Starting {settings.APP_NAME} v{settings.APP_VERSION}")
     logger.info(f"Debug mode: {settings.DEBUG}")
     logger.info(f"Default login: {settings.DEFAULT_USERNAME} / {settings.DEFAULT_PASSWORD}")
+    logger.info("SecureZipCreator service initialized and ready")
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Application shutdown tasks"""
     logger.info(f"Shutting down {settings.APP_NAME}")
+    logger.info("SecureZipCreator service cleanup completed")
 
 # ============================================================================
 # DEVELOPMENT SERVER

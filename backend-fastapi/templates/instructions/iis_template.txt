@@ -1,0 +1,475 @@
+================================================================================
+IIS SSL CERTIFICATE INSTALLATION GUIDE
+================================================================================
+
+Certificate Information:
+- Certificate File: {certificate_filename}
+- Private Key File: {private_key_filename}
+- PKCS#12 Bundle: {pkcs12_filename}
+- Domain Name: {domain_name}
+- Certificate Type: {certificate_type}
+- Validity Period: {validity_period}
+
+⚠️  SECURITY WARNING:
+- Store PKCS#12 files securely and delete after installation
+- Use strong passwords for PKCS#12 bundles
+- Restrict access to certificate stores
+- Enable proper SSL/TLS security settings
+- Backup certificates through Windows Certificate Store
+
+📝 IMPORTANT NOTES:
+- This guide covers both GUI and PowerShell methods
+- PKCS#12 password is required for certificate import
+- Installation requires Administrator privileges
+- Two passwords may be involved: PKCS#12 password and private key password
+
+================================================================================
+METHOD 1: GUI INSTALLATION USING IIS MANAGER
+================================================================================
+
+STEP 1: IMPORT CERTIFICATE TO WINDOWS CERTIFICATE STORE
+
+1.1) Open Certificate Manager:
+   - Press Windows + R
+   - Type "certlm.msc" (Local Machine) or "certmgr.msc" (Current User)
+   - Press Enter
+   - If prompted, run as Administrator
+
+1.2) Import the certificate:
+   - Navigate to Personal → Certificates
+   - Right-click in empty space → All Tasks → Import
+   - Click "Next" in Certificate Import Wizard
+   - Browse and select your PKCS#12 file: {pkcs12_filename}
+   - Click "Next"
+
+1.3) Enter certificate password:
+   - Enter the PKCS#12 password when prompted
+   - Check "Mark this key as exportable" (for backup purposes)
+   - Check "Include all extended properties"
+   - Click "Next"
+
+1.4) Select certificate store:
+   - Select "Place all certificates in the following store"
+   - Browse and select "Personal"
+   - Click "Next" then "Finish"
+
+1.5) Verify import:
+   - You should see a success message
+   - The certificate should appear in Personal → Certificates
+   - Check that the certificate has a key icon (indicates private key is present)
+
+STEP 2: CONFIGURE SSL BINDING IN IIS
+
+2.1) Open IIS Manager:
+   - Press Windows + R
+   - Type "inetmgr"
+   - Press Enter
+
+2.2) Select your website:
+   - Expand server name in left panel
+   - Expand "Sites"
+   - Click on your website
+
+2.3) Add SSL binding:
+   - In Actions panel (right), click "Bindings..."
+   - Click "Add..."
+   - Type: https
+   - IP Address: All Unassigned (or specific IP)
+   - Port: 443
+   - Host name: {domain_name}
+   - SSL certificate: Select your imported certificate
+   - Check "Require Server Name Indication" if using multiple SSL sites
+   - Click "OK"
+
+2.4) Configure HTTP redirect (optional):
+   - Select your website in IIS Manager
+   - Double-click "URL Rewrite" (install if not present)
+   - Add rule to redirect HTTP to HTTPS:
+     Pattern: (.*)
+     Action: Redirect
+     Redirect URL: https://{domain_name}/{R:1}
+     Redirect type: Permanent (301)
+
+STEP 3: CONFIGURE SSL SETTINGS
+
+3.1) Set SSL requirements:
+   - Select your website in IIS Manager
+   - Double-click "SSL Settings"
+   - Check "Require SSL"
+   - Select client certificate requirement (usually "Ignore")
+   - Click "Apply"
+
+3.2) Configure security headers:
+   - Double-click "HTTP Response Headers"
+   - Add the following headers:
+     * Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
+     * X-Frame-Options: DENY
+     * X-Content-Type-Options: nosniff
+     * X-XSS-Protection: 1; mode=block
+
+================================================================================
+METHOD 2: POWERSHELL INSTALLATION (ADVANCED)
+================================================================================
+
+2.1) Import certificate via PowerShell:
+   # Run PowerShell as Administrator
+   $password = ConvertTo-SecureString -String "YOUR_PKCS12_PASSWORD" -Force -AsPlainText
+   Import-PfxCertificate -FilePath "C:\path\to\{pkcs12_filename}" -CertStoreLocation Cert:\LocalMachine\My -Password $password
+
+2.2) Get certificate thumbprint:
+   Get-ChildItem -Path Cert:\LocalMachine\My | Where-Object {$_.Subject -like "*{domain_name}*"}
+   # Note the Thumbprint value
+
+2.3) Create SSL binding:
+   Import-Module WebAdministration
+   New-WebBinding -Name "Default Web Site" -Protocol https -Port 443 -HostHeader {domain_name}
+   
+   # Bind certificate to site (replace THUMBPRINT with actual value)
+   $cert = Get-ChildItem -Path Cert:\LocalMachine\My\THUMBPRINT
+   New-Item -Path IIS:\SslBindings\0.0.0.0!443!{domain_name} -Value $cert
+
+2.4) Configure SSL settings:
+   Set-WebConfigurationProperty -Filter "system.webserver/security/access" -Name sslFlags -Value "Ssl,SslNegotiateCert,SslRequireCert,Ssl128" -PSPath "IIS:\" -Location "{domain_name}"
+
+================================================================================
+CERTIFICATE STORE MANAGEMENT
+================================================================================
+
+UNDERSTANDING CERTIFICATE STORES:
+
+1) Personal Store (Cert:\LocalMachine\My):
+   - Contains certificates with private keys
+   - Used for SSL server certificates
+   - This is where your certificate should be imported
+
+2) Trusted Root Certification Authorities:
+   - Contains root CA certificates
+   - May need intermediate certificates here
+
+3) Intermediate Certification Authorities:
+   - Contains intermediate CA certificates
+   - Required for proper certificate chain validation
+
+MANAGING CERTIFICATES:
+
+View certificates in PowerShell:
+   Get-ChildItem -Path Cert:\LocalMachine\My
+   Get-ChildItem -Path Cert:\LocalMachine\Root
+   Get-ChildItem -Path Cert:\LocalMachine\CA
+
+Export certificate (backup):
+   $cert = Get-ChildItem -Path Cert:\LocalMachine\My\THUMBPRINT
+   Export-PfxCertificate -Cert $cert -FilePath "C:\backup\certificate.pfx" -Password $securePassword
+
+Remove certificate:
+   Get-ChildItem -Path Cert:\LocalMachine\My\THUMBPRINT | Remove-Item
+
+================================================================================
+VERIFICATION PROCEDURES
+================================================================================
+
+4.1) Test locally:
+   # Open browser and navigate to:
+   https://{domain_name}
+   
+   # Check for:
+   - Green padlock icon
+   - No security warnings
+   - Correct certificate details
+
+4.2) Command line verification:
+   # Test SSL connection with PowerShell
+   $request = [System.Net.WebRequest]::Create("https://{domain_name}")
+   $response = $request.GetResponse()
+   $cert = $request.ServicePoint.Certificate
+   Write-Host "Certificate Subject: " $cert.Subject
+   Write-Host "Certificate Issuer: " $cert.Issuer
+   Write-Host "Valid From: " $cert.GetEffectiveDateString()
+   Write-Host "Valid To: " $cert.GetExpirationDateString()
+
+4.3) IIS-specific verification:
+   # Check SSL binding exists
+   Get-WebBinding -Name "Default Web Site" -Protocol https
+   
+   # View certificate details from IIS
+   Get-ChildItem IIS:\SslBindings | Where-Object {$_.Host -eq "{domain_name}"}
+
+4.4) Event Viewer verification:
+   - Open Event Viewer (eventvwr.msc)
+   - Navigate to Applications and Services Logs → Microsoft → Windows → HttpService → Trace
+   - Look for SSL-related events
+
+4.5) Online SSL testing tools:
+   - SSL Labs: https://www.ssllabs.com/ssltest/
+   - SSL Checker: https://www.sslshopper.com/ssl-checker.html
+   - DigiCert SSL Checker: https://www.digicert.com/help/
+
+================================================================================
+TROUBLESHOOTING
+================================================================================
+
+COMMON ISSUES AND SOLUTIONS:
+
+1) "Certificate not found" error:
+   CAUSE: Certificate not properly imported to Personal store
+   SOLUTION:
+   - Verify certificate is in Cert:\LocalMachine\My
+   - Check certificate has private key (key icon in certmgr.msc)
+   - Re-import with correct password
+
+2) "A specified logon session does not exist":
+   CAUSE: Certificate imported to wrong store or permissions issue
+   SOLUTION:
+   - Import to Local Machine\Personal store (not Current User)
+   - Run IIS Manager as Administrator
+   - Check certificate permissions
+
+3) "The request was aborted: Could not create SSL/TLS secure channel":
+   CAUSE: SSL binding not configured correctly
+   SOLUTION:
+   - Verify SSL binding exists for correct IP/port/hostname
+   - Check certificate is bound to the binding
+   - Restart IIS: iisreset
+
+4) "Certificate chain not trusted":
+   CAUSE: Missing intermediate certificates
+   SOLUTION:
+   - Import intermediate certificates to Intermediate Certification Authorities store
+   - Ensure full certificate chain is included in PKCS#12 file
+
+5) Mixed content warnings:
+   CAUSE: HTTP resources loaded on HTTPS page
+   SOLUTION:
+   - Update all internal links to use HTTPS
+   - Configure URL rewrite rules for HTTP to HTTPS redirect
+
+6) SSL binding shows wrong certificate:
+   CAUSE: Multiple certificates with same subject or binding conflict
+   SOLUTION:
+   - Remove old/expired certificates from store
+   - Clear SSL binding and recreate
+   - Use netsh to view/modify SSL bindings:
+     netsh http show sslcert
+     netsh http delete sslcert ipport=0.0.0.0:443
+
+DIAGNOSTIC COMMANDS:
+
+PowerShell diagnostics:
+   # List all certificates in Personal store
+   Get-ChildItem -Path Cert:\LocalMachine\My | Format-List Subject, Thumbprint, HasPrivateKey
+
+   # Check SSL bindings
+   Get-WebBinding | Where-Object {$_.protocol -eq "https"}
+   
+   # View SSL certificate bindings
+   Get-ChildItem IIS:\SslBindings
+   
+   # Test certificate validity
+   $cert = Get-ChildItem -Path Cert:\LocalMachine\My | Where-Object {$_.Subject -like "*{domain_name}*"}
+   $cert.Verify()
+
+Command Prompt diagnostics:
+   # View SSL bindings with netsh
+   netsh http show sslcert
+   
+   # Test connectivity
+   telnet {domain_name} 443
+   
+   # Check IIS status
+   iisreset /status
+
+Event Viewer locations:
+   - Windows Logs → System (IIS service issues)
+   - Applications and Services → Microsoft → Windows → HttpService
+   - IIS logs: %SystemDrive%\inetpub\logs\LogFiles\
+
+CERTIFICATE VALIDATION:
+
+Verify certificate chain:
+   # PowerShell script to check certificate chain
+   $cert = Get-ChildItem -Path Cert:\LocalMachine\My | Where-Object {$_.Subject -like "*{domain_name}*"}
+   $chain = New-Object System.Security.Cryptography.X509Certificates.X509Chain
+   $chain.Build($cert)
+   $chain.ChainElements | ForEach-Object {Write-Host $_.Certificate.Subject}
+
+Check certificate expiration:
+   Get-ChildItem -Path Cert:\LocalMachine\My | Where-Object {$_.NotAfter -lt (Get-Date).AddDays(30)} | Format-List Subject, NotAfter
+
+================================================================================
+SECURITY CONFIGURATION
+================================================================================
+
+ENHANCE SSL/TLS SECURITY:
+
+1) Disable weak protocols and ciphers:
+   # Registry modifications (requires restart)
+   # Disable SSL 2.0
+   New-Item 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\SSL 2.0\Server' -Force
+   New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\SSL 2.0\Server' -Name 'Enabled' -Value 0 -PropertyType DWORD
+   
+   # Disable SSL 3.0
+   New-Item 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\SSL 3.0\Server' -Force
+   New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\SSL 3.0\Server' -Name 'Enabled' -Value 0 -PropertyType DWORD
+
+2) Enable only strong TLS versions:
+   # Enable TLS 1.2
+   New-Item 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Server' -Force
+   New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Server' -Name 'Enabled' -Value 1 -PropertyType DWORD
+   
+   # Enable TLS 1.3 (Windows Server 2019+)
+   New-Item 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.3\Server' -Force
+   New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.3\Server' -Name 'Enabled' -Value 1 -PropertyType DWORD
+
+3) Configure cipher suites (PowerShell as Administrator):
+   # Get current cipher suite order
+   Get-TlsCipherSuite
+   
+   # Set secure cipher suite order (example)
+   $cipherSuites = @(
+       'TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384',
+       'TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256',
+       'TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384',
+       'TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256'
+   )
+   Set-TlsCipherSuite -Name $cipherSuites
+
+4) Configure HSTS (HTTP Strict Transport Security):
+   # Add to web.config or use IIS Manager HTTP Response Headers
+   <httpProtocol>
+     <customHeaders>
+       <add name="Strict-Transport-Security" value="max-age=31536000; includeSubDomains; preload" />
+     </customHeaders>
+   </httpProtocol>
+
+================================================================================
+BACKUP AND RECOVERY
+================================================================================
+
+BACKUP CERTIFICATES:
+
+1) Export via GUI:
+   - Open certmgr.msc as Administrator
+   - Navigate to Personal → Certificates
+   - Right-click certificate → All Tasks → Export
+   - Choose "Yes, export the private key"
+   - Select PKCS #12 format
+   - Set strong password
+   - Save to secure location
+
+2) Export via PowerShell:
+   $cert = Get-ChildItem -Path Cert:\LocalMachine\My\THUMBPRINT
+   $password = ConvertTo-SecureString -String "BACKUP_PASSWORD" -Force -AsPlainText
+   Export-PfxCertificate -Cert $cert -FilePath "C:\Backup\{domain_name}-backup.pfx" -Password $password
+
+3) Backup IIS configuration:
+   # Export IIS configuration
+   %windir%\system32\inetsrv\appcmd add backup "BeforeSSLChanges"
+   
+   # List backups
+   %windir%\system32\inetsrv\appcmd list backup
+
+RECOVERY PROCEDURES:
+
+Restore certificate:
+   $password = ConvertTo-SecureString -String "BACKUP_PASSWORD" -Force -AsPlainText
+   Import-PfxCertificate -FilePath "C:\Backup\{domain_name}-backup.pfx" -CertStoreLocation Cert:\LocalMachine\My -Password $password
+
+Restore IIS configuration:
+   %windir%\system32\inetsrv\appcmd restore backup "BeforeSSLChanges"
+
+================================================================================
+AUTOMATION SCRIPTS
+================================================================================
+
+POWERSHELL AUTOMATION SCRIPT:
+
+# Complete SSL certificate installation script
+param(
+    [Parameter(Mandatory=$true)]
+    [string]$CertificatePath,
+    
+    [Parameter(Mandatory=$true)]
+    [string]$Password,
+    
+    [Parameter(Mandatory=$true)]
+    [string]$SiteName,
+    
+    [Parameter(Mandatory=$true)]
+    [string]$HostName
+)
+
+try {
+    # Import certificate
+    Write-Host "Importing certificate..." -ForegroundColor Green
+    $securePassword = ConvertTo-SecureString -String $Password -Force -AsPlainText
+    $cert = Import-PfxCertificate -FilePath $CertificatePath -CertStoreLocation Cert:\LocalMachine\My -Password $securePassword
+    
+    # Create SSL binding
+    Write-Host "Creating SSL binding..." -ForegroundColor Green
+    Import-Module WebAdministration
+    New-WebBinding -Name $SiteName -Protocol https -Port 443 -HostHeader $HostName -ErrorAction SilentlyContinue
+    
+    # Bind certificate
+    Write-Host "Binding certificate..." -ForegroundColor Green
+    $binding = Get-WebBinding -Name $SiteName -Protocol https -Port 443 -HostHeader $HostName
+    $binding.AddSslCertificate($cert.Thumbprint, "my")
+    
+    Write-Host "SSL certificate installation completed successfully!" -ForegroundColor Green
+    Write-Host "Certificate Thumbprint: $($cert.Thumbprint)" -ForegroundColor Yellow
+    Write-Host "Test your site: https://$HostName" -ForegroundColor Yellow
+}
+catch {
+    Write-Error "Installation failed: $($_.Exception.Message)"
+}
+
+CERTIFICATE RENEWAL AUTOMATION:
+
+# PowerShell script for certificate renewal monitoring
+$certs = Get-ChildItem -Path Cert:\LocalMachine\My | Where-Object {$_.NotAfter -lt (Get-Date).AddDays(30)}
+if ($certs) {
+    $certs | ForEach-Object {
+        Write-Warning "Certificate expiring soon: $($_.Subject) - Expires: $($_.NotAfter)"
+        # Add notification logic here (email, event log, etc.)
+    }
+}
+
+================================================================================
+SUPPORT RESOURCES
+================================================================================
+
+Microsoft Documentation:
+- IIS SSL Configuration: https://docs.microsoft.com/en-us/iis/manage/configuring-security/how-to-set-up-ssl-on-iis
+- Certificate Management: https://docs.microsoft.com/en-us/windows-server/networking/core-network-guide/cncg/server-certs/install-the-server-certificate
+- PowerShell Certificate Management: https://docs.microsoft.com/en-us/powershell/module/pkiclient/
+
+Security Resources:
+- SSL/TLS Best Practices: https://wiki.mozilla.org/Security/Server_Side_TLS
+- IIS Security Configuration: https://docs.microsoft.com/en-us/iis/get-started/whats-new-in-iis-10/security-improvements
+- Windows SSL/TLS Registry Settings: https://docs.microsoft.com/en-us/windows-server/security/tls/tls-registry-settings
+
+Tools and Utilities:
+- IIS Crypto: Configure SSL/TLS settings easily
+- SSL Labs Test: https://www.ssllabs.com/ssltest/
+- Qualys SSL Server Test: Comprehensive SSL testing
+
+For additional support:
+- Contact your Certificate Authority support
+- Consult your system administrator
+- Microsoft Support: https://support.microsoft.com/
+
+================================================================================
+INSTALLATION COMPLETE
+================================================================================
+
+Your SSL certificate should now be installed and configured on IIS.
+
+Next Steps:
+1. Test your website: https://{domain_name}
+2. Verify SSL Labs rating: https://www.ssllabs.com/ssltest/
+3. Configure automatic HTTP to HTTPS redirects
+4. Set up certificate renewal monitoring
+5. Review security headers and HSTS configuration
+
+Generated on: {timestamp}
+
+Important: Keep your PKCS#12 backup file in a secure location and delete the original installation file after successful installation.

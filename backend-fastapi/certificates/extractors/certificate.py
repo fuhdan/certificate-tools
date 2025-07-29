@@ -48,7 +48,7 @@ def extract_public_key_details(public_key) -> Dict[str, Any]:
 
 def extract_x509_details(cert: x509.Certificate) -> Dict[str, Any]:
     """Extract detailed information from X.509 certificate"""
-    logger.info(f"=== X.509 CERTIFICATE EXTRACTION ===")
+    logger.info(f"=== CERTIFICATE EXTRACTION ===")
     logger.debug(f"Certificate object type: {type(cert)}")
     
     details = {

@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 def get_file_format(filename: str) -> str:
     """Determine file format from filename - UPDATED with PKCS7 support"""
+    logger.info(f"=== RUNNING ANALYSE CERTIFICATE ===")
     extension = filename.split('.')[-1].lower()
     format_map = {
         'pem': 'PEM',
@@ -126,7 +127,7 @@ def _analyze_pem_content_with_crypto_extraction(content_str: str, file_content: 
     # Check for PKCS7 content FIRST (before other certificate types)
     if ('-----BEGIN PKCS7-----' in content_str or 
         content_str.count('-----BEGIN CERTIFICATE-----') > 1):
-        logger.info("Detected PKCS7 content - routing to PKCS7 analyzer")
+        logger.debug("Detected PKCS7 content - routing to PKCS7 analyzer")
         from .formats.pkcs7 import analyze_pkcs7
         analysis_result = analyze_pkcs7(file_content, password)
         crypto_objects = {}
@@ -139,7 +140,7 @@ def _analyze_pem_content_with_crypto_extraction(content_str: str, file_content: 
     
     # Single certificate
     elif content_str.count('-----BEGIN CERTIFICATE-----') == 1:
-        logger.info("Detected single PEM certificate")
+        logger.debug("Detected single PEM certificate")
         from .formats.pem import analyze_pem_certificate
         analysis_result = analyze_pem_certificate(content_str, file_content)
         crypto_objects = {}
@@ -157,7 +158,7 @@ def _analyze_pem_content_with_crypto_extraction(content_str: str, file_content: 
         return {'analysis': analysis_result, 'crypto_objects': crypto_objects}
         
     elif '-----BEGIN CERTIFICATE REQUEST-----' in content_str:
-        logger.info("Detected PEM CSR")
+        logger.debug("Detected PEM CSR")
         from .formats.pem import analyze_pem_csr
         analysis_result = analyze_pem_csr(file_content)
         crypto_objects = {}
@@ -178,7 +179,7 @@ def _analyze_pem_content_with_crypto_extraction(content_str: str, file_content: 
           '-----BEGIN RSA PRIVATE KEY-----' in content_str or
           '-----BEGIN EC PRIVATE KEY-----' in content_str or
           '-----BEGIN ENCRYPTED PRIVATE KEY-----' in content_str):
-        logger.info("Detected PEM private key")
+        logger.debug("Detected PEM private key")
         from .formats.pem import analyze_pem_private_key
         analysis_result = analyze_pem_private_key(file_content, password)
         crypto_objects = {}
@@ -199,7 +200,7 @@ def _analyze_pem_content_with_crypto_extraction(content_str: str, file_content: 
         return {'analysis': analysis_result, 'crypto_objects': crypto_objects}
         
     elif '-----BEGIN PUBLIC KEY-----' in content_str:
-        logger.info("Detected PEM public key")
+        logger.debug("Detected PEM public key")
         from .formats.pem import analyze_pem_public_key
         analysis_result = analyze_pem_public_key(file_content)
         crypto_objects = {}
@@ -426,11 +427,11 @@ def _extract_pkcs7_crypto_objects(analysis_result: Dict[str, Any], file_content:
         if certificates:
             if len(certificates) == 1:
                 crypto_objects['certificate'] = certificates[0]
-                logger.info(f"Stored single PKCS7 certificate crypto object")
+                logger.debug(f"Stored single PKCS7 certificate crypto object")
             else:
                 crypto_objects['certificate'] = certificates[0]  # Main certificate
                 crypto_objects['additional_certificates'] = certificates[1:]  # Additional certificates
-                logger.info(f"Stored PKCS7 main certificate + {len(certificates)-1} additional certificates")
+                logger.debug(f"Stored PKCS7 main certificate + {len(certificates)-1} additional certificates")
         else:
             logger.warning("No certificates extracted from PKCS7")
             
@@ -485,9 +486,9 @@ def _extract_certificates_from_pkcs7_der(der_data: bytes) -> List:
                                     if attribute.oid._name == 'commonName':
                                         subject_cn = attribute.value
                                         break
-                                logger.info(f"Extracted certificate {cert_count}: {subject_cn}")
+                                logger.debug(f"Extracted certificate {cert_count}: {subject_cn}")
                             except Exception:
-                                logger.info(f"Extracted certificate {cert_count} (subject extraction failed)")
+                                logger.debug(f"Extracted certificate {cert_count} (subject extraction failed)")
                             
                             # Skip past this certificate
                             i += cert_length * 2
@@ -501,7 +502,7 @@ def _extract_certificates_from_pkcs7_der(der_data: bytes) -> List:
             
             i += 2
         
-        logger.info(f"PKCS7 certificate extraction complete: found {len(certificates)} certificates")
+        logger.debug(f"PKCS7 certificate extraction complete: found {len(certificates)} certificates")
         
     except Exception as e:
         logger.error(f"Error extracting certificates from PKCS7 DER: {e}")

@@ -50,11 +50,11 @@ class CertificateStorage:
         ))
         
         # Log sorted state
-        logger.info(f"[{session_id}] Certificate hierarchy order after sorting:")
+        logger.debug(f"[{session_id}] Certificate hierarchy order after sorting:")
         for i, cert in enumerate(sorted_certs):
             order = HierarchyManager.get_certificate_order(cert)
             analysis = cert.get('analysis', {})
-            logger.info(f"  [{i}] Order {order}: {cert.get('filename')} - {analysis.get('type')}")
+            logger.debug(f"  [{i}] Order {order}: {cert.get('filename')} - {analysis.get('type')}")
         
         logger.debug(f"[{session_id}] Returning {len(sorted_certs)} sorted certificates")
         return sorted_certs
@@ -104,7 +104,7 @@ class CertificateStorage:
             final_count = len(certificates)
             
             logger.info(f"[{session_id}] Certificate added successfully")
-            logger.info(f"[{session_id}] Storage count: {initial_count} -> {final_count}")
+            logger.debug(f"[{session_id}] Storage count: {initial_count} -> {final_count}")
             logger.debug(f"[{session_id}] Storage state after add:")
             StorageUtils.log_storage_state(certificates, session_id)
             result = certificate_data
@@ -135,7 +135,7 @@ class CertificateStorage:
             logger.debug(f"  [{i}] {cert_filename} - hash: {cert_hash[:16] if cert_hash else 'NO_HASH'}...")
             
             if cert_hash == content_hash:
-                logger.info(f"[{session_id}] HASH MATCH FOUND: {cert_filename}")
+                logger.debug(f"[{session_id}] HASH MATCH FOUND: {cert_filename}")
                 logger.debug(f"[{session_id}] Matched certificate details:")
                 logger.debug(f"  ID: {cert.get('id')}")
                 logger.debug(f"  Filename: {cert.get('filename')}")
@@ -165,7 +165,7 @@ class CertificateStorage:
             logger.debug(f"  [{i}] {cert_filename} - ID: {cert_id_stored}")
             
             if cert_id_stored == cert_id:
-                logger.info(f"[{session_id}] ID MATCH FOUND: {cert_filename}")
+                logger.debug(f"[{session_id}] ID MATCH FOUND: {cert_filename}")
                 return cert
         
         logger.debug(f"[{session_id}] No ID match found for: {cert_id}")
@@ -176,8 +176,7 @@ class CertificateStorage:
         """Remove certificate by ID with crypto objects cleanup"""
         CertificateStorage._validate_session_id(session_id)
         
-        logger.info(f"=== STORAGE REMOVE OPERATION [{session_id}] ===")
-        logger.info(f"[{session_id}] Removing certificate with ID: {cert_id}")
+        logger.debug(f"[{session_id}] STORAGE REMOVE OPERATION: Removing certificate with ID: {cert_id}")
         
         # Remove crypto objects first (session-aware)
         CryptoObjectsStorage.remove_crypto_objects(cert_id, session_id)
@@ -197,7 +196,7 @@ class CertificateStorage:
                 break
         
         if cert_to_remove:
-            logger.info(f"[{session_id}] Found certificate to remove: {cert_to_remove.get('filename')}")
+            logger.info(f"[{session_id}] STORAGE REMOVE OPERATION: Removing certificate {cert_to_remove.get('filename')}")
             logger.debug(f"[{session_id}] Certificate details:")
             logger.debug(f"  Type: {cert_to_remove.get('analysis', {}).get('type')}")
             logger.debug(f"  Hash: {cert_to_remove.get('analysis', {}).get('content_hash', 'NO_HASH')[:16]}...")
@@ -210,7 +209,7 @@ class CertificateStorage:
         success = final_count < initial_count
         
         logger.info(f"[{session_id}] Remove operation result: {'SUCCESS' if success else 'FAILED'}")
-        logger.info(f"[{session_id}] Storage count: {initial_count} -> {final_count}")
+        logger.debug(f"[{session_id}] Storage count: {initial_count} -> {final_count}")
         
         if success:
             logger.debug(f"[{session_id}] Storage state after removal:")
@@ -231,8 +230,7 @@ class CertificateStorage:
         """Replace existing certificate with new one in session"""
         CertificateStorage._validate_session_id(session_id)
         
-        logger.info(f"=== STORAGE REPLACE OPERATION [{session_id}] ===")
-        logger.info(f"[{session_id}] Replacing {existing_cert.get('filename')} with {new_cert.get('filename')}")
+        logger.info(f"[{session_id}] STORAGE REPLACE OPERATION: Replacing {existing_cert.get('filename')} with {new_cert.get('filename')}")
         
         # Get session data from SessionManager
         from session_manager import SessionManager
@@ -252,7 +250,7 @@ class CertificateStorage:
         # Find and replace the certificate
         for i, cert in enumerate(certificates):
             if cert.get('id') == existing_cert.get('id'):
-                logger.info(f"[{session_id}] Found certificate to replace at index {i}")
+                logger.debug(f"[{session_id}] Found certificate to replace at index {i}")
                 logger.debug(f"[{session_id}] Before replace - cert at [{i}]: {cert.get('filename')}")
                 
                 certificates[i] = new_cert
@@ -282,7 +280,7 @@ class CertificateStorage:
         """Clear all certificates, crypto objects, and PKI bundle for session"""
         CertificateStorage._validate_session_id(session_id)
         
-        logger.info(f"=== STORAGE CLEAR ALL OPERATION [{session_id}] ===")
+        logger.info(f"[{session_id}] STORAGE CLEAR ALL OPERATION: Clearing all certificates, crypto objects, and PKI bundle")
         
         # Get session data from SessionManager
         from session_manager import SessionManager
@@ -291,7 +289,7 @@ class CertificateStorage:
         
         count = len(certificates)
         
-        logger.info(f"[{session_id}] Clearing {count} certificates from session storage")
+        logger.debug(f"[{session_id}] Clearing {count} certificates from session storage")
         for i, cert in enumerate(certificates):
             logger.debug(f"  Clearing [{i}]: {cert.get('filename')} - {cert.get('analysis', {}).get('type')}")
             # Remove crypto objects for each certificate (session-aware)

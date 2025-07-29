@@ -4,6 +4,7 @@
 import datetime
 import logging
 import uuid
+from certificates.storage import CertificateStorage
 from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, Form
 
@@ -22,11 +23,11 @@ async def analyze_certificate(
     session_id: str = Depends(get_session_id)
 ):
     """Analyze uploaded certificate file with crypto object storage"""
-    from certificates.storage import CertificateStorage
     from certificates.analyzer import analyze_uploaded_certificate
     
     try:
         file_content = await certificate.read()
+        logger.info(f"[{session_id}] === RUNNING UPLOADED CERTIFICATE ===")
         
         # Analyze the certificate - returns both analysis and crypto objects
         result = analyze_uploaded_certificate(file_content, certificate.filename or "unknown", password)
@@ -44,6 +45,7 @@ async def analyze_certificate(
         # Check if password is required
         if analysis.get('requiresPassword', False):
             if not password:
+                logger.info(f"[{session_id}] Password required for '{certificate.filename}' - {analysis.get('type', 'Unknown type')}")
                 return {
                     "success": False,
                     "requiresPassword": True,
@@ -67,13 +69,13 @@ async def analyze_certificate(
                 }
         
         # Check for duplicates based on content hash
-        logger.info(f"[{session_id}] Checking for duplicates with content_hash: {analysis['content_hash']}")
+        logger.debug(f"[{session_id}] Checking for duplicates with content_hash: {analysis['content_hash']}")
         existing_cert = CertificateStorage.find_by_hash(analysis["content_hash"], session_id)
         
         if existing_cert:
-            logger.info(f"[{session_id}] Found duplicate: {existing_cert.get('filename')} has same content_hash")
+            logger.debug(f"[{session_id}] Found duplicate: {existing_cert.get('filename')} has same content_hash")
         else:
-            logger.info(f"[{session_id}] No duplicate found for content_hash: {analysis['content_hash']}")
+            logger.debug(f"[{session_id}] No duplicate found for content_hash: {analysis['content_hash']}")
         
         # Create certificate data (without crypto objects)
         certificate_data = {
@@ -90,6 +92,7 @@ async def analyze_certificate(
         
         if existing_cert:
             # Replace existing certificate
+            logger.info(f"[{session_id}] Replacing duplicate: '{existing_cert.get('filename')}' -> '{certificate.filename}'")
             replaced_cert = CertificateStorage.replace(existing_cert, certificate_data, session_id)
             added_certificates.append(replaced_cert)
             # Store crypto objects separately for the replaced certificate
@@ -97,6 +100,7 @@ async def analyze_certificate(
                 CertificateStorage.store_crypto_objects(replaced_cert['id'], crypto_objects, session_id)
         else:
             # Add new certificate
+            logger.info(f"[{session_id}] Added new {analysis.get('type', 'certificate')}: '{certificate.filename}'")
             new_cert = CertificateStorage.add(certificate_data, session_id)
             added_certificates.append(new_cert)
             # Store crypto objects separately for the new certificate
@@ -139,18 +143,19 @@ async def analyze_certificate(
                 
                 if item['type'] == 'Private Key' and pkcs12_private_key:
                     item_crypto_objects['private_key'] = pkcs12_private_key
-                    logger.info(f"[{session_id}] ✓ Storing private key crypto object for {item_filename}")
+                    logger.debug(f"[{session_id}] ✓ Storing private key crypto object for {item_filename}")
                     
                 elif item['type'] == 'Certificate' and pkcs12_additional_certs:
                     # Use the corresponding additional certificate by index
                     if additional_cert_index < len(pkcs12_additional_certs):
                         item_crypto_objects['certificate'] = pkcs12_additional_certs[additional_cert_index]
-                        logger.info(f"[{session_id}] ✓ Storing certificate crypto object for {item_filename} (cert index {additional_cert_index})")
+                        logger.debug(f"[{session_id}] ✓ Storing certificate crypto object for {item_filename} (cert index {additional_cert_index})")
                         additional_cert_index += 1
                     else:
                         logger.warning(f"[{session_id}] No additional certificate available for {item_filename} at index {additional_cert_index}")
                 
                 if existing_additional_item:
+                    logger.info(f"[{session_id}] Replaced {item['type']}: '{existing_additional_item.get('filename')}' -> '{item_filename}'")
                     # Replace existing additional item
                     replaced_item = CertificateStorage.replace(existing_additional_item, additional_data, session_id)
                     added_certificates.append(replaced_item)
@@ -160,6 +165,7 @@ async def analyze_certificate(
                         logger.debug(f"[{session_id}] Stored crypto objects for replaced item: {list(item_crypto_objects.keys())}")
                     logger.info(f"[{session_id}] Replaced duplicate {item['type']}: {existing_additional_item.get('filename')} -> {item_filename}")
                 else:
+                    logger.info(f"[{session_id}] Added {item['type']} from PKCS12: '{item_filename}'")
                     # Add new additional item
                     added_item = CertificateStorage.add(additional_data, session_id)
                     added_certificates.append(added_item)
@@ -167,8 +173,10 @@ async def analyze_certificate(
                     if item_crypto_objects:
                         CertificateStorage.store_crypto_objects(added_item['id'], item_crypto_objects, session_id)
                         logger.debug(f"[{session_id}] Stored crypto objects for new item: {list(item_crypto_objects.keys())}")
-                    logger.info(f"[{session_id}] Added new {item['type']} from PKCS12: {item_filename}")
+                    logger.debug(f"[{session_id}] Added new {item['type']} from PKCS12: {item_filename}")
         
+        total_items = len(added_certificates)
+        logger.info(f"[{session_id}] Analysis complete: {total_items} item(s) processed for '{certificate.filename}'")
         # Return response (no crypto objects in JSON response)
         if existing_cert:
             return {
@@ -204,8 +212,7 @@ async def analyze_certificate(
 @router.get("/certificates", tags=["certificates"])
 def get_certificates_simple(session_id: str = Depends(get_session_id)):
     """Get all stored certificates (simple endpoint - no auth required)"""
-    from certificates.storage import CertificateStorage
-    
+    logger.info(f"[{session_id}] Retrieving all certificates")
     try:
         certificates = CertificateStorage.get_all(session_id)
         logger.info(f"[{session_id}] Retrieved {len(certificates)} certificates")
@@ -230,7 +237,7 @@ def get_certificates(
     session_id: str = Depends(get_session_id)
 ):
     """Get all stored certificates"""
-    from certificates.storage import CertificateStorage
+    logger.info(f"[{session_id}] User '{current_user.username}' retrieving certificates")
     
     try:
         certificates = CertificateStorage.get_all(session_id)
@@ -254,7 +261,7 @@ def get_certificates(
 @router.get("/validate", tags=["validation"])
 def validate_certificates_simple(session_id: str = Depends(get_session_id)):
     """Run validation checks on uploaded certificates using real cryptographic comparison"""
-    from certificates.storage import CertificateStorage
+    logger.info(f"[{session_id}] Starting certificate validation")
     from certificates.validation.validator import run_validations
     
     try:
@@ -292,22 +299,26 @@ def validate_certificates_simple(session_id: str = Depends(get_session_id)):
         validations = run_validations(certificates_with_crypto, session_id)
         
         # CRITICAL DEBUG: Log exactly what we're returning
-        logger.info(f"[{session_id}] === FINAL VALIDATION RESULTS ===")
+        logger.debug(f"[{session_id}] === FINAL VALIDATION RESULTS ===")
         validation_dicts = []
         for i, validation in enumerate(validations):
             validation_dict = validation.to_dict()
             validation_dicts.append(validation_dict)
             
-            logger.info(f"[{session_id}] Validation {i}:")
-            logger.info(f"[{session_id}]   Type: {validation_dict.get('validationType')}")
-            logger.info(f"[{session_id}]   isValid (dict): {validation_dict.get('isValid')}")
-            logger.info(f"[{session_id}]   Raw is_valid: {validation.is_valid}")
-            logger.info(f"[{session_id}]   Error: {validation_dict.get('error')}")
+            logger.debug(f"[{session_id}] Validation {i}:")
+            logger.debug(f"[{session_id}]   Type: {validation_dict.get('validationType')}")
+            logger.debug(f"[{session_id}]   isValid (dict): {validation_dict.get('isValid')}")
+            logger.debug(f"[{session_id}]   Raw is_valid: {validation.is_valid}")
+            logger.debug(f"[{session_id}]   Error: {validation_dict.get('error')}")
             
             # Check if there's any manipulation happening
             if validation.is_valid != validation_dict.get('isValid'):
                 logger.error(f"[{session_id}] MISMATCH! Raw: {validation.is_valid}, Dict: {validation_dict.get('isValid')}")
         
+        passed_count = sum(1 for v in validations if v.is_valid)
+        failed_count = len(validations) - passed_count
+        logger.info(f"[{session_id}] Validation complete: {passed_count} passed, {failed_count} failed ({len(validations)} total)")
+
         response_data = {
             "success": True,
             "validations": validation_dicts,
@@ -316,7 +327,7 @@ def validate_certificates_simple(session_id: str = Depends(get_session_id)):
             "session_id": session_id
         }
         
-        logger.info(f"[{session_id}] Returning response with {len(validation_dicts)} validations")
+        logger.debug(f"[{session_id}] Returning response with {len(validation_dicts)} validations")
         return response_data
         
     except Exception as e:
@@ -334,8 +345,9 @@ def validate_certificates(
     session_id: str = Depends(get_session_id)
 ):
     """Run validation checks on stored certificates"""
+    logger.info(f"[{session_id}] User '{current_user.username}' starting certificate validation")
+
     from certificates.validation import run_validations
-    from certificates.storage import CertificateStorage
     
     try:
         all_certificates = CertificateStorage.get_all(session_id)
@@ -366,8 +378,12 @@ def validate_certificates(
         
         validations = run_validations(certificates_with_crypto, session_id)
         
-        logger.info(f"[{session_id}] Validation completed: {len(validations)} results for user {current_user.username}")
+        logger.debug(f"[{session_id}] Validation completed: {len(validations)} results for user {current_user.username}")
         
+        passed_count = sum(1 for v in validations if getattr(v, 'is_valid', False))
+        failed_count = len(validations) - passed_count
+        logger.info(f"[{session_id}] Validation complete for user '{current_user.username}': {passed_count} passed, {failed_count} failed")
+
         return {
             "success": True,
             "validations": validations,
@@ -391,7 +407,8 @@ def delete_certificate(
     session_id: str = Depends(get_session_id)
 ):
     """Delete certificate by ID"""
-    from certificates.storage import CertificateStorage
+
+    logger.info(f"[{session_id}] Attempting to delete certificate '{certificate_id}'")
     
     success = CertificateStorage.remove_by_id(certificate_id, session_id)
     if success:
@@ -408,7 +425,8 @@ def delete_certificate(
 @router.delete("/certificates", tags=["certificates"])
 def clear_all_certificates(session_id: str = Depends(get_session_id)):
     """Clear all certificates"""
-    from certificates.storage import CertificateStorage
+
+    logger.info(f"[{session_id}] Clearing all certificates")
     
     CertificateStorage.clear_all(session_id)
     logger.info(f"[{session_id}] All certificates cleared")

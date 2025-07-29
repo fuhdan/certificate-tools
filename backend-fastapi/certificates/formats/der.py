@@ -20,7 +20,6 @@ logger.debug("formats/der.py initialized")
 
 def analyze_der_certificate(file_content: bytes) -> Dict[str, Any]:
     """Analyze DER certificate content"""
-    logger.info(f"=== DER CERTIFICATE ANALYSIS ===")
     logger.debug(f"File content length: {len(file_content)} bytes")
     logger.debug(f"First 16 bytes (hex): {file_content[:16].hex()}")
     
@@ -60,7 +59,6 @@ def analyze_der_certificate(file_content: bytes) -> Dict[str, Any]:
 
 def analyze_der_csr(file_content: bytes) -> Dict[str, Any]:
     """Analyze DER CSR content"""
-    logger.info(f"=== DER CSR ANALYSIS ===")
     logger.debug(f"File content length: {len(file_content)} bytes")
     logger.debug(f"First 16 bytes (hex): {file_content[:16].hex()}")
     
@@ -95,7 +93,6 @@ def analyze_der_csr(file_content: bytes) -> Dict[str, Any]:
 
 def analyze_der_private_key(file_content: bytes, password: Optional[str]) -> Dict[str, Any]:
     """Analyze DER private key content"""
-    logger.info(f"=== DER PRIVATE KEY ANALYSIS ===")
     logger.debug(f"File content length: {len(file_content)} bytes")
     logger.debug(f"Password provided: {'YES' if password else 'NO'}")
     logger.debug(f"First 16 bytes (hex): {file_content[:16].hex()}")
@@ -105,7 +102,7 @@ def analyze_der_private_key(file_content: bytes, password: Optional[str]) -> Dic
         # Try without password first
         private_key = serialization.load_der_private_key(file_content, password=None)
         
-        logger.info("Successfully loaded unencrypted DER private key")
+        logger.debug("Successfully loaded unencrypted DER private key")
         # Unencrypted private key
         normalized_hash = generate_normalized_private_key_hash(private_key)
         logger.debug(f"DER private key normalized hash: {normalized_hash[:16]}...")
@@ -133,7 +130,7 @@ def analyze_der_private_key(file_content: bytes, password: Optional[str]) -> Dic
         if any(keyword in error_str for keyword in ['encrypted', 'password', 'decrypt', 'bad decrypt']):
             logger.info("DER private key appears to be encrypted")
             if password is None:
-                logger.info("No password provided for encrypted DER private key")
+                logger.debug("No password provided for encrypted DER private key")
                 return {
                     "type": "Private Key - Password Required",
                     "isValid": False,
@@ -155,7 +152,7 @@ def analyze_der_private_key(file_content: bytes, password: Optional[str]) -> Dic
                     logger.debug(f"Password encoded to {len(password_bytes)} bytes")
                     
                     private_key = serialization.load_der_private_key(file_content, password=password_bytes)
-                    logger.info("Successfully decrypted DER private key with password")
+                    logger.info("Successfully decrypted DER private key with password: : {details.get('algorithm', 'Unknown')} {details.get('keySize', 0)} bits")
                     
                     # Success with password
                     normalized_hash = generate_normalized_private_key_hash(private_key)
@@ -171,7 +168,7 @@ def analyze_der_private_key(file_content: bytes, password: Optional[str]) -> Dic
                         "details": details
                     }
                     
-                    logger.info(f"Encrypted DER private key analysis complete: {details.get('algorithm', 'Unknown')} {details.get('keySize', 0)} bits")
+                    logger.debug(f"Encrypted DER private key analysis complete: {details.get('algorithm', 'Unknown')} {details.get('keySize', 0)} bits")
                     return result
                     
                 except Exception as pwd_error:

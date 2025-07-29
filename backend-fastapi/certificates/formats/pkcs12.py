@@ -66,7 +66,7 @@ def analyze_pkcs12(file_content: bytes, password: Optional[str]) -> Dict[str, An
             logger.info("PKCS12 appears to be password-protected")
             # It's password-protected
             if not password:
-                logger.info("No password provided for password-protected PKCS12")
+                logger.debug("No password provided for password-protected PKCS12")
                 return {
                     "type": "PKCS12 Certificate - Password Required",
                     "isValid": False,
@@ -133,8 +133,7 @@ def analyze_pkcs12(file_content: bytes, password: Optional[str]) -> Dict[str, An
 
 def _process_pkcs12_success(cert, private_key, additional_certs) -> Dict[str, Any]:
     """Process successfully parsed PKCS12 content - extract all components"""
-    logger.info(f"=== PKCS12 SUCCESS PROCESSING ===")
-    logger.debug("Processing successfully parsed PKCS12 components...")
+    logger.debug(f"=== PKCS12 SUCCESS PROCESSING ===")
     
     # Log component details
     if cert:
@@ -184,11 +183,11 @@ def _process_pkcs12_success(cert, private_key, additional_certs) -> Dict[str, An
     if cert:
         # Use main certificate hash - same as standalone certificates
         content_hash = generate_certificate_hash(cert)
-        logger.info(f"PKCS12 using main certificate hash for duplicate detection: {content_hash[:16]}...")
+        logger.debug(f"PKCS12 using main certificate hash for duplicate detection: {content_hash[:16]}...")
     else:
         # No main certificate - use combined hash as fallback
         content_hash = generate_pkcs12_content_hash(cert, private_key, additional_certs)
-        logger.info(f"PKCS12 no main certificate, using combined hash: {content_hash[:16]}...")
+        logger.debug(f"PKCS12 no main certificate, using combined hash: {content_hash[:16]}...")
     
     # Extract certificate details if available
     details = None
@@ -229,7 +228,7 @@ def _process_pkcs12_success(cert, private_key, additional_certs) -> Dict[str, An
                 "content_hash": key_hash,  # Use consistent hash based on key material
                 "details": key_details
             })
-            logger.info(f"Extracted private key from PKCS12 with hash: {key_hash[:16]}...")
+            logger.debug(f"Extracted private key from PKCS12 with hash: {key_hash[:16]}...")
         except Exception as key_err:
             logger.error(f"Error extracting private key from PKCS12: {key_err}")
             import traceback
@@ -255,7 +254,7 @@ def _process_pkcs12_success(cert, private_key, additional_certs) -> Dict[str, An
                         "content_hash": cert_hash,
                         "details": cert_details
                     })
-                    logger.info(f"Extracted additional certificate {i} from PKCS12 with hash: {cert_hash[:16]}...")
+                    logger.debug(f"Extracted additional certificate {i} from PKCS12 with hash: {cert_hash[:16]}...")
                 except Exception as cert_err:
                     logger.error(f"Error extracting additional certificate {i} from PKCS12: {cert_err}")
                     import traceback
@@ -264,11 +263,19 @@ def _process_pkcs12_success(cert, private_key, additional_certs) -> Dict[str, An
     # Add additional items to result if any were found
     if additional_items:
         result["additional_items"] = additional_items
-        logger.info(f"PKCS12 contains {len(additional_items)} additional items")
+        logger.debug(f"PKCS12 contains {len(additional_items)} additional items")
         for i, item in enumerate(additional_items):
             logger.debug(f"  Additional item [{i}]: {item['type']} - {item['content_hash'][:16]}...")
     else:
         logger.debug("No additional items extracted from PKCS12")
     
-    logger.info(f"PKCS12 processing complete - main type: {result['type']}")
+    # Generate summary log
+    parts = [f"{int(bool(cert))} Certificate", f"{int(bool(private_key))} Private Key"]
+    if additional_certs:
+        parts.append(f"1 Chain ({len(additional_certs)} certs)")
+    
+    total = sum([bool(cert), bool(private_key), len(additional_certs or [])])
+    logger.info(f"PKCS12 extraction complete: {', '.join(parts)} ({total} total)")
+
+    logger.debug(f"PKCS12 processing complete - main type: {result['type']}")
     return result

@@ -6,6 +6,7 @@ import re
 import base64
 import hashlib
 import json
+from ..utils.hashing import generate_certificate_hash, generate_file_hash
 from typing import Dict, Any, Optional, List
 from cryptography import x509
 from cryptography.x509 import oid
@@ -61,13 +62,12 @@ def analyze_pkcs7(file_content: bytes, password: Optional[str]) -> Dict[str, Any
         return {
             "type": "PKCS7 (Error)",
             "isValid": False,
-            "content_hash": _generate_file_hash(file_content),
+            "content_hash": generate_file_hash(file_content),
             "error": str(e)
         }
 
 def _analyze_pkcs7_pem(content_str: str, file_content: bytes) -> Dict[str, Any]:
     """Analyze PEM PKCS7 content"""
-    logger.info(f"=== PEM PKCS7 ANALYSIS ===")
     logger.debug(f"Content string length: {len(content_str)} characters")
     
     try:
@@ -124,14 +124,14 @@ def _analyze_pkcs7_pem(content_str: str, file_content: bytes) -> Dict[str, Any]:
                         continue
         
         if certificates:
-            logger.info(f"Successfully extracted {len(certificates)} certificates from PEM PKCS7")
+            logger.debug(f"Successfully extracted {len(certificates)} certificates from PEM PKCS7")
             return _process_certificate_chain(certificates, "PEM")
         else:
             logger.warning("No certificates found in PEM PKCS7 content")
             return {
                 "type": "PKCS7 (No certificates found)",
                 "isValid": False,
-                "content_hash": _generate_file_hash(file_content)
+                "content_hash": generate_file_hash(file_content)
             }
             
     except Exception as e:
@@ -142,13 +142,13 @@ def _analyze_pkcs7_pem(content_str: str, file_content: bytes) -> Dict[str, Any]:
         return {
             "type": "PKCS7 (PEM Parse Error)",
             "isValid": False,
-            "content_hash": _generate_file_hash(file_content),
+            "content_hash": generate_file_hash(file_content),
             "error": str(e)
         }
 
 def _analyze_pkcs7_der(file_content: bytes) -> Dict[str, Any]:
     """Analyze DER PKCS7 content"""
-    logger.info(f"=== DER PKCS7 ANALYSIS ===")
+    logger.debug(f"=== DER PKCS7 ANALYSIS ===")
     logger.debug(f"File content length: {len(file_content)} bytes")
     logger.debug(f"DER header analysis: {file_content[:16].hex()}")
     
@@ -158,21 +158,21 @@ def _analyze_pkcs7_der(file_content: bytes) -> Dict[str, Any]:
         certificates = _extract_certificates_from_der(file_content)
         
         if certificates:
-            logger.info(f"Successfully extracted {len(certificates)} certificates from DER PKCS7")
+            logger.debug(f"Successfully extracted {len(certificates)} certificates from DER PKCS7")
             return _process_certificate_chain(certificates, "DER")
         else:
             logger.debug("No certificates found via PKCS7 parsing, trying single DER certificate fallback...")
             # Fallback: try to parse as single DER certificate
             try:
                 cert = x509.load_der_x509_certificate(file_content)
-                logger.info("Successfully parsed as single DER certificate (PKCS7 fallback)")
+                logger.debug("Successfully parsed as single DER certificate (PKCS7 fallback)")
                 return _process_certificate_chain([cert], "DER")
             except Exception as fallback_err:
                 logger.error(f"DER PKCS7 single certificate fallback failed: {fallback_err}")
                 return {
                     "type": "PKCS7 (DER Parse Error)",
                     "isValid": False,
-                    "content_hash": _generate_file_hash(file_content),
+                    "content_hash": generate_file_hash(file_content),
                     "error": str(fallback_err)
                 }
         
@@ -184,13 +184,12 @@ def _analyze_pkcs7_der(file_content: bytes) -> Dict[str, Any]:
         return {
             "type": "PKCS7 (DER Error)",
             "isValid": False,
-            "content_hash": _generate_file_hash(file_content),
+            "content_hash": generate_file_hash(file_content),
             "error": str(e)
         }
 
 def _process_certificate_chain(certificates: List, source_format: str) -> Dict[str, Any]:
     """Process a chain of certificates and return analysis result"""
-    logger.info(f"=== CERTIFICATE CHAIN PROCESSING ===")
     logger.debug(f"Processing {len(certificates)} certificates from {source_format} source")
     
     try:
@@ -215,7 +214,7 @@ def _process_certificate_chain(certificates: List, source_format: str) -> Dict[s
         logger.debug(f"Main certificate type determined: {cert_type}")
         
         # Generate content hash from main certificate
-        content_hash = _generate_certificate_hash(main_cert)
+        content_hash = generate_certificate_hash(main_cert)
         logger.debug(f"Main certificate hash: {content_hash[:16]}...")
         
         # Extract certificate details
@@ -250,7 +249,7 @@ def _process_certificate_chain(certificates: List, source_format: str) -> Dict[s
                     except Exception as add_cert_info_err:
                         logger.debug(f"Error extracting additional cert [{i}] info: {add_cert_info_err}")
                     
-                    cert_hash = _generate_certificate_hash(cert)
+                    cert_hash = generate_certificate_hash(cert)
                     cert_details = extract_x509_details(cert)
                     cert_type_additional = _determine_certificate_type(cert)
                     
@@ -265,7 +264,7 @@ def _process_certificate_chain(certificates: List, source_format: str) -> Dict[s
                         "content_hash": cert_hash,
                         "details": cert_details
                     })
-                    logger.info(f"Extracted additional certificate {i} from PKCS7")
+                    logger.debug(f"Extracted additional certificate {i} from PKCS7")
                 except Exception as cert_err:
                     logger.error(f"Error extracting additional certificate {i}: {cert_err}")
                     import traceback
@@ -273,9 +272,9 @@ def _process_certificate_chain(certificates: List, source_format: str) -> Dict[s
             
             if additional_items:
                 result["additional_items"] = additional_items
-                logger.info(f"Added {len(additional_items)} additional certificates to result")
-        
-        logger.info(f"Successfully parsed {source_format} PKCS7 with {len(certificates)} certificates")
+                logger.debug(f"Added {len(additional_items)} additional certificates to result")
+
+        logger.debug(f"Successfully parsed {source_format} PKCS7 with {len(certificates)} certificates")
         return result
         
     except Exception as e:
@@ -286,7 +285,7 @@ def _process_certificate_chain(certificates: List, source_format: str) -> Dict[s
         return {
             "type": "PKCS7 (Processing Error)",
             "isValid": False,
-            "content_hash": _generate_file_hash(str(certificates).encode()),
+            "content_hash": generate_file_hash(str(certificates).encode()),
             "error": str(e)
         }
 
@@ -339,9 +338,9 @@ def _extract_certificates_from_der(der_data: bytes) -> List:
                                     if attribute.oid._name == 'commonName':
                                         subject_cn = attribute.value
                                         break
-                                logger.info(f"Extracted certificate {cert_count} from PKCS7 DER: {subject_cn}")
+                                logger.debug(f"Extracted certificate {cert_count} from PKCS7 DER: {subject_cn}")
                             except Exception as cert_info_err:
-                                logger.info(f"Extracted certificate {cert_count} from PKCS7 DER (info extraction failed)")
+                                logger.debug(f"Extracted certificate {cert_count} from PKCS7 DER (info extraction failed)")
                             
                             # Skip past this certificate
                             i += cert_length * 2
@@ -360,7 +359,16 @@ def _extract_certificates_from_der(der_data: bytes) -> List:
             
             i += 2  # Move to next byte
         
-        logger.info(f"Certificate extraction complete: found {len(certificates)} certificates")
+        # Generate summary log
+        additional_count = len(certificates) - 1 if len(certificates) > 1 else 0
+        parts = [f"1 Certificate"]
+        if additional_count > 0:
+            parts.append(f"1 Chain ({additional_count} certs)")
+        
+        total = len(certificates)
+        logger.info(f"PKCS7 extraction complete: {', '.join(parts)} ({total} total)")
+
+        # logger.info(f"Certificate extraction complete: found {len(certificates)} certificates")
         return certificates
         
     except Exception as e:
@@ -389,20 +397,3 @@ def _determine_certificate_type(cert) -> str:
     cert_type = "CA Certificate" if is_ca else "Certificate"
     logger.debug(f"Certificate type determined: {cert_type}")
     return cert_type
-
-def _generate_certificate_hash(cert) -> str:
-    """Generate hash from certificate DER encoding"""
-    try:
-        der_bytes = cert.public_bytes(serialization.Encoding.DER)
-        hash_value = hashlib.sha256(der_bytes).hexdigest()
-        logger.debug(f"Generated certificate hash: {hash_value[:16]}...")
-        return hash_value
-    except Exception as e:
-        logger.error(f"Error generating certificate hash: {e}")
-        return hashlib.sha256(str(cert).encode()).hexdigest()
-
-def _generate_file_hash(file_content: bytes) -> str:
-    """Generate hash from file content"""
-    hash_value = hashlib.sha256(file_content).hexdigest()
-    logger.debug(f"Generated file hash: {hash_value[:16]}...")
-    return hash_value

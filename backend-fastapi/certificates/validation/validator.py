@@ -1,5 +1,4 @@
 # backend-fastapi/certificates/validation/validator.py
-# FIXED validation orchestrator - now with session support and proper PKCS7 chain support
 
 import logging
 from typing import Dict, Any, List, Optional
@@ -12,7 +11,9 @@ from .csr_certificate import validate_csr_certificate_match
 from .private_key_cert import validate_private_key_certificate_match
 from .chain_validation import validate_certificate_chain
 
+
 logger = logging.getLogger(__name__)
+
 
 def run_validations(certificates: List[Dict[str, Any]], session_id: str) -> List[ValidationResult]:
     """Run INTELLIGENT validations - works with certificates data within session scope"""
@@ -38,15 +39,13 @@ def run_validations(certificates: List[Dict[str, Any]], session_id: str) -> List
         
         # Skip if cert_id is None
         if cert_id is None:
-            logger.warning(f"Skipping certificate with no ID: {filename}")
+            logger.warning(f"[{session_id}] Skipping certificate with no ID: {filename}")
             continue
         
         # Get crypto objects from separate storage - NO SESSION DEPENDENCY
         # The certificates passed to validation should already contain everything needed
         # If crypto objects are not accessible, skip crypto-based validation for that cert
         try:
-            # We'll make this work without session dependency by using a default approach
-            # The router calling this should ensure the certificates come from the right session
             crypto_objects = {}
             
             # Check if crypto objects are embedded in the certificate data
@@ -58,11 +57,11 @@ def run_validations(certificates: List[Dict[str, Any]], session_id: str) -> List
                     crypto_objects = CertificateStorage.get_crypto_objects(cert_id, settings.DEFAULT_SESSION_ID)
                 except:
                     # If that fails, validation will just skip crypto-based checks for this cert
-                    logger.debug(f"Could not get crypto objects for cert {cert_id} - skipping crypto validation")
+                    logger.debug(f"[{session_id}] Could not get crypto objects for cert {cert_id} - skipping crypto validation")
                     continue
                     
         except Exception as e:
-            logger.warning(f"Error getting crypto objects for {filename}: {e}")
+            logger.warning(f"[{session_id}] Error getting crypto objects for {filename}: {e}")
             continue
         
         if cert_type == 'Private Key' and analysis.get('isValid') and 'private_key' in crypto_objects:
@@ -70,14 +69,14 @@ def run_validations(certificates: List[Dict[str, Any]], session_id: str) -> List
                 'cert_data': cert,
                 'private_key_obj': crypto_objects['private_key']
             })
-            logger.info(f"✓ Found private key: {filename}")
+            logger.debug(f"[{session_id}] ✓ Found private key: {filename}")
             
         elif cert_type == 'CSR' and analysis.get('isValid') and 'csr' in crypto_objects:
             csrs.append({
                 'cert_data': cert,
                 'csr_obj': crypto_objects['csr']
             })
-            logger.info(f"✓ Found CSR: {filename}")
+            logger.debug(f"[{session_id}] ✓ Found CSR: {filename}")
             
         # FIXED: Detect ALL certificate types including "CA Certificate"
         elif ('Certificate' in cert_type and 'Chain' not in cert_type and 
@@ -96,10 +95,10 @@ def run_validations(certificates: List[Dict[str, Any]], session_id: str) -> List
             
             if is_ca:
                 ca_certs.append(cert_info)
-                logger.info(f"✓ Found CA certificate: {filename}")
+                logger.debug(f"[{session_id}] ✓ Found CA certificate: {filename}")
             else:
                 end_entity_certs.append(cert_info)
-                logger.info(f"✓ Found end-entity certificate: {filename}")
+                logger.debug(f"[{session_id}] ✓ Found end-entity certificate: {filename}")
         
         # Handle explicit certificate chains
         elif ('Certificate Chain' in cert_type and analysis.get('isValid')):
@@ -119,18 +118,18 @@ def run_validations(certificates: List[Dict[str, Any]], session_id: str) -> List
                     'filename': filename,
                     'chain_type': 'Certificate Chain'
                 })
-                logger.info(f"✓ Found Certificate Chain: {filename} ({len(all_chain_certs)} certificates)")
+                logger.debug(f"[{session_id}] ✓ Found Certificate Chain: {filename} ({len(all_chain_certs)} certificates)")
     
-    logger.info(f"VALIDATION CANDIDATES:")
-    logger.info(f"  Private Keys: {len(private_keys)}")
-    logger.info(f"  CSRs: {len(csrs)}")
-    logger.info(f"  End-Entity Certificates: {len(end_entity_certs)}")
-    logger.info(f"  CA Certificates: {len(ca_certs)}")
-    logger.info(f"  PKCS7/Certificate Chains: {len(pkcs7_chains)}")
+    logger.info(f"[{session_id}] Validation candidates summary:")
+    logger.info(f"[{session_id}]  Private Keys: {len(private_keys)}")
+    logger.info(f"[{session_id}]  CSRs: {len(csrs)}")
+    logger.info(f"[{session_id}]  End-Entity Certificates: {len(end_entity_certs)}")
+    logger.info(f"[{session_id}]  CA Certificates: {len(ca_certs)}")
+    logger.info(f"[{session_id}]  PKCS7/Certificate Chains: {len(pkcs7_chains)}")
     
     # 1. INTELLIGENT: Private Key ↔ CSR (only if both exist)
     if private_keys and csrs:
-        logger.info("Running Private Key ↔ CSR validations...")
+        logger.debug(f"[{session_id}] Running Private Key ↔ CSR validations...")
         for pk_item in private_keys:
             for csr_item in csrs:
                 validation = _validate_private_key_csr(pk_item, csr_item, session_id)
@@ -138,7 +137,7 @@ def run_validations(certificates: List[Dict[str, Any]], session_id: str) -> List
     
     # 2. INTELLIGENT: CSR ↔ End-Entity Certificate (only end-entity certs)
     if csrs and end_entity_certs:
-        logger.info("Running CSR ↔ End-Entity Certificate validations...")
+        logger.debug(f"[{session_id}] Running CSR ↔ End-Entity Certificate validations...")
         for csr_item in csrs:
             for cert_item in end_entity_certs:
                 validation = _validate_csr_certificate(csr_item, cert_item, session_id)
@@ -146,7 +145,7 @@ def run_validations(certificates: List[Dict[str, Any]], session_id: str) -> List
     
     # 3. INTELLIGENT: Private Key ↔ End-Entity Certificate (only end-entity certs)
     if private_keys and end_entity_certs:
-        logger.info("Running Private Key ↔ End-Entity Certificate validations...")
+        logger.debug(f"[{session_id}] Running Private Key ↔ End-Entity Certificate validations...")
         for pk_item in private_keys:
             for cert_item in end_entity_certs:
                 validation = _validate_private_key_certificate(pk_item, cert_item, session_id)
@@ -155,7 +154,7 @@ def run_validations(certificates: List[Dict[str, Any]], session_id: str) -> List
     # 4. FIXED: Certificate Chain Validation (individual certificates)
     all_certs = end_entity_certs + ca_certs
     if len(all_certs) >= 2:
-        logger.info("Running Certificate Chain validations...")
+        logger.debug(f"[{session_id}] Running Certificate Chain validations...")
         try:
             # Convert to the format expected by validate_certificate_chain
             cert_list = []
@@ -164,11 +163,11 @@ def run_validations(certificates: List[Dict[str, Any]], session_id: str) -> List
             
             chain_validations = validate_certificate_chain(cert_list, session_id)
             validations.extend(chain_validations)
-            logger.info(f"Completed {len(chain_validations)} certificate chain validations")
+            logger.info(f"[{session_id}] Completed {len(chain_validations)} certificate chain validations")
         except Exception as e:
-            logger.error(f"Error during certificate chain validation: {e}")
+            logger.error(f"[{session_id}] Error during certificate chain validation: {e}")
             import traceback
-            logger.error(f"Full traceback: {traceback.format_exc()}")
+            logger.error(f"[{session_id}] Full traceback: {traceback.format_exc()}")
             validations.append(ValidationResult(
                 is_valid=False,
                 validation_type="Certificate Chain",
@@ -177,16 +176,16 @@ def run_validations(certificates: List[Dict[str, Any]], session_id: str) -> List
     
     # 5. FIXED: PKCS7/Certificate Chain Validation
     if pkcs7_chains:
-        logger.info("Running PKCS7/Certificate Chain validations...")
+        logger.debug(f"[{session_id}] Running PKCS7/Certificate Chain validations...")
         for chain_item in pkcs7_chains:
             try:
                 chain_validations = _validate_pkcs7_chain(chain_item)
                 validations.extend(chain_validations)
-                logger.info(f"Completed {chain_item['chain_type']} validation for {chain_item['filename']}")
+                logger.debug(f"[{session_id}] Completed {chain_item['chain_type']} validation for {chain_item['filename']}")
             except Exception as e:
-                logger.error(f"Error during {chain_item['chain_type']} validation: {e}")
+                logger.error(f"[{session_id}] Error during {chain_item['chain_type']} validation: {e}")
                 import traceback
-                logger.error(f"Full traceback: {traceback.format_exc()}")
+                logger.error(f"[{session_id}] Full traceback: {traceback.format_exc()}")
                 validations.append(ValidationResult(
                     is_valid=False,
                     validation_type=f"{chain_item['chain_type']} Validation",
@@ -194,8 +193,9 @@ def run_validations(certificates: List[Dict[str, Any]], session_id: str) -> List
                     details={"filename": chain_item['filename']}
                 ))
     
-    logger.info(f"Completed {len(validations)} INTELLIGENT validations")
+    logger.info(f"[{session_id}] Completed {len(validations)} INTELLIGENT validations")
     return validations
+
 
 def _validate_private_key_csr(pk_item: Dict, csr_item: Dict, session_id: str) -> ValidationResult:
     """Validate private key against CSR with proper error handling"""
@@ -212,11 +212,12 @@ def _validate_private_key_csr(pk_item: Dict, csr_item: Dict, session_id: str) ->
                 "csrFile": csr_item['cert_data'].get('filename')
             })
         
-        logger.info(f"Private Key ↔ CSR: {pk_item['cert_data'].get('filename')} ↔ {csr_item['cert_data'].get('filename')}: {'MATCH' if validation.is_valid else 'NO MATCH'}")
+        logger.debug(f"[{session_id}] Private Key ↔ CSR: {pk_item['cert_data'].get('filename')} ↔ {csr_item['cert_data'].get('filename')}: {'MATCH' if validation.is_valid else 'NO MATCH'}")
+        logger.debug(f"[{session_id}] Private Key ↔ CSR: {'MATCH' if validation.is_valid else 'NO MATCH'}")
         return validation
         
     except Exception as e:
-        logger.error(f"Error validating Private Key ↔ CSR: {e}")
+        logger.error(f"[{session_id}] Error validating Private Key ↔ CSR: {e}")
         return ValidationResult(
             is_valid=False,
             validation_type="Private Key <-> CSR",
@@ -226,6 +227,7 @@ def _validate_private_key_csr(pk_item: Dict, csr_item: Dict, session_id: str) ->
                 "csrFile": csr_item['cert_data'].get('filename')
             }
         )
+
 
 def _validate_csr_certificate(csr_item: Dict, cert_item: Dict, session_id: str) -> ValidationResult:
     """Validate CSR against certificate with proper error handling"""
@@ -242,11 +244,12 @@ def _validate_csr_certificate(csr_item: Dict, cert_item: Dict, session_id: str) 
                 "certificateFile": cert_item['cert_data'].get('filename')
             })
         
-        logger.info(f"CSR ↔ Certificate: {csr_item['cert_data'].get('filename')} ↔ {cert_item['cert_data'].get('filename')}: {'MATCH' if validation.is_valid else 'NO MATCH'}")
+        logger.debug(f"[{session_id}] CSR ↔ Certificate: {csr_item['cert_data'].get('filename')} ↔ {cert_item['cert_data'].get('filename')}: {'MATCH' if validation.is_valid else 'NO MATCH'}")
+        logger.info(f"[{session_id}] CSR ↔ Certificate: {'MATCH' if validation.is_valid else 'NO MATCH'}")
         return validation
         
     except Exception as e:
-        logger.error(f"Error validating CSR ↔ Certificate: {e}")
+        logger.error(f"[{session_id}] Error validating CSR ↔ Certificate: {e}")
         return ValidationResult(
             is_valid=False,
             validation_type="CSR <-> Certificate",
@@ -256,6 +259,7 @@ def _validate_csr_certificate(csr_item: Dict, cert_item: Dict, session_id: str) 
                 "certificateFile": cert_item['cert_data'].get('filename')
             }
         )
+
 
 def _validate_private_key_certificate(pk_item: Dict, cert_item: Dict, session_id: str) -> ValidationResult:
     """Validate private key against certificate with proper error handling"""
@@ -272,11 +276,12 @@ def _validate_private_key_certificate(pk_item: Dict, cert_item: Dict, session_id
                 "certificateFile": cert_item['cert_data'].get('filename')
             })
         
-        logger.info(f"Private Key ↔ Certificate: {pk_item['cert_data'].get('filename')} ↔ {cert_item['cert_data'].get('filename')}: {'MATCH' if validation.is_valid else 'NO MATCH'}")
+        logger.debug(f"[{session_id}] Private Key ↔ Certificate: {pk_item['cert_data'].get('filename')} ↔ {cert_item['cert_data'].get('filename')}: {'MATCH' if validation.is_valid else 'NO MATCH'}")
+        logger.info(f"[{session_id}] Private Key ↔ Certificate: {'MATCH' if validation.is_valid else 'NO MATCH'}")
         return validation
         
     except Exception as e:
-        logger.error(f"Error validating Private Key ↔ Certificate: {e}")
+        logger.error(f"[{session_id}] Error validating Private Key ↔ Certificate: {e}")
         return ValidationResult(
             is_valid=False,
             validation_type="Private Key <-> Certificate",
@@ -287,6 +292,7 @@ def _validate_private_key_certificate(pk_item: Dict, cert_item: Dict, session_id
             }
         )
 
+
 def _validate_pkcs7_chain(chain_item: Dict) -> List[ValidationResult]:
     """Validate PKCS7/Certificate chain with detailed analysis"""
     logger.info(f"=== {chain_item['chain_type'].upper()} VALIDATION ===")
@@ -295,7 +301,7 @@ def _validate_pkcs7_chain(chain_item: Dict) -> List[ValidationResult]:
     certificates = chain_item['certificates']
     chain_type = chain_item['chain_type']
     
-    logger.info(f"Validating {chain_type}: {filename} ({len(certificates)} certificates)")
+    logger.debug(f"Validating {chain_type}: {filename} ({len(certificates)} certificates)")
     
     validations = []
     
@@ -346,7 +352,7 @@ def _validate_pkcs7_chain(chain_item: Dict) -> List[ValidationResult]:
         child_cert = child_cert_info['certificate']
         parent_cert = parent_cert_info['certificate']
         
-        logger.info(f"Validating chain link: {child_cert_info['subject']} → {parent_cert_info['subject']}")
+        logger.debug(f"Validating chain link: {child_cert_info['subject']} → {parent_cert_info['subject']}")
         
         # Verify signature
         signature_result = _verify_certificate_signature_detailed(child_cert, parent_cert)
@@ -401,6 +407,7 @@ def _validate_pkcs7_chain(chain_item: Dict) -> List[ValidationResult]:
     
     return validations
 
+
 # FIXED helper functions - removed is_issuer parameter
 def _get_subject_cn(cert):
     """Extract subject common name"""
@@ -412,6 +419,7 @@ def _get_subject_cn(cert):
     except Exception:
         return "Unknown"
 
+
 def _get_issuer_cn(cert):
     """Extract issuer common name"""
     try:
@@ -422,6 +430,7 @@ def _get_issuer_cn(cert):
     except Exception:
         return "Unknown"
 
+
 def _is_ca_certificate(cert):
     """Check if certificate is a CA certificate"""
     try:
@@ -430,12 +439,14 @@ def _is_ca_certificate(cert):
     except:
         return False
 
+
 def _get_certificate_fingerprint(cert):
     """Get SHA256 fingerprint of certificate"""
     from cryptography.hazmat.primitives import serialization
     import hashlib
     cert_der = cert.public_bytes(serialization.Encoding.DER)
     return hashlib.sha256(cert_der).hexdigest()
+
 
 def _verify_certificate_signature_detailed(cert, issuer_cert):
     """Verify certificate signature with detailed results"""
@@ -475,6 +486,7 @@ def _verify_certificate_signature_detailed(cert, issuer_cert):
     
     return result
 
+
 def _order_certificates(cert_info: List[Dict]) -> List[Dict]:
     """Order certificates in a logical chain (end-entity → intermediate → root)"""
     logger.debug("Ordering certificates...")
@@ -497,7 +509,7 @@ def _order_certificates(cert_info: List[Dict]) -> List[Dict]:
                     potential_leaves.append(cert)
             
             if len(potential_leaves) == 1:
-                logger.info(f"Found leaf certificate by issuer analysis: {potential_leaves[0]['subject']}")
+                logger.debug(f"Found leaf certificate by issuer analysis: {potential_leaves[0]['subject']}")
                 end_entities = potential_leaves
                 cas = [info for info in cert_info if info not in end_entities]
             else:
@@ -532,6 +544,7 @@ def _order_certificates(cert_info: List[Dict]) -> List[Dict]:
     logger.info(f"Ordered chain: {' → '.join([cert['subject'] for cert in ordered])}")
     return ordered
 
+
 class CertificateValidator:
     """Session-aware certificate validator"""
     
@@ -542,6 +555,7 @@ class CertificateValidator:
         certificates = CertificateStorage.get_all(session_id)
         validations = run_validations(certificates, session_id)
         return [validation.to_dict() for validation in validations]
+
 
 def validate_certificate_key_match(cert_id: str, key_id: str, session_id: str) -> ValidationResult:
     """Validate certificate matches private key within session"""
@@ -554,6 +568,7 @@ def validate_certificate_key_match(cert_id: str, key_id: str, session_id: str) -
         cert_crypto['certificate']
     )
 
+
 def validate_csr_key_match(csr_id: str, key_id: str, session_id: str) -> ValidationResult:
     """Validate CSR matches private key within session"""
     from certificates.storage import CertificateStorage
@@ -564,6 +579,7 @@ def validate_csr_key_match(csr_id: str, key_id: str, session_id: str) -> Validat
         key_crypto['private_key'],
         csr_crypto['csr']
     )
+
 
 def validate_certificate_issued_from_csr(cert_id: str, csr_id: str, session_id: str) -> ValidationResult:
     """Validate certificate was issued from CSR within session"""
@@ -576,6 +592,7 @@ def validate_certificate_issued_from_csr(cert_id: str, csr_id: str, session_id: 
         cert_crypto['certificate']
     )
 
+
 def validate_private_key_matches_certificate(cert_id: str, session_id: str) -> ValidationResult:
     """Validate private key matches certificate within session"""
     from certificates.storage import CertificateStorage
@@ -585,6 +602,7 @@ def validate_private_key_matches_certificate(cert_id: str, session_id: str) -> V
         crypto_objects['private_key'],
         crypto_objects['certificate']
     )
+
 
 def validate_certificate_trust_chain(session_id: str) -> List[ValidationResult]:
     """Validate certificate trust chain within session"""

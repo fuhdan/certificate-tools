@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 def generate_normalized_private_key_hash(private_key) -> str:
     """Generate a consistent hash for the same private key regardless of format or encryption"""
-    logger.debug(f"=== NORMALIZED PRIVATE KEY HASH GENERATION ===")
+    logger.info(f"=== NORMALIZED PRIVATE KEY HASH GENERATION ===")
     logger.debug(f"Private key type: {type(private_key).__name__}")
     
     try:
@@ -30,9 +30,9 @@ def generate_normalized_private_key_hash(private_key) -> str:
         logger.debug(f"DER header (first 32 bytes): {der_bytes[:32].hex()}")
         
         hash_value = hashlib.sha256(der_bytes).hexdigest()
-        logger.info(f"Generated normalized private key hash: {hash_value[:16]}... (full length: {len(hash_value)})")
         logger.debug(f"Hash input size: {len(der_bytes)} bytes -> SHA256: {hash_value}")
         
+        logger.info(f"Normalized private key hash generated successfully: {hash_value[:16]}...")
         return hash_value
         
     except Exception as e:
@@ -63,7 +63,7 @@ def generate_normalized_private_key_hash(private_key) -> str:
 
 def generate_pkcs12_content_hash(cert, private_key, additional_certs) -> str:
     """Generate a consistent hash for PKCS12 content regardless of password protection"""
-    logger.debug(f"=== PKCS12 CONTENT HASH GENERATION ===")
+    logger.info(f"=== PKCS12 CONTENT HASH GENERATION ===")
     logger.debug(f"Components to hash:")
     logger.debug(f"  Main certificate: {'YES' if cert else 'NO'}")
     logger.debug(f"  Private key: {'YES' if private_key else 'NO'}")
@@ -154,9 +154,9 @@ def generate_pkcs12_content_hash(cert, private_key, additional_certs) -> str:
             logger.debug(f"Combined content header: {combined_content[:32].hex()}")
             
             content_hash = hashlib.sha256(combined_content).hexdigest()
-            logger.info(f"Generated PKCS12 content hash: {content_hash[:16]}... from {len(hash_components)} components")
             logger.debug(f"Full PKCS12 hash: {content_hash}")
             
+            logger.info(f"PKCS12 content hash generated successfully: {content_hash[:16]}...")
             return content_hash
         else:
             # Fallback if no components found
@@ -178,7 +178,7 @@ def generate_pkcs12_content_hash(cert, private_key, additional_certs) -> str:
 
 def generate_certificate_hash(cert) -> str:
     """Generate normalized hash for X.509 certificate"""
-    logger.debug(f"=== CERTIFICATE HASH GENERATION ===")
+    logger.info(f"=== CERTIFICATE HASH GENERATION ===")
     logger.debug(f"Certificate type: {type(cert).__name__}")
     
     try:
@@ -200,9 +200,9 @@ def generate_certificate_hash(cert) -> str:
         logger.debug(f"Certificate DER header: {der_bytes[:32].hex()}")
         
         hash_value = hashlib.sha256(der_bytes).hexdigest()
-        logger.info(f"Generated certificate hash: {hash_value[:16]}... (full length: {len(hash_value)})")
         logger.debug(f"Certificate hash input: {len(der_bytes)} bytes -> SHA256: {hash_value}")
         
+        logger.info(f"Certificate hash generated successfully: {hash_value[:16]}...")
         return hash_value
         
     except Exception as e:
@@ -219,7 +219,7 @@ def generate_certificate_hash(cert) -> str:
 
 def generate_csr_hash(csr) -> str:
     """Generate normalized hash for CSR"""
-    logger.debug(f"=== CSR HASH GENERATION ===")
+    logger.info(f"=== CSR HASH GENERATION ===")
     logger.debug(f"CSR type: {type(csr).__name__}")
     
     try:
@@ -240,9 +240,9 @@ def generate_csr_hash(csr) -> str:
         logger.debug(f"CSR DER header: {der_bytes[:32].hex()}")
         
         hash_value = hashlib.sha256(der_bytes).hexdigest()
-        logger.info(f"Generated CSR hash: {hash_value[:16]}... (full length: {len(hash_value)})")
         logger.debug(f"CSR hash input: {len(der_bytes)} bytes -> SHA256: {hash_value}")
         
+        logger.info(f"CSR hash generated successfully: {hash_value[:16]}...")
         return hash_value
         
     except Exception as e:
@@ -259,7 +259,7 @@ def generate_csr_hash(csr) -> str:
 
 def generate_public_key_hash(public_key) -> str:
     """Generate normalized hash for public key"""
-    logger.debug(f"=== PUBLIC KEY HASH GENERATION ===")
+    logger.info(f"=== PUBLIC KEY HASH GENERATION ===")
     logger.debug(f"Public key type: {type(public_key).__name__}")
     
     try:
@@ -282,9 +282,9 @@ def generate_public_key_hash(public_key) -> str:
         logger.debug(f"Public key DER header: {der_bytes[:32].hex()}")
         
         hash_value = hashlib.sha256(der_bytes).hexdigest()
-        logger.info(f"Generated public key hash: {hash_value[:16]}... (full length: {len(hash_value)})")
         logger.debug(f"Public key hash input: {len(der_bytes)} bytes -> SHA256: {hash_value}")
         
+        logger.info(f"Public key hash generated successfully: {hash_value[:16]}...")
         return hash_value
         
     except Exception as e:
@@ -302,7 +302,7 @@ def generate_public_key_hash(public_key) -> str:
 
 def generate_file_hash(content: bytes) -> str:
     """Generate hash from file content as fallback"""
-    logger.debug(f"=== FILE HASH GENERATION ===")
+    logger.info(f"=== FILE HASH GENERATION ===")
     logger.debug(f"Content type: {type(content)}")
     logger.debug(f"Content length: {len(content)} bytes")
     
@@ -314,14 +314,14 @@ def generate_file_hash(content: bytes) -> str:
         logger.warning("Empty content for file hash generation")
     
     hash_value = hashlib.sha256(content).hexdigest()
-    logger.info(f"Generated file hash: {hash_value[:16]}... (full length: {len(hash_value)})")
     logger.debug(f"File hash input: {len(content)} bytes -> SHA256: {hash_value}")
     
+    logger.info(f"File hash generated successfully: {hash_value[:16]}...")
     return hash_value
 
 def compare_hashes(hash1: str, hash2: str, context: str = "") -> bool:
     """Compare two hashes with detailed logging"""
-    logger.debug(f"=== HASH COMPARISON ===")
+    logger.info(f"=== HASH COMPARISON ===")
     if context:
         logger.debug(f"Comparison context: {context}")
     
@@ -364,6 +364,7 @@ def compare_hashes(hash1: str, hash2: str, context: str = "") -> bool:
             logger.debug(f"Hash differences at positions: {differences[:10]}{'...' if len(differences) > 10 else ''}")
             logger.debug(f"First difference at position {differences[0]}: '{hash1[differences[0]]}' vs '{hash2[differences[0]]}'")
     
+    logger.info(f"Hash comparison complete: {'MATCH' if result else 'NO MATCH'}")
     return result
 
 def debug_hash_generation(obj, obj_type: str) -> Dict[str, str]:

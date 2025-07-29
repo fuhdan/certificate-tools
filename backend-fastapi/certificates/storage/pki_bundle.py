@@ -3,7 +3,6 @@
 
 import logging
 import datetime
-from config import settings
 from typing import Dict, Any, List, Optional
 from cryptography.hazmat.primitives import serialization
 from session_manager import SessionManager
@@ -23,7 +22,7 @@ class PKIBundleManager:
             if uploaded_certificates is None:
                 # Import here to avoid circular import
                 from .core import CertificateStorage
-                all_certificates = CertificateStorage.get_all(session_id)  # Core storage is not session-aware yet
+                all_certificates = CertificateStorage.get_all(session_id)  # Core storage is session-aware
             else:
                 # Sort the provided certificates
                 from .hierarchy import HierarchyManager
@@ -44,7 +43,7 @@ class PKIBundleManager:
             session_data = SessionManager.get_or_create_session(session_id)
             session_data["pki_bundle"] = bundle
             
-            logger.info(f"[{session_id}] PKI bundle auto-generated with {len(bundle.get('components', []))} components")
+            logger.debug(f"[{session_id}] PKI bundle auto-generated with {len(bundle.get('components', []))} components")
             
             # Log bundle summary
             component_types = [comp.get('fileType') for comp in bundle.get('components', [])]
@@ -80,7 +79,7 @@ class PKIBundleManager:
             analysis = cert.get('analysis', {})
             filename = cert.get('filename', 'unknown')
             
-            # Get crypto objects (not session-aware yet in crypto storage)
+            # Get crypto objects (session-aware in crypto storage)
             if cert_id is not None:
                 crypto_objects = CryptoObjectsStorage.get_crypto_objects(cert_id, session_id)
             else:
@@ -114,7 +113,7 @@ class PKIBundleManager:
         # Sort by PKI hierarchy
         bundle["components"] = PKIBundleManager._sort_by_hierarchy(bundle["components"])
         
-        logger.info(f"[{session_id}] PKI bundle generated with {len(bundle['components'])} components")
+        logger.debug(f"[{session_id}] PKI bundle generated with {len(bundle['components'])} components")
         return bundle
     
     @staticmethod

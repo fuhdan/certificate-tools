@@ -15,12 +15,22 @@ class HierarchyManager:
         logger.debug(f"=== CERTIFICATE ORDER DETERMINATION ===")
         analysis = cert_data.get('analysis', {})
         cert_type = analysis.get('type', '')
-        details = analysis.get('details', {})
+        details = analysis.get('details')  # This can be None!
         filename = cert_data.get('filename', 'NO_FILENAME')
         
         logger.debug(f"Certificate: {filename}")
         logger.debug(f"Type: {cert_type}")
-        logger.debug(f"Has details: {bool(details)}")
+        logger.debug(f"Has details: {details is not None}")
+        
+        # FIX: Handle None details gracefully
+        if details is None:
+            logger.debug(f"Certificate {filename} has no details (likely invalid), using defaults")
+            details = {}
+        
+        # Ensure details is a dictionary
+        if not isinstance(details, dict):
+            logger.warning(f"Certificate {filename} has invalid details type: {type(details)}, using empty dict")
+            details = {}
         
         # CSR = 1 (only one)
         if cert_type == 'CSR':

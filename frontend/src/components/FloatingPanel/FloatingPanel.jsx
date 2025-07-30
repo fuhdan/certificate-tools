@@ -82,37 +82,37 @@ const FloatingPanel = ({ isAuthenticated }) => {
   }, [])
 
   useEffect(() => {
-  console.log('Certificates:', certificates);
-
-  if (!certificates || certificates.length === 0) {
-    setHasRequiredForLinux(false);
-    setHasRequiredForWindows(false);
-    setHasAnyFiles(false);
-    return;
-  }
-
-  // Normalize type strings to lowercase and check
-  const hasEndEntityCert = certificates.some(cert => {
-    const typeStr = (cert.analysis?.type || cert.Type || cert.type || '').toLowerCase();
-    // Consider certificate present if type includes 'certificate' and not 'ca certificate'
-    return typeStr.includes('certificate') && !typeStr.includes('ca certificate');
-  });
-
-  const hasPrivateKey = certificates.some(cert => {
-    const typeStr = (cert.type || cert.Type || cert.analysis?.type || '').toLowerCase();
-    return typeStr === 'private key' || typeStr === 'private_key';
-  });
-
-  const certificates_analysis = certificates.map(cert => cert.analysis).filter(Boolean);
-  const hasCACertificates = certificates_analysis.some(a => a?.type === 'Intermediate CA Certificate');
-  const hasRootCA = certificates_analysis.some(a => a?.type === 'Root CA Certificate');
-
-  console.log('hasEndEntityCert:', hasEndEntityCert, 'hasPrivateKey:', hasPrivateKey);
-
-  setHasRequiredForLinux(hasEndEntityCert && hasPrivateKey);
-  setHasRequiredForWindows(hasEndEntityCert && hasPrivateKey && hasCACertificates && hasRootCA);
-  setHasAnyFiles(certificates.length > 0);
-}, [certificates]);
+    console.log('Certificates:', certificates);
+    
+    if (!certificates || certificates.length === 0) {
+      setHasRequiredForLinux(false);
+      setHasRequiredForWindows(false);
+      setHasAnyFiles(false);
+      return;
+    }
+  
+    // Normalize type strings to lowercase and check
+    const hasEndEntityCert = certificates.some(cert => {
+      const typeStr = (cert.analysis?.type || cert.Type || cert.type || '').toLowerCase();
+      // Consider certificate present if type includes 'certificate' and not 'ca certificate'
+      return typeStr.includes('certificate') && !typeStr.includes('ca certificate');
+    });
+  
+    const hasPrivateKey = certificates.some(cert => {
+      const typeStr = (cert.type || cert.Type || cert.analysis?.type || '').toLowerCase();
+      return typeStr === 'private key' || typeStr === 'private_key';
+    });
+  
+    const certificates_analysis = certificates.map(cert => cert.analysis).filter(Boolean);
+    const hasCACertificates = certificates_analysis.some(a => a?.type === 'Intermediate CA Certificate');
+    const hasRootCA = certificates_analysis.some(a => a?.type === 'Root CA Certificate');
+  
+    console.log('hasEndEntityCert:', hasEndEntityCert, 'hasPrivateKey:', hasPrivateKey);
+  
+    setHasRequiredForLinux(hasEndEntityCert && hasPrivateKey);
+    setHasRequiredForWindows(hasEndEntityCert && hasPrivateKey && hasCACertificates && hasRootCA);
+    setHasAnyFiles(certificates.length > 0);
+  }, [certificates]);
 
   // NEW: Download handlers
   const handleLinuxApacheDownload = async () => {
@@ -124,8 +124,10 @@ const FloatingPanel = ({ isAuthenticated }) => {
     try {
       const sessionId = sessionManager.getSessionId()
       
-      // Make API call to download Apache bundle
-      const response = await api.post(`/downloads/apache/${sessionId}`, {}, {
+      console.log('Making API call to:', `/api/downloads/apache/${sessionId}`)
+      
+      // Make API call to download Apache bundle - compensate for proxy stripping /api
+      const response = await api.post(`/api/downloads/apache/${sessionId}`, {}, {
         responseType: 'blob', // Important for binary data
         timeout: 30000 // 30 second timeout for large files
       })

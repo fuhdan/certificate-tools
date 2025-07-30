@@ -324,8 +324,9 @@ def _extract_certificate_data(primary_cert, all_certificates, session_id):
             # Search for private key in other certificates (separate uploads)
             logger.debug(f"Searching for separate private key in {len(all_certificates)} certificates")
             for cert in all_certificates:
-                cert_type = cert.get('analysis', {}).get('type')
-                if cert_type == 'Private Key':
+                # FIXED: Use fileType first, fallback to analysis.type
+                cert_type = cert.get('fileType') or cert.get('analysis', {}).get('type')
+                if cert_type in ['PrivateKey', 'Private Key']:
                     logger.debug(f"Found private key candidate: {cert.get('filename')}")
                     cert_crypto = CryptoObjectsStorage.get_crypto_objects(
                         cert['id'],
@@ -333,7 +334,6 @@ def _extract_certificate_data(primary_cert, all_certificates, session_id):
                     )
                     
                     if cert_crypto and 'private_key' in cert_crypto:
-                        # TODO: In future, validate that this private key matches the certificate
                         private_key_obj = cert_crypto['private_key']
                         logger.debug(f"Using private key from: {cert.get('filename')}")
                         break
@@ -353,29 +353,24 @@ def _extract_certificate_data(primary_cert, all_certificates, session_id):
         # DEBUG: Log all certificate types
         logger.debug(f"Building CA bundle - examining {len(all_certificates)} certificates:")
         for i, cert in enumerate(all_certificates):
-            cert_type = cert.get('analysis', {}).get('type')
+            cert_type = cert.get('fileType') or cert.get('analysis', {}).get('type')
             cert_filename = cert.get('filename', 'unknown')
             cert_id = cert.get('id', 'no-id')
-            logger.debug(f"  [{i}] {cert_filename} (ID: {cert_id}) - type: '{cert_type}'")
+            logger.debug(f"  [{i}] {cert_filename} (ID: {cert_id}) - fileType: '{cert.get('fileType')}', analysis.type: '{cert.get('analysis', {}).get('type')}', resolved: '{cert_type}'")
         
         for cert in all_certificates:
-            cert_type = cert.get('analysis', {}).get('type')
+            cert_type = cert.get('fileType') or cert.get('analysis', {}).get('type')
             cert_filename = cert.get('filename', 'unknown')
             
-            # Include CA certificates and intermediate certificates
-            # FIXED: Added more specific logging and fixed condition logic
-            is_ca_cert = (cert_type and (
-                'CA' in cert_type or 
-                'ca_certificate' in cert_type or 
-                'intermediate_certificate' in cert_type or 
-                'IssuingCA' in cert_type or 
-                'IntermediateCA' in cert_type or 
-                'RootCA' in cert_type
-            ))
+            # SIMPLIFIED: Use fileType values directly
+            is_ca_cert = cert_type in ['IssuingCA', 'IntermediateCA', 'RootCA']
             
-            logger.debug(f"Certificate '{cert_filename}' type '{cert_type}' - is_ca_cert: {is_ca_cert}")
+            # Also exclude the primary certificate from CA bundle
+            is_primary = cert.get('id') == primary_cert.get('id')
             
-            if is_ca_cert:
+            logger.debug(f"Certificate '{cert_filename}' type '{cert_type}' - is_ca_cert: {is_ca_cert}, is_primary: {is_primary}")
+            
+            if is_ca_cert and not is_primary:
                 logger.debug(f"Including CA certificate: {cert_filename}")
                 cert_crypto = CryptoObjectsStorage.get_crypto_objects(
                     cert['id'],
@@ -392,19 +387,19 @@ def _extract_certificate_data(primary_cert, all_certificates, session_id):
                 else:
                     logger.warning(f"No crypto objects found for CA certificate: {cert_filename}")
             else:
-                logger.debug(f"Skipping non-CA certificate: {cert_filename}")
+                logger.debug(f"Skipping certificate: {cert_filename} (CA: {is_ca_cert}, Primary: {is_primary})")
         
         ca_bundle = '\n'.join(ca_bundle_parts) if ca_bundle_parts else ''
         
         # DEBUG: Log final CA bundle info
         logger.debug(f"CA bundle creation complete - {len(ca_bundle_parts)} CA certificates, total size: {len(ca_bundle)} bytes")
         if not ca_bundle:
-            logger.debug("CA bundle is empty! This will cause test failures.")
+            logger.warning("CA bundle is empty!")
             logger.debug("Available certificate types:")
             for cert in all_certificates:
-                cert_type = cert.get('analysis', {}).get('type')
+                cert_type = cert.get('fileType') or cert.get('analysis', {}).get('type')
                 cert_filename = cert.get('filename', 'unknown')
-                logger.debug(f"  - {cert_filename}: {cert_type}")
+                logger.debug(f"  - {cert_filename}: fileType='{cert.get('fileType')}', analysis.type='{cert.get('analysis', {}).get('type')}', resolved='{cert_type}'")
         
         # Extract certificate metadata
         analysis = primary_cert.get('analysis', {})
@@ -413,10 +408,10 @@ def _extract_certificate_data(primary_cert, all_certificates, session_id):
             'certificate': certificate_pem,
             'private_key': private_key_pem,
             'ca_bundle': ca_bundle,
-            'domain_name': analysis.get('subject', {}).get('common_name', 'example.com'),
-            'subject': analysis.get('subject', {}),
-            'issuer': analysis.get('issuer', {}),
-            'expiry_date': analysis.get('validity', {}).get('not_after'),
+            'domain_name': analysis.get('details', {}).get('subject', {}).get('commonName', 'example.com'),
+            'subject': analysis.get('details', {}).get('subject', {}),
+            'issuer': analysis.get('details', {}).get('issuer', {}),
+            'expiry_date': analysis.get('details', {}).get('validity', {}).get('notAfter'),
             'filename': primary_cert.get('filename', 'certificate')
         }
         

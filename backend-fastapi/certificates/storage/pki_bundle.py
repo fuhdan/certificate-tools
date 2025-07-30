@@ -142,38 +142,18 @@ class PKIBundleManager:
     
     @staticmethod
     def _normalize_file_type(cert_type: str, details: Optional[Dict] = None) -> str:
-        """Determine the correct PKI component type"""
-        if details is None:
-            details = {}
-            
-        if cert_type == 'CSR':
-            return 'CSR'
-        elif cert_type == 'Private Key':
-            return 'PrivateKey'
-        elif 'Certificate' in cert_type:
-            # Analyze if it's CA or end-entity
-            if details:
-                extensions = details.get('extensions', {})
-                basic_constraints = extensions.get('basicConstraints', {})
-                is_ca = basic_constraints.get('isCA', False)
-                
-                if not is_ca:
-                    return 'Certificate'  # End-entity
-                else:
-                    subject = details.get('subject', {})
-                    issuer = details.get('issuer', {})
-                    subject_cn = subject.get('commonName', '')
-                    issuer_cn = issuer.get('commonName', '')
-                    
-                    if subject_cn == issuer_cn:
-                        return 'RootCA'
-                    elif any(indicator in subject_cn.lower() for indicator in ['issuing', 'leaf']):
-                        return 'IssuingCA'
-                    else:
-                        return 'IntermediateCA'
-            return 'Certificate'
-        else:
-            return 'Unknown'
+        """
+        Determine the correct PKI component type (internal version, calls public method).
+        This maintains backward compatibility with existing code.
+        """
+        # Create a mock certificate data structure for the public method
+        cert_data = {
+            'analysis': {
+                'type': cert_type,
+                'details': details or {}
+            }
+        }
+        return PKIBundleManager.determine_file_type(cert_data)
     
     @staticmethod
     def _sort_by_hierarchy(components: List[Dict]) -> List[Dict]:
@@ -250,3 +230,48 @@ class PKIBundleManager:
         
         logger.debug(f"[{session_id}] PKI bundle validation: {validation}")
         return validation
+
+    @staticmethod
+    def determine_file_type(cert_data: Dict[str, Any]) -> str:
+        """
+        Determine the correct PKI component type from certificate data.
+        This is the public version of the classification logic.
+
+        Args:
+            cert_data: Certificate data dictionary with analysis
+
+        Returns:
+            str: One of 'CSR', 'PrivateKey', 'Certificate', 'IssuingCA', 'IntermediateCA', 'RootCA', 'Unknown'
+        """
+        analysis = cert_data.get('analysis', {})
+        cert_type = analysis.get('type', '')
+        details = analysis.get('details', {})
+
+        if cert_type == 'CSR':
+            return 'CSR'
+        elif cert_type == 'Private Key':
+            return 'PrivateKey'
+        elif 'Certificate' in cert_type:
+            # Analyze if it's CA or end-entity
+            if details:
+                extensions = details.get('extensions', {})
+                basic_constraints = extensions.get('basicConstraints', {})
+                is_ca = basic_constraints.get('isCA', False)
+
+                if not is_ca:
+                    return 'Certificate'  # End-entity
+                else:
+                    subject = details.get('subject', {})
+                    issuer = details.get('issuer', {})
+                    subject_cn = subject.get('commonName', '')
+                    issuer_cn = issuer.get('commonName', '')
+
+                    if subject_cn == issuer_cn:
+                        return 'RootCA'
+                    elif any(indicator in subject_cn.lower() for indicator in ['issuing', 'leaf']):
+                        return 'IssuingCA'
+                    else:
+                        return 'IntermediateCA'
+            return 'Certificate'
+        else:
+            return 'Unknown'

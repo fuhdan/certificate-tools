@@ -413,3 +413,4 @@ coverage-reports/
 
 scripts/CertificateAuthority/**
 scripts/test/**
+note*.txt

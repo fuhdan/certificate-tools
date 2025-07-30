@@ -82,6 +82,12 @@ class CertificateStorage:
         logger.debug(f"[{session_id}] Certificate valid: {analysis.get('isValid')}")
         logger.debug(f"[{session_id}] Content hash: {analysis.get('content_hash', 'NO_HASH')[:16]}...")
         
+        # ADDED: Determine and store PKI Bundle fileType
+        from .pki_bundle import PKIBundleManager
+        file_type = PKIBundleManager.determine_file_type(certificate_data)
+        certificate_data['fileType'] = file_type
+        logger.debug(f"[{session_id}] Determined fileType: {file_type}")
+        
         # Validate certificate data structure
         StorageUtils.validate_certificate_data(certificate_data)
         

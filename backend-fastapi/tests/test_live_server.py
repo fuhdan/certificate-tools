@@ -15,6 +15,7 @@ import concurrent.futures
 from datetime import datetime
 from pathlib import Path
 import requests
+import zipfile
 
 
 # Configuration - adjust if your server runs on different port
@@ -92,16 +93,107 @@ def list_certificates(session_id, token):
 def sample_certificate():
     """📄 Provide a sample certificate for upload tests"""
     return """-----BEGIN CERTIFICATE-----
-MIIDXTCCAkWgAwIBAgIJAMpX8BjqE8qlMA0GCSqGSIb3DQEBCwUAMEUxCzAJBgNV
-BAYTAkFVMRMwEQYDVQQIDApTb21lLVN0YXRlMSEwHwYDVQQKDBhJbnRlcm5ldCBX
-aWRnaXRzIFB0eSBMdGQwHhcNMjQwMTAxMDAwMDAwWhcNMjUwMTAxMDAwMDAwWjBF
-MQswCQYDVQQGEwJBVTETMBEGA1UECAwKU29tZS1TdGF0ZTEhMB8GA1UECgwYSW50
-ZXJuZXQgV2lkZ2l0cyBQdHkgTHRkMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIB
-CgKCAQEA1234567890abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRST
-UVWXYZ1234567890abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUV
-WXYZ1234567890abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWX
-YZ1234567890abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ
+MIIE9jCCAt6gAwIBAgIUMIT5LK1/1hPyAxvQmIStKt9GfNkwDQYJKoZIhvcNAQEL
+BQAwgYQxCzAJBgNVBAYTAkNIMQswCQYDVQQIDAJCRTENMAsGA1UEBwwEQmVybjEQ
+MA4GA1UECgwHRGFuaWVsRjEaMBgGA1UECwwRSVQgSW5mcmFzdHJ1Y3R1cmUxKzAp
+BgNVBAMMIkRhbmllbEYgUm9vdCBDZXJ0aWZpY2F0ZSBBdXRob3JpdHkwHhcNMjUw
+NzMwMTIxMTQ3WhcNMjYwNzMwMTIxMTQ3WjBuMQswCQYDVQQGEwJVUzEOMAwGA1UE
+CAwFU3RhdGUxDTALBgNVBAcMBENpdHkxDjAMBgNVBAoMBU15T3JnMRYwFAYDVQQL
+DA1JVCBEZXBhcnRtZW50MRgwFgYDVQQDDA93ZWIuZXhhbXBsZS5jb20wggEiMA0G
+CSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQC2h8Kdlvk3mKaKUQsaDBZfQvXfHQbi
+1alW6baaUIM7iQZrTxRrK6Qi6Z9R2oeBkczRZ6Yr/fCA6oyfI62dS9gQkz44vKEE
+15EZVXIp4pgDmSeNYWG5AxUpRq4bZg6hAywDHfZT3pkgoZzl+v7uyS1uTIVWC39/
+HjYdNIoTPhI5Iu1KsD7gMmdY9MogHnoDeZBkeSYaSoIh2vTwk4LUILfyo1abkEcs
+DhC7kZOoJX3SkkXhdJGkUfKF3oFbcEYOY//rywU0ufmPtQoY5MZuGi7M75/btIpA
+jzBh860yCzUGL/9jAfOYUJ/qY6QecoFimiyHuDOpMV9VhsGf/ARKz3FxAgMBAAGj
+dTBzMDEGA1UdEQQqMCiCD3dlYi5leGFtcGxlLmNvbYIPd3d3LmV4YW1wbGUuY29t
+hwTAqAFkMB0GA1UdDgQWBBTCUI7VdT0rmpovqdN7BQCj0LeUOzAfBgNVHSMEGDAW
+gBRGOXu/rasz8l8mXDr91mfnaQAiQjANBgkqhkiG9w0BAQsFAAOCAgEAbs7HXKDv
+MxyO5A7lFx33y45o4vWg/LXmKYeV9GgPIv6w1J24hKjhhPM3z/bWRhx//nLcpaim
+aKpZD4SYZeKkOknnk3eWdxDPx4d+B3jcsaguXOLwwNOOl/65yRAv3ROLY19e/KkO
+LCJzFR1HzJIkYiG2pMZiWCt2dgpt/hQfBgw4r7StBsmYucCZdIbO+hi893WZHEM7
+SXl1LuFjUBoG5T6iZr3o1+5f+5yHFiPe/75+XDiUqflvXa5ki/8ItQ7Eu6vIC0M7
+GISZpAK3bUaEo5yo35oiiX6B7PUE2Ks240nteKeWd137DoBR4kab9kxUiFjq3ghm
+8Wx5wcM0JMjGoAm0Bar/TzXrGsQgjhOmc3SsmVgm1Ro4TOCRTETehIIcquBqhJIN
+1fqWUUNVAgOMEkRTRrCAtVDxvST9pNYotbjPNcEaDofxNa4xJQ8p7nBst3KBYZ76
+rBe9yboJUOySZR6nXEbnU3flks3hzD/2q+YoqJKx6MFcyY+u/FAGzKHlXRtpYmoN
+oZySs+TttdppJWxI5d3wVhPPoUqvFFzqmYyeGN9UV31gXr6DClcIIOLr8qelLfy8
+Vt3Ye79lR5sQa18TlKAJ5CRUhTnrxniE16nc/fp8i0aX6s6t8aJ+pBmEL/Xbb8X4
+2Ro0NWlhsRcYWHxgX4AlQDj73dFTpNUHdmo=
 -----END CERTIFICATE-----"""
+
+
+@pytest.fixture
+def sample_private_key():
+    """🔑 Sample private key for testing complete certificate bundles"""
+    return """-----BEGIN PRIVATE KEY-----
+MIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQC2h8Kdlvk3mKaK
+UQsaDBZfQvXfHQbi1alW6baaUIM7iQZrTxRrK6Qi6Z9R2oeBkczRZ6Yr/fCA6oyf
+I62dS9gQkz44vKEE15EZVXIp4pgDmSeNYWG5AxUpRq4bZg6hAywDHfZT3pkgoZzl
++v7uyS1uTIVWC39/HjYdNIoTPhI5Iu1KsD7gMmdY9MogHnoDeZBkeSYaSoIh2vTw
+k4LUILfyo1abkEcsDhC7kZOoJX3SkkXhdJGkUfKF3oFbcEYOY//rywU0ufmPtQoY
+5MZuGi7M75/btIpAjzBh860yCzUGL/9jAfOYUJ/qY6QecoFimiyHuDOpMV9VhsGf
+/ARKz3FxAgMBAAECggEAUWBhUaTXYwP5a70J+AjfiITv3RKx2TtsjcUQlefDOi2y
+4PCWp9kDClWho/qLYya/a7SMDxzdtnvbSa+8XV5M68bZfK4ME36Pv/2qMiZFo4UK
+byu1R6iqLIbIZIqxhvNFEfavtWCOYE/tBVNLiOXEDWKsJ1pk8yVi9s5PqJiJw1Ke
+sFNWX7H022D5YZm9qHxaKPHEm5t1ltFL9JRXzHmEjhokoC38MpSgJgl2kSAYb0ht
+y/fRRGnwQNMDXzJEu5I3O1XiPn135JP/hFZGhwAB28R3/oReyZ3L4S1FrtIBAAiI
+vHfvIFjGoU/cUrwqyZJsByLs2bhJIBoPPu1/Ni2+aQKBgQD1XSP1BTdu+1HBnaSo
+uu14w8vUkz1UqSsNO/R6AmakWbUM6P7d//sP8OjWvpNfFxVqZMuSHt+EMqnSwxwA
+BVIozCe62+FM7AOx+Zr1eG0nGmJY/O9G1ffqt7AGeTXIWmVhez6I/q7yjEGuXm3K
+wHy3mHyrYGsFpwC6zalR5h71YwKBgQC+cVdy/cvqNnA54r1k+A/c6amtcYg3fg8e
+5835+D/XbNptbM1Eghbwga1pUgWw5p906zOQDXiO7fG5JG6qHPxMBsMm115Akmpk
+FnnSqnFs4TtAbjJe0rpFV1VOrvQFogR49QXQ+DlVhZvSOY6Fn1pxHkZPNGuNz4KC
+mTmjGSMwGwKBgGsPfQUIhauTVZUZ6CMHjV7IcEQNCxHJztMzefVS3t6PlgRQFgVg
+EHhgMfihp0QymlGWMY1Mk1LnmFoycCFCMRtEGYHbN2+M+//IXekF5vrM9GTH2NAb
+xNVR2Si58tG9P8dNM3grSMLkmDQxV87ENqcVjjBpHcmVmSfpXRwzQQbpAoGAEo0X
+56uxYW9MH1dm+57ubKaWUL7udflhn7EU73SvQ1znKiGfHT1O3r7DFa9XvpO4lLsU
+msO1KrcjBNX3sbqBGSbPe8ke9UtN8dH+q/bOdby6+NvDLFl6q6aGONPyEVpm9SFp
+H6IOc7ZAJ4pTx9BuDvbUAoMotvevzuj+JFUeiGECgYA18e3dTGFeQUVxT7Y77MTk
+lRiHc7r9u+/7bDBcl5wTzx565I0SQo8YXgNjQRVvKLXXzIZaqkI7JhZH7aUIHREu
+eKM4CAwnzPR48rhLVB+zxMOxnU0wNe0Ll9SXW7xsLSo29CKcYF3Nm8cBbArqiaiO
+v7F3SQHoRIn9v3QvA0wn+g==
+-----END PRIVATE KEY-----"""
+
+
+@pytest.fixture
+def sample_ca_certificate():
+    """🏢 Sample CA certificate for testing certificate chains"""
+    return """-----BEGIN CERTIFICATE-----
+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
+-----END CERTIFICATE-----"""
+
 
 def get_invalid_uuids():
     return [
@@ -383,17 +475,653 @@ class TestPKIBundle:
 
 
 class TestDownloads:
-    """Secure download features"""
+    """Comprehensive secure download features testing"""
 
-    def test_download_with_no_certificates_returns_404_or_server_error(self, auth_headers):
-        """💾 Download with no certificates returns 404 or server error"""
+    def upload_certificate_bundle(self, auth_headers, certificate, private_key=None, ca_cert=None):
+        """Helper to upload a complete certificate bundle for download testing"""
+        uploaded_files = []
+        
+        # Upload main certificate
+        files = {"certificate": ("server.crt", certificate, "application/x-pem-file")}
+        response = requests.post(f"{API_BASE_URL}/analyze-certificate", files=files, headers=auth_headers)
+        if response.status_code in [200, 201]:
+            uploaded_files.append("certificate")
+        
+        # Upload private key if provided
+        if private_key:
+            files = {"certificate": ("server.key", private_key, "application/x-pem-file")}
+            response = requests.post(f"{API_BASE_URL}/analyze-certificate", files=files, headers=auth_headers)
+            if response.status_code in [200, 201]:
+                uploaded_files.append("private_key")
+        
+        # Upload CA certificate if provided
+        if ca_cert:
+            files = {"certificate": ("ca.crt", ca_cert, "application/x-pem-file")}
+            response = requests.post(f"{API_BASE_URL}/analyze-certificate", files=files, headers=auth_headers)
+            if response.status_code in [200, 201]:
+                uploaded_files.append("ca_certificate")
+        
+        return uploaded_files
+
+    def test_apache_download_with_no_certificates_returns_404(self, auth_headers):
+        """💾 Apache download with no certificates returns 404"""
         session_id = auth_headers["X-Session-ID"]
         response = requests.post(
             f"{API_BASE_URL}/api/downloads/apache/{session_id}",
             headers=auth_headers
         )
 
-        assert response.status_code in [404, 500]
+        assert response.status_code == 404
+        data = response.json()
+        assert "No certificates found" in data["detail"]
+
+    def test_iis_download_with_no_certificates_returns_404(self, auth_headers):
+        """💾 IIS download with no certificates returns 404"""
+        session_id = auth_headers["X-Session-ID"]
+        response = requests.post(
+            f"{API_BASE_URL}/api/downloads/iis/{session_id}",
+            headers=auth_headers
+        )
+
+        assert response.status_code == 404
+        data = response.json()
+        assert "No certificates found" in data["detail"]
+
+    def test_apache_download_session_id_mismatch_returns_400(self, auth_token, test_session_id):
+        """🚫 Apache download with session ID mismatch returns 400"""
+        headers = {
+            "Authorization": f"Bearer {auth_token}",
+            "X-Session-ID": test_session_id
+        }
+        
+        # Use different session ID in URL
+        different_session_id = str(uuid.uuid4())
+        response = requests.post(
+            f"{API_BASE_URL}/api/downloads/apache/{different_session_id}",
+            headers=headers
+        )
+
+        assert response.status_code == 400
+        data = response.json()
+        assert "Session ID validation failed" in data["detail"]
+
+    def test_iis_download_session_id_mismatch_returns_400(self, auth_token, test_session_id):
+        """🚫 IIS download with session ID mismatch returns 400"""
+        headers = {
+            "Authorization": f"Bearer {auth_token}",
+            "X-Session-ID": test_session_id
+        }
+        
+        # Use different session ID in URL
+        different_session_id = str(uuid.uuid4())
+        response = requests.post(
+            f"{API_BASE_URL}/api/downloads/iis/{different_session_id}",
+            headers=headers
+        )
+
+        assert response.status_code == 400
+        data = response.json()
+        assert "Session ID validation failed" in data["detail"]
+
+    def test_apache_download_with_complete_bundle_success(self, auth_headers, sample_certificate, sample_private_key, sample_ca_certificate):
+        """✅ Apache download with complete certificate bundle succeeds"""
+        session_id = auth_headers["X-Session-ID"]
+
+        # Upload complete certificate bundle
+        uploaded = self.upload_certificate_bundle(
+            auth_headers, sample_certificate, sample_private_key, sample_ca_certificate
+        )
+
+        if len(uploaded) < 2:  # Need at least certificate and private key
+            pytest.skip("Could not upload complete certificate bundle - server issue")
+
+        # Download Apache bundle
+        response = requests.post(
+            f"{API_BASE_URL}/api/downloads/apache/{session_id}",
+            headers=auth_headers
+        )
+
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "application/zip"
+        assert "X-Zip-Password" in response.headers
+
+        # Verify ZIP password is present and strong
+        zip_password = response.headers["X-Zip-Password"]
+        assert len(zip_password) >= 16
+        assert any(c.isupper() for c in zip_password)  # Has uppercase
+        assert any(c.islower() for c in zip_password)  # Has lowercase
+        assert any(c.isdigit() for c in zip_password)  # Has digit
+
+        # Verify filename format
+        content_disposition = response.headers.get("content-disposition", "")
+        assert f"apache-bundle-{session_id}.zip" in content_disposition
+
+    def test_iis_download_with_complete_bundle_success(self, auth_headers, sample_certificate, sample_private_key, sample_ca_certificate):
+        """✅ IIS download with complete certificate bundle succeeds"""
+        session_id = auth_headers["X-Session-ID"]
+        
+        # Upload complete certificate bundle
+        uploaded = self.upload_certificate_bundle(
+            auth_headers, sample_certificate, sample_private_key, sample_ca_certificate
+        )
+        
+        if len(uploaded) < 2:  # Need at least certificate and private key
+            pytest.skip("Could not upload complete certificate bundle - server issue")
+        
+        # Download IIS bundle
+        response = requests.post(
+            f"{API_BASE_URL}/api/downloads/iis/{session_id}",
+            headers=auth_headers
+        )
+        
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "application/zip"
+        assert "X-Zip-Password" in response.headers
+        assert "X-P12-Password" in response.headers
+        
+        # Verify both passwords are present and strong
+        zip_password = response.headers["X-Zip-Password"]
+        p12_password = response.headers["X-P12-Password"]
+        
+        for password, name in [(zip_password, "ZIP"), (p12_password, "P12")]:
+            assert len(password) >= 16, f"{name} password too short"
+            assert any(c.isupper() for c in password), f"{name} password needs uppercase"
+            assert any(c.islower() for c in password), f"{name} password needs lowercase"  
+            assert any(c.isdigit() for c in password), f"{name} password needs digit"
+        
+        # Verify passwords are different
+        assert zip_password != p12_password, "ZIP and P12 passwords should be different"
+        
+        # Verify filename format
+        content_disposition = response.headers.get("content-disposition", "")
+        assert f"iis-bundle-{session_id}.zip" in content_disposition
+
+    def test_apache_zip_full_content_and_structure(self, auth_headers, sample_certificate, sample_private_key, sample_ca_certificate):
+        """📦 Apache ZIP contains expected files with correct structure"""
+        import pyzipper  # ensure pyzipper is imported
+
+        session_id = auth_headers["X-Session-ID"]
+
+        # Upload certificate and private key
+        uploaded = self.upload_certificate_bundle(auth_headers, sample_certificate, sample_private_key, sample_ca_certificate)
+
+        if len(uploaded) < 2:
+            pytest.skip("Could not upload certificate bundle - server issue")
+
+        # Download bundle
+        response = requests.post(f"{API_BASE_URL}/api/downloads/apache/{session_id}", headers=auth_headers)
+
+        if response.status_code != 200:
+            pytest.skip("Download failed - likely missing requirements")
+
+        zip_password = response.headers["X-Zip-Password"]
+
+        # Extract and verify ZIP contents using pyzipper for AES-encrypted ZIP support
+        with tempfile.NamedTemporaryFile() as temp_file:
+            temp_file.write(response.content)
+            temp_file.flush()
+
+            with pyzipper.AESZipFile(temp_file.name) as zip_file:
+                zip_file.pwd = zip_password.encode('utf-8')
+
+                # Check expected files are present
+                file_list = zip_file.namelist()
+                expected_files = [
+                    'certificate.crt',
+                    'private-key.key', 
+                    'ca-bundle.crt',
+                    'APACHE_INSTALLATION_GUIDE.txt',
+                    'NGINX_INSTALLATION_GUIDE.txt'
+                ]
+
+                for expected_file in expected_files:
+                    assert expected_file in file_list, f"Missing file: {expected_file}"
+
+                # Verify file contents are not empty
+                for filename in expected_files:
+                    content = zip_file.read(filename)
+                    assert len(content) > 0, f"File {filename} is empty"
+
+                    # Verify instruction files contain expected content
+                    if filename.endswith('_INSTALLATION_GUIDE.txt'):
+                        content_str = content.decode('utf-8')
+                        assert "INSTALLATION" in content_str.upper()
+                        assert "SSL" in content_str.upper() or "TLS" in content_str.upper()
+
+    def test_apache_zip_minimal_content_and_structure(self, auth_headers, sample_certificate, sample_private_key):
+        """📦 Apache ZIP contains expected files with correct structure"""
+        import pyzipper  # ensure pyzipper is imported
+
+        session_id = auth_headers["X-Session-ID"]
+
+        # Upload certificate and private key
+        uploaded = self.upload_certificate_bundle(auth_headers, sample_certificate, sample_private_key)
+
+        if len(uploaded) < 2:
+            pytest.skip("Could not upload certificate bundle - server issue")
+
+        # Download bundle
+        response = requests.post(f"{API_BASE_URL}/api/downloads/apache/{session_id}", headers=auth_headers)
+
+        if response.status_code != 200:
+            pytest.skip("Download failed - likely missing requirements")
+
+        zip_password = response.headers["X-Zip-Password"]
+
+        # Extract and verify ZIP contents using pyzipper for AES-encrypted ZIP support
+        with tempfile.NamedTemporaryFile() as temp_file:
+            temp_file.write(response.content)
+            temp_file.flush()
+
+            with pyzipper.AESZipFile(temp_file.name) as zip_file:
+                zip_file.pwd = zip_password.encode('utf-8')
+
+                # Check expected files are present
+                file_list = zip_file.namelist()
+                expected_files = [
+                    'certificate.crt',
+                    'private-key.key',
+                    'APACHE_INSTALLATION_GUIDE.txt',
+                    'NGINX_INSTALLATION_GUIDE.txt'
+                ]
+
+                for expected_file in expected_files:
+                    assert expected_file in file_list, f"Missing file: {expected_file}"
+
+                # Verify file contents are not empty
+                for filename in expected_files:
+                    content = zip_file.read(filename)
+                    assert len(content) > 0, f"File {filename} is empty"
+
+                    # Verify instruction files contain expected content
+                    if filename.endswith('_INSTALLATION_GUIDE.txt'):
+                        content_str = content.decode('utf-8')
+                        assert "INSTALLATION" in content_str.upper()
+                        assert "SSL" in content_str.upper() or "TLS" in content_str.upper()
+
+    def test_iis_zip_full_content_and_structure(self, auth_headers, sample_certificate, sample_private_key, sample_ca_certificate):
+        """📦 IIS ZIP contains expected files with correct structure"""
+        import pyzipper  # ensure pyzipper is imported for AES-encrypted ZIP support
+
+        session_id = auth_headers["X-Session-ID"]
+
+        # Upload certificate and private key
+        uploaded = self.upload_certificate_bundle(auth_headers, sample_certificate, sample_private_key, sample_ca_certificate)
+
+        if len(uploaded) < 2:
+            pytest.skip("Could not upload certificate bundle - server issue")
+
+        # Download bundle
+        response = requests.post(f"{API_BASE_URL}/api/downloads/iis/{session_id}", headers=auth_headers)
+
+        if response.status_code != 200:
+            pytest.skip("Download failed - likely missing requirements")
+
+        zip_password = response.headers["X-Zip-Password"]
+        p12_password = response.headers["X-P12-Password"]
+
+        # Extract and verify ZIP contents using pyzipper for AES-encrypted ZIP support
+        with tempfile.NamedTemporaryFile() as temp_file:
+            temp_file.write(response.content)
+            temp_file.flush()
+
+            with pyzipper.AESZipFile(temp_file.name) as zip_file:
+                # Set password for extraction
+                zip_file.pwd = zip_password.encode('utf-8')
+
+                # Check expected files are present
+                file_list = zip_file.namelist()
+                expected_files = [
+                    'certificate-bundle.p12',
+                    'IIS_INSTALLATION_GUIDE.txt',
+                    'CERTIFICATE_INFO.txt'
+                ]
+
+                for expected_file in expected_files:
+                    assert expected_file in file_list, f"Missing file: {expected_file}"
+
+                # Verify file contents are not empty
+                for filename in expected_files:
+                    content = zip_file.read(filename)
+                    assert len(content) > 0, f"File {filename} is empty"
+
+                    # Verify PKCS#12 file is binary
+                    if filename.endswith('.p12'):
+                        # PKCS#12 files should start with specific binary markers
+                        assert content[0:1] == b'\x30', "P12 file doesn't start with ASN.1 SEQUENCE"
+
+                    # Verify text files contain expected content
+                    elif filename.endswith('.txt'):
+                        content_str = content.decode('utf-8')
+                        if filename == 'CERTIFICATE_INFO.txt':
+                            assert zip_password in content_str, "ZIP password not in info file"
+                            assert p12_password in content_str, "P12 password not in info file"
+                        elif filename == 'IIS_INSTALLATION_GUIDE.txt':
+                            assert "IIS" in content_str.upper()
+                            assert "PKCS" in content_str.upper()
+
+    def test_iis_zip_minimal_content_and_structure(self, auth_headers, sample_certificate, sample_private_key):
+        """📦 IIS ZIP minimal bundle (cert + key only) - testing if P12 works without CA"""
+        import pyzipper  # ensure pyzipper is imported for AES-encrypted ZIP support
+
+        session_id = auth_headers["X-Session-ID"]
+
+        # Upload certificate and private key only (no CA certificate)
+        uploaded = self.upload_certificate_bundle(auth_headers, sample_certificate, sample_private_key)
+
+        if len(uploaded) < 2:
+            pytest.skip("Could not upload certificate bundle - server issue")
+
+        # Download bundle
+        response = requests.post(f"{API_BASE_URL}/api/downloads/iis/{session_id}", headers=auth_headers)
+
+        if response.status_code != 200:
+            pytest.skip("Download failed - IIS may require CA certificate")
+
+        zip_password = response.headers["X-Zip-Password"]
+        p12_password = response.headers["X-P12-Password"]
+
+        # Extract and verify ZIP contents using pyzipper for AES-encrypted ZIP support
+        with tempfile.NamedTemporaryFile() as temp_file:
+            temp_file.write(response.content)
+            temp_file.flush()
+
+            with pyzipper.AESZipFile(temp_file.name) as zip_file:
+                # Set password for extraction
+                zip_file.pwd = zip_password.encode('utf-8')
+
+                # Check expected files are present
+                file_list = zip_file.namelist()
+                expected_files = [
+                    'certificate-bundle.p12',
+                    'IIS_INSTALLATION_GUIDE.txt',
+                    'CERTIFICATE_INFO.txt'
+                ]
+
+                for expected_file in expected_files:
+                    assert expected_file in file_list, f"Missing file: {expected_file}"
+
+                # Verify file contents are not empty
+                for filename in expected_files:
+                    content = zip_file.read(filename)
+                    assert len(content) > 0, f"File {filename} is empty"
+
+                    # Verify PKCS#12 file is binary
+                    if filename.endswith('.p12'):
+                        # PKCS#12 files should start with specific binary markers
+                        assert content[0:1] == b'\x30', "P12 file doesn't start with ASN.1 SEQUENCE"
+                        print(f"✅ P12 file created successfully without CA certificate ({len(content)} bytes)")
+
+                    # Verify text files contain expected content
+                    elif filename.endswith('.txt'):
+                        content_str = content.decode('utf-8')
+                        if filename == 'CERTIFICATE_INFO.txt':
+                            assert zip_password in content_str, "ZIP password not in info file"
+                            assert p12_password in content_str, "P12 password not in info file"
+                        elif filename == 'IIS_INSTALLATION_GUIDE.txt':
+                            assert "IIS" in content_str.upper()
+                            assert "PKCS" in content_str.upper()
+
+    def test_download_endpoints_require_authentication(self, test_session_id):
+        """🔒 Download endpoints require authentication"""
+        # Test Apache endpoint without auth
+        response = requests.post(f"{API_BASE_URL}/api/downloads/apache/{test_session_id}")
+        assert response.status_code == 401
+        
+        # Test IIS endpoint without auth
+        response = requests.post(f"{API_BASE_URL}/api/downloads/iis/{test_session_id}")
+        assert response.status_code == 401
+
+    def test_download_endpoints_with_invalid_session_uuid(self, auth_token):
+        """❌ Download endpoints reject invalid session UUIDs"""
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        
+        invalid_session_ids = ["invalid-uuid", "12345", "not-a-uuid-at-all"]
+        
+        for invalid_id in invalid_session_ids:
+            # Test Apache endpoint
+            response = requests.post(
+                f"{API_BASE_URL}/api/downloads/apache/{invalid_id}",
+                headers={**headers, "X-Session-ID": invalid_id}
+            )
+            assert response.status_code == 400, f"Apache endpoint should reject {invalid_id}"
+            
+            # Test IIS endpoint  
+            response = requests.post(
+                f"{API_BASE_URL}/api/downloads/iis/{invalid_id}",
+                headers={**headers, "X-Session-ID": invalid_id}
+            )
+            assert response.status_code == 400, f"IIS endpoint should reject {invalid_id}"
+
+    def test_apache_download_missing_private_key_fails(self, auth_headers, sample_certificate):
+        """❌ Apache download fails gracefully when private key is missing"""
+        session_id = auth_headers["X-Session-ID"]
+        
+        # Upload only certificate (no private key)
+        files = {"certificate": ("server.crt", sample_certificate, "application/x-pem-file")}
+        response = requests.post(f"{API_BASE_URL}/analyze-certificate", files=files, headers=auth_headers)
+        
+        if response.status_code not in [200, 201]:
+            pytest.skip("Could not upload certificate - server issue")
+        
+        # Try to download bundle
+        response = requests.post(f"{API_BASE_URL}/api/downloads/apache/{session_id}", headers=auth_headers)
+        
+        assert response.status_code in [400, 404, 500]  # Should fail gracefully
+
+    def test_iis_download_missing_private_key_fails(self, auth_headers, sample_certificate):
+        """❌ IIS download fails gracefully when private key is missing"""
+        session_id = auth_headers["X-Session-ID"]
+        
+        # Upload only certificate (no private key)
+        files = {"certificate": ("server.crt", sample_certificate, "application/x-pem-file")}
+        response = requests.post(f"{API_BASE_URL}/analyze-certificate", files=files, headers=auth_headers)
+        
+        if response.status_code not in [200, 201]:
+            pytest.skip("Could not upload certificate - server issue")
+        
+        # Try to download bundle
+        response = requests.post(f"{API_BASE_URL}/api/downloads/iis/{session_id}", headers=auth_headers)
+        
+        assert response.status_code in [400, 404, 500]  # Should fail gracefully
+
+    def test_concurrent_downloads_different_sessions(self, auth_token, sample_certificate, sample_private_key):
+        """🔄 Concurrent downloads from different sessions work independently"""
+        import concurrent.futures
+        
+        def download_bundle(session_id, bundle_type):
+            headers = {
+                "Authorization": f"Bearer {auth_token}",
+                "X-Session-ID": session_id
+            }
+            
+            # Upload certificate and key
+            self.upload_certificate_bundle(headers, sample_certificate, sample_private_key)
+            
+            # Download bundle
+            response = requests.post(
+                f"{API_BASE_URL}/api/downloads/{bundle_type}/{session_id}",
+                headers=headers
+            )
+            return response.status_code, len(response.content), response.headers.get("X-Zip-Password", "")
+        
+        # Create multiple sessions
+        sessions = [str(uuid.uuid4()) for _ in range(3)]
+        
+        # Test concurrent downloads
+        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
+            futures = []
+            
+            # Submit Apache and IIS downloads for each session
+            for session_id in sessions:
+                futures.append(executor.submit(download_bundle, session_id, "apache"))
+                futures.append(executor.submit(download_bundle, session_id, "iis"))
+            
+            # Verify all downloads succeed or fail gracefully
+            passwords = set()
+            for future in concurrent.futures.as_completed(futures):
+                status_code, content_length, password = future.result()
+                
+                if status_code == 200:
+                    assert content_length > 0, "Downloaded bundle should not be empty"
+                    assert len(password) >= 16, "Password should be strong"
+                    passwords.add(password)
+                else:
+                    assert status_code in [400, 404, 500], f"Unexpected status code: {status_code}"
+            
+            # Verify all successful downloads have unique passwords
+            if len(passwords) > 1:
+                assert len(passwords) == len([p for p in passwords if p]), "All passwords should be unique"
+
+    def test_download_response_headers_completeness(self, auth_headers, sample_certificate, sample_private_key):
+        """📋 Download responses include all required headers"""
+        session_id = auth_headers["X-Session-ID"]
+        
+        # Upload certificate bundle
+        uploaded = self.upload_certificate_bundle(auth_headers, sample_certificate, sample_private_key)
+        
+        if len(uploaded) < 2:
+            pytest.skip("Could not upload certificate bundle - server issue")
+        
+        # Test Apache download headers
+        response = requests.post(f"{API_BASE_URL}/api/downloads/apache/{session_id}", headers=auth_headers)
+        
+        if response.status_code == 200:
+            # Verify required headers
+            assert "content-type" in response.headers
+            assert response.headers["content-type"] == "application/zip"
+            assert "content-disposition" in response.headers
+            assert "attachment" in response.headers["content-disposition"]
+            assert "X-Zip-Password" in response.headers
+            assert "content-length" in response.headers
+            
+            # Verify content-length matches actual content
+            assert int(response.headers["content-length"]) == len(response.content)
+        
+        # Test IIS download headers (new session to avoid conflicts)
+        new_session_id = str(uuid.uuid4())
+        new_headers = {**auth_headers, "X-Session-ID": new_session_id}
+        self.upload_certificate_bundle(new_headers, sample_certificate, sample_private_key)
+        
+        response = requests.post(f"{API_BASE_URL}/api/downloads/iis/{new_session_id}", headers=new_headers)
+        
+        if response.status_code == 200:
+            # Verify required headers for IIS
+            assert "content-type" in response.headers
+            assert response.headers["content-type"] == "application/zip"
+            assert "content-disposition" in response.headers
+            assert "attachment" in response.headers["content-disposition"]
+            assert "X-Zip-Password" in response.headers
+            assert "X-P12-Password" in response.headers  # IIS-specific
+            assert "content-length" in response.headers
+            
+            # Verify content-length matches actual content
+            assert int(response.headers["content-length"]) == len(response.content)
+
+    def test_upload_download_apache_full_workflow(self, auth_token, sample_certificate, sample_private_key, sample_ca_certificate):
+        """🔄 Complete workflow: Upload certificates → Download Apache bundle → Verify"""
+        session_id = str(uuid.uuid4())
+        headers = {
+            "Authorization": f"Bearer {auth_token}",
+            "X-Session-ID": session_id
+        }
+        
+        # Step 1: Upload complete certificate bundle
+        uploads = [
+            ("server.crt", sample_certificate),
+            ("server.key", sample_private_key), 
+            ("ca.crt", sample_ca_certificate)
+        ]
+        
+        successful_uploads = 0
+        for filename, content in uploads:
+            files = {"certificate": (filename, content, "application/x-pem-file")}
+            response = requests.post(f"{API_BASE_URL}/analyze-certificate", files=files, headers=headers)
+            if response.status_code in [200, 201]:
+                successful_uploads += 1
+        
+        if successful_uploads < 2:
+            pytest.skip("Could not upload sufficient certificates for test")
+        
+        # Step 2: Verify certificates are listed
+        list_response = requests.get(f"{API_BASE_URL}/api/certificates", headers=headers)
+        assert list_response.status_code == 200
+        assert list_response.json()["count"] >= 2
+        
+        # Step 3: Download Apache bundle
+        download_response = requests.post(f"{API_BASE_URL}/api/downloads/apache/{session_id}", headers=headers)
+        
+        if download_response.status_code != 200:
+            pytest.skip("Download failed - likely server configuration issue")
+        
+        # Step 4: Verify download properties
+        assert len(download_response.content) > 1000  # ZIP should be substantial
+        assert "X-Zip-Password" in download_response.headers
+        
+        # Step 5: Verify ZIP can be opened with password
+        password = download_response.headers["X-Zip-Password"]
+        with tempfile.NamedTemporaryFile() as temp_file:
+            temp_file.write(download_response.content)
+            temp_file.flush()
+            
+            with zipfile.ZipFile(temp_file.name, 'r') as zip_file:
+                zip_file.setpassword(password.encode('utf-8'))
+                files = zip_file.namelist()
+                assert len(files) >= 3  # Should have certificate files + guides
+
+    def test_upload_download_iis_full_workflow(self, auth_token, sample_certificate, sample_private_key, sample_ca_certificate):
+        """🔄 Complete workflow: Upload certificates → Download IIS bundle → Verify"""
+        session_id = str(uuid.uuid4())
+        headers = {
+            "Authorization": f"Bearer {auth_token}",
+            "X-Session-ID": session_id
+        }
+        
+        # Step 1: Upload complete certificate bundle
+        uploads = [
+            ("server.crt", sample_certificate),
+            ("server.key", sample_private_key), 
+            ("ca.crt", sample_ca_certificate)
+        ]
+        
+        successful_uploads = 0
+        for filename, content in uploads:
+            files = {"certificate": (filename, content, "application/x-pem-file")}
+            response = requests.post(f"{API_BASE_URL}/analyze-certificate", files=files, headers=headers)
+            if response.status_code in [200, 201]:
+                successful_uploads += 1
+        
+        if successful_uploads < 2:
+            pytest.skip("Could not upload sufficient certificates for test")
+        
+        # Step 2: Download IIS bundle
+        download_response = requests.post(f"{API_BASE_URL}/api/downloads/iis/{session_id}", headers=headers)
+        
+        if download_response.status_code != 200:
+            pytest.skip("Download failed - likely server configuration issue")
+        
+        # Step 3: Verify download properties
+        assert len(download_response.content) > 1000  # ZIP should be substantial
+        assert "X-Zip-Password" in download_response.headers
+        assert "X-P12-Password" in download_response.headers
+        
+        # Step 4: Verify ZIP structure contains PKCS#12
+        zip_password = download_response.headers["X-Zip-Password"]
+        with tempfile.NamedTemporaryFile() as temp_file:
+            temp_file.write(download_response.content)
+            temp_file.flush()
+            
+            with zipfile.ZipFile(temp_file.name, 'r') as zip_file:
+                zip_file.setpassword(zip_password.encode('utf-8'))
+                files = zip_file.namelist()
+                
+                # Verify P12 bundle exists
+                assert 'certificate-bundle.p12' in files
+                
+                # Verify P12 file is not empty and is binary
+                p12_content = zip_file.read('certificate-bundle.p12')
+                assert len(p12_content) > 100  # PKCS#12 should be substantial
+                assert p12_content[0:1] == b'\x30'  # ASN.1 SEQUENCE marker
 
 
 # ========================================

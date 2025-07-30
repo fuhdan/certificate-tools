@@ -1,3 +1,4 @@
+// frontend/src/components/FloatingPanel/FloatingPanel.jsx (Fixed - Preserving Original Logic)
 import React, { useState, useEffect, useRef } from 'react'
 import {
   Settings,
@@ -17,13 +18,26 @@ import SystemMessages from './SystemMessages'
 import FileManager from './FileManager'
 import PKIBundleViewer from './PKIBundleViewer'
 import AdvancedModal from './AdvancedModal'
+import SecurePasswordModal from './SecurePasswordModal'
+import NotificationToast from '../common/NotificationToast'
 import { useCertificates } from '../../contexts/CertificateContext'
+import { sessionManager } from '../../services/sessionManager'
 import api from '../../services/api'
 
 const FloatingPanel = ({ isAuthenticated }) => {
   const { certificates, clearAllFiles } = useCertificates()
   const [showPKIBundle, setShowPKIBundle] = useState(false)
   const [showAdvanced, setShowAdvanced] = useState(false)
+  
+  // NEW: Download-related state
+  const [showPasswordModal, setShowPasswordModal] = useState(false)
+  const [zipPassword, setZipPassword] = useState('')
+  const [isDownloading, setIsDownloading] = useState(false)
+  const [downloadError, setDownloadError] = useState(null)
+  const [showSuccessNotification, setShowSuccessNotification] = useState(false)
+  const [successMessage, setSuccessMessage] = useState('')
+  
+  // Original state
   const [hasRequiredForLinux, setHasRequiredForLinux] = useState(false)
   const [hasRequiredForWindows, setHasRequiredForWindows] = useState(false)
   const [hasAnyFiles, setHasAnyFiles] = useState(false)
@@ -68,25 +82,115 @@ const FloatingPanel = ({ isAuthenticated }) => {
   }, [])
 
   useEffect(() => {
-    if (!certificates || certificates.length === 0) {
-      setHasRequiredForLinux(false)
-      setHasRequiredForWindows(false)
-      setHasAnyFiles(false)
-      return
+  console.log('Certificates:', certificates);
+
+  if (!certificates || certificates.length === 0) {
+    setHasRequiredForLinux(false);
+    setHasRequiredForWindows(false);
+    setHasAnyFiles(false);
+    return;
+  }
+
+  // Normalize type strings to lowercase and check
+  const hasEndEntityCert = certificates.some(cert => {
+    const typeStr = (cert.analysis?.type || cert.Type || cert.type || '').toLowerCase();
+    // Consider certificate present if type includes 'certificate' and not 'ca certificate'
+    return typeStr.includes('certificate') && !typeStr.includes('ca certificate');
+  });
+
+  const hasPrivateKey = certificates.some(cert => {
+    const typeStr = (cert.type || cert.Type || cert.analysis?.type || '').toLowerCase();
+    return typeStr === 'private key' || typeStr === 'private_key';
+  });
+
+  const certificates_analysis = certificates.map(cert => cert.analysis).filter(Boolean);
+  const hasCACertificates = certificates_analysis.some(a => a?.type === 'Intermediate CA Certificate');
+  const hasRootCA = certificates_analysis.some(a => a?.type === 'Root CA Certificate');
+
+  console.log('hasEndEntityCert:', hasEndEntityCert, 'hasPrivateKey:', hasPrivateKey);
+
+  setHasRequiredForLinux(hasEndEntityCert && hasPrivateKey);
+  setHasRequiredForWindows(hasEndEntityCert && hasPrivateKey && hasCACertificates && hasRootCA);
+  setHasAnyFiles(certificates.length > 0);
+}, [certificates]);
+
+  // NEW: Download handlers
+  const handleLinuxApacheDownload = async () => {
+    if (!hasRequiredForLinux || isDownloading) return
+
+    setIsDownloading(true)
+    setDownloadError(null)
+
+    try {
+      const sessionId = sessionManager.getSessionId()
+      
+      // Make API call to download Apache bundle
+      const response = await api.post(`/downloads/apache/${sessionId}`, {}, {
+        responseType: 'blob', // Important for binary data
+        timeout: 30000 // 30 second timeout for large files
+      })
+
+      // Extract password from response headers
+      const password = response.headers['x-zip-password']
+      
+      if (!password) {
+        throw new Error('ZIP password not found in response headers')
+      }
+
+      // Create blob URL and trigger download
+      const blob = new Blob([response.data], { type: 'application/zip' })
+      const url = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `apache-bundle-${sessionId.substring(0, 8)}.zip`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      window.URL.revokeObjectURL(url)
+
+      // Show password modal
+      setZipPassword(password)
+      setShowPasswordModal(true)
+
+      // Show success notification
+      setSuccessMessage('Apache certificate bundle downloaded successfully!')
+      setShowSuccessNotification(true)
+
+    } catch (error) {
+      console.error('Apache download failed:', error)
+      
+      if (error.response?.status === 404) {
+        setDownloadError('No certificates found. Please upload required certificates first.')
+      } else if (error.response?.status === 400) {
+        setDownloadError('Invalid session or missing required certificates.')
+      } else if (error.code === 'ECONNABORTED') {
+        setDownloadError('Download timeout. Please try again.')
+      } else {
+        setDownloadError('Download failed. Please try again.')
+      }
+    } finally {
+      setIsDownloading(false)
     }
+  }
 
-    const certificates_analysis = certificates.map(cert => cert.analysis).filter(Boolean)
+  const handlePasswordModalClose = () => {
+    setShowPasswordModal(false)
+    // Security: Clear password from memory
+    setZipPassword('')
+  }
 
-    const hasEndEntityCert = certificates_analysis.some(a => a?.type === 'End-entity Certificate')
-    const hasPrivateKey = certificates.some(cert => cert.type === 'private_key')
-    const hasCACertificates = certificates_analysis.some(a => a?.type === 'Intermediate CA Certificate')
-    const hasRootCA = certificates_analysis.some(a => a?.type === 'Root CA Certificate')
+  const handlePasswordCopyComplete = () => {
+    // Show brief notification when password is copied
+    setSuccessMessage('ZIP password copied to clipboard!')
+    setShowSuccessNotification(true)
+  }
 
-    setHasRequiredForLinux(hasEndEntityCert && hasPrivateKey)
-    setHasRequiredForWindows(hasEndEntityCert && hasPrivateKey && hasCACertificates && hasRootCA)
-    setHasAnyFiles(certificates.length > 0)
-  }, [certificates])
+  const handleSuccessNotificationClose = () => {
+    setShowSuccessNotification(false)
+    setSuccessMessage('')
+  }
 
+  // Original handlers
   const handleMinimize = (e) => {
     e.stopPropagation()
     setSavedPosition(panelPosition)
@@ -159,8 +263,10 @@ const FloatingPanel = ({ isAuthenticated }) => {
       e.preventDefault()
       const deltaX = e.clientX - dragStart.x
       const deltaY = e.clientY - dragStart.y
+
       const newWidth = Math.max(200, Math.min(600, dragStart.width + deltaX))
-      const newHeight = Math.max(250, Math.min(window.innerHeight * 0.8, dragStart.height + deltaY))
+      const newHeight = Math.max(300, Math.min(800, dragStart.height + deltaY))
+
       setPanelSize({ width: newWidth, height: newHeight })
     }
   }
@@ -172,61 +278,60 @@ const FloatingPanel = ({ isAuthenticated }) => {
 
   useEffect(() => {
     if (isDragging || isResizing) {
-      const preventSelection = (e) => { e.preventDefault(); return false }
-
-      document.addEventListener('mousemove', handleMouseMove, { passive: false })
+      document.addEventListener('mousemove', handleMouseMove)
       document.addEventListener('mouseup', handleMouseUp)
-      document.addEventListener('selectstart', preventSelection)
-      document.addEventListener('dragstart', preventSelection)
-
-      document.body.style.webkitUserSelect = 'none'
+      document.body.style.cursor = isDragging ? 'move' : 'nw-resize'
       document.body.style.userSelect = 'none'
 
       return () => {
         document.removeEventListener('mousemove', handleMouseMove)
         document.removeEventListener('mouseup', handleMouseUp)
-        document.removeEventListener('selectstart', preventSelection)
-        document.removeEventListener('dragstart', preventSelection)
-        document.body.style.webkitUserSelect = ''
+        document.body.style.cursor = ''
         document.body.style.userSelect = ''
       }
     }
-  }, [isDragging, isResizing, dragStart, panelPosition, panelSize])
-
-  const handleClearAllFiles = async () => {
-    if (window.confirm('Are you sure you want to clear all files? This action cannot be undone.')) {
-      await clearAllFiles()
-    }
-  }
+  }, [isDragging, isResizing, dragStart, panelSize.width, panelSize.height])
 
   const handleShowPKIBundle = () => {
-    if (!isAuthenticated) {
-      console.warn('PKI Bundle access requires authentication')
-      return
-    }
     setShowPKIBundle(true)
   }
 
-  const handleClosePKIBundle = () => setShowPKIBundle(false)
-  const handleShowAdvanced = () => setShowAdvanced(true)
-  const handleCloseAdvanced = () => setShowAdvanced(false)
+  const handleClosePKIBundle = () => {
+    setShowPKIBundle(false)
+  }
+
+  const handleShowAdvanced = () => {
+    setShowAdvanced(true)
+  }
+
+  const handleCloseAdvanced = () => {
+    setShowAdvanced(false)
+  }
+
+  const handleClearAllFiles = () => {
+    clearAllFiles()
+  }
+
+  const panelStyle = isMinimized
+    ? {
+        left: `${minimizedPosition.x}px`,
+        top: `${minimizedPosition.y}px`,
+        bottom: 'auto'
+      }
+    : {
+        left: 0,
+        top: 0,
+        transform: `translate(${panelPosition.x}px, ${panelPosition.y}px)`,
+        width: `${panelSize.width}px`,
+        height: `${panelSize.height}px`
+      }
 
   return (
     <>
       <div
         ref={panelRef}
         className={`${styles.panel} ${isMinimized ? styles.minimized : ''}`}
-        style={isMinimized ? {
-          left: `${minimizedPosition.x}px`,
-          top: `${minimizedPosition.y}px`,
-          bottom: 'auto'
-        } : {
-          left: 0,
-          top: 0,
-          transform: `translate(${panelPosition.x}px, ${panelPosition.y}px)`,
-          width: `${panelSize.width}px`,
-          height: `${panelSize.height}px`
-        }}
+        style={panelStyle}
         onMouseDown={handleMouseDown}
       >
         <div className={`${styles.header} ${isMinimized && connectionStatus === 'connected' ? styles.connected : ''} ${isMinimized && connectionStatus === 'disconnected' ? styles.disconnected : ''}`}>
@@ -278,13 +383,27 @@ const FloatingPanel = ({ isAuthenticated }) => {
               <h4 className={styles.sectionTitle}>Download</h4>
             </div>
             <div className={styles.sectionContent}>
+              {/* Show download error if present */}
+              {downloadError && (
+                <div className={styles.errorMessage}>
+                  {downloadError}
+                </div>
+              )}
+              
               <button
-                className={`${styles.downloadButton} ${!hasRequiredForLinux ? styles.disabled : ''}`}
-                disabled={!hasRequiredForLinux}
-                title={hasRequiredForLinux ? "Download certificate bundle for Apache/Nginx" : "Certificate and private key required"}
+                className={`${styles.downloadButton} ${!hasRequiredForLinux || isDownloading ? styles.disabled : ''}`}
+                disabled={!hasRequiredForLinux || isDownloading}
+                onClick={handleLinuxApacheDownload}
+                title={
+                  isDownloading 
+                    ? "Downloading..." 
+                    : hasRequiredForLinux 
+                      ? "Download certificate bundle for Apache/Nginx" 
+                      : "Certificate and private key required"
+                }
               >
                 <Monitor size={16} />
-                Linux (Apache)
+                {isDownloading ? 'Downloading...' : 'Linux (Apache)'}
               </button>
               <button
                 className={`${styles.downloadButton} ${!hasRequiredForWindows ? styles.disabled : ''}`}
@@ -328,6 +447,22 @@ const FloatingPanel = ({ isAuthenticated }) => {
       {showAdvanced && (
         <AdvancedModal onClose={handleCloseAdvanced} />
       )}
+
+      {showPasswordModal && zipPassword && (
+        <SecurePasswordModal
+          password={zipPassword}
+          onClose={handlePasswordModalClose}
+          onCopyComplete={handlePasswordCopyComplete}
+        />
+      )}
+
+      <NotificationToast
+        type="success"
+        message={successMessage}
+        show={showSuccessNotification}
+        onClose={handleSuccessNotificationClose}
+        duration={4000}
+      />
     </>
   )
 }

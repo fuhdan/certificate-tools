@@ -15,8 +15,7 @@ class Settings:
     # Application
     APP_NAME: str = "Certificate Analysis API"
     APP_VERSION: str = "1.0.0"
-    # DEBUG: bool = os.getenv("DEBUG", "OFF").upper() == "ON"
-    DEBUG: bool = True  # Set to False in production
+    DEBUG: bool = os.getenv("DEBUG", "OFF").upper() == "ON"
     
     # API
     API_PREFIX: str = "/api"

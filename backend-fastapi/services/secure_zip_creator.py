@@ -411,14 +411,14 @@ class SecureZipCreator:
         return self.create_protected_zip(files, password)
     
     def create_iis_bundle(
-        self, 
-        p12_bundle: bytes, 
-        iis_guide: str,
+        self,
+        p12_bundle: bytes,
+        iis_guide: str, 
         cert_info: str,
         password: Optional[str] = None
     ) -> Tuple[bytes, str]:
         """
-        Create IIS certificate bundle ZIP file with AES-256 encryption.
+        Create password-protected ZIP file for IIS with PKCS#12 bundle.
         
         Args:
             p12_bundle: PKCS#12 bundle file content

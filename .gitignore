@@ -410,3 +410,6 @@ coverage-reports/
 
 # Add your project-specific ignores here
 # e.g., build artifacts, generated files, etc.
+
+scripts/CertificateAuthority/**
+scripts/test/**

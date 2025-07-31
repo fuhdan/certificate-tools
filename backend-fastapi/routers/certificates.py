@@ -1,341 +1,349 @@
 # backend-fastapi/routers/certificates.py
-# Updated certificate endpoints for unified storage
+# Updated API endpoints for session-based PKI storage
 
-import datetime
 import logging
-import uuid
+import datetime
 from typing import Annotated
-from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, Form
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi.responses import JSONResponse
 
-from auth.models import User
-from auth.dependencies import get_current_active_user
-from middleware.session_middleware import get_session_id
-from certificates.storage import CertificateStorage
-from certificates.analyzer import analyze_uploaded_certificate
-from certificates.models.certificate import storage_to_api_model
+from ..auth.models import User
+from ..auth.dependencies import get_current_active_user
+from ..middleware.session_middleware import get_session_id
+from ..certificates.analyzer import analyze_uploaded_certificate
+from ..certificates.storage.session_pki_storage import session_pki_storage, PKIComponentType
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-@router.post("/analyze-certificate", tags=["certificates"], status_code=201)
+@router.post("/analyze-certificate", tags=["certificates"])
 async def analyze_certificate(
     certificate: UploadFile = File(...),
     password: str = Form(None),
     session_id: str = Depends(get_session_id)
 ):
-    """Analyze uploaded certificate file with unified storage"""
+    """Analyze uploaded certificate and store components in session"""
+    
+    filename = certificate.filename or "unknown_file"
+    logger.info(f"[{session_id}] Analyzing certificate: {filename}")
     
     try:
+        # Read file content
         file_content = await certificate.read()
-        logger.info(f"[{session_id}] Analyzing certificate: {certificate.filename}")
         
-        # Analyze the certificate - returns certificate ID
-        cert_id = analyze_uploaded_certificate(
-            file_content, 
-            certificate.filename or "unknown", 
-            password,
-            session_id
+        if len(file_content) == 0:
+            raise HTTPException(status_code=400, detail="Empty file uploaded")
+        
+        if len(file_content) > 10 * 1024 * 1024:  # 10MB limit
+            raise HTTPException(status_code=400, detail="File too large (max 10MB)")
+        
+        # Analyze and store components
+        analysis_result = analyze_uploaded_certificate(
+            file_content=file_content,
+            filename=filename,
+            password=password,
+            session_id=session_id
         )
         
-        # Get the stored certificate data
-        cert_model = CertificateStorage.get_by_id(cert_id, session_id)
+        logger.info(f"[{session_id}] Successfully analyzed: {filename}")
         
-        if not cert_model:
-            logger.error(f"[{session_id}] Certificate {cert_id} not found after storage")
-            raise HTTPException(
-                status_code=500,
-                detail="Certificate analysis failed - storage error"
-            )
-        
-        # Check if password is required
-        if cert_model.requires_password and not password:
-            logger.info(f"[{session_id}] Password required for '{certificate.filename}'")
-            return {
-                "success": False,
-                "requiresPassword": True,
-                "certificate": cert_model,
-                "message": f"Password required for {certificate.filename}",
-                "errors": []
+        return JSONResponse(
+            status_code=201,
+            content={
+                "success": True,
+                "message": f"Successfully analyzed {filename}",
+                "analysis": analysis_result,
+                "session_id": session_id
             }
+        )
         
-        # Check if certificate is valid
-        if not cert_model.is_valid:
-            logger.warning(f"[{session_id}] Invalid certificate: {certificate.filename}")
-            logger.warning(f"[{session_id}] Validation errors: {cert_model.validation_errors}")
-            
-            return {
-                "success": False,
-                "requiresPassword": False,
-                "certificate": cert_model,
-                "message": f"Certificate analysis failed for {certificate.filename}",
-                "errors": cert_model.validation_errors
-            }
+    except ValueError as ve:
+        logger.error(f"[{session_id}] Validation error for {filename}: {ve}")
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        logger.error(f"[{session_id}] Analysis error for {filename}: {e}")
+        raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
+
+@router.get("/certificates", tags=["certificates"])
+def get_certificates(session_id: str = Depends(get_session_id)):
+    """Get all PKI components for session in proper order"""
+    
+    logger.info(f"[{session_id}] Retrieving PKI components")
+    
+    try:
+        # Get components from session storage
+        components = session_pki_storage.get_session_components(session_id)
         
-        logger.info(f"[{session_id}] Successfully analyzed: {certificate.filename}")
+        logger.info(f"[{session_id}] Retrieved {len(components)} PKI components")
         
         return {
             "success": True,
-            "requiresPassword": False,
-            "certificate": cert_model,
-            "message": f"Certificate '{certificate.filename}' analyzed successfully",
-            "errors": []
+            "session_id": session_id,
+            "components": components,
+            "count": len(components),
+            "timestamp": datetime.datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"[{session_id}] Error retrieving components: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve components: {str(e)}")
+
+@router.get("/certificates/{component_id}", tags=["certificates"])
+def get_certificate_component(
+    component_id: str,
+    session_id: str = Depends(get_session_id)
+):
+    """Get specific PKI component by ID"""
+    
+    logger.info(f"[{session_id}] Retrieving component: {component_id}")
+    
+    try:
+        session = session_pki_storage.get_or_create_session(session_id)
+        component = session.components.get(component_id)
+        
+        if not component:
+            raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
+        
+        return {
+            "success": True,
+            "component": component.to_dict(),
+            "session_id": session_id
         }
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[{session_id}] Certificate analysis error: {e}")
-        import traceback
-        logger.error(f"Full traceback: {traceback.format_exc()}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Certificate analysis failed: {str(e)}"
-        )
+        logger.error(f"[{session_id}] Error retrieving component {component_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve component: {str(e)}")
 
-@router.get("/api/certificates", tags=["certificates"])
-def get_certificates(
+@router.delete("/certificates/{component_id}", tags=["certificates"])
+def delete_certificate_component(
+    component_id: str,
     current_user: Annotated[User, Depends(get_current_active_user)],
     session_id: str = Depends(get_session_id)
 ):
-    """Get all stored certificates from unified storage"""
-    logger.info(f"[{session_id}] User '{current_user.username}' retrieving certificates")
+    """Delete specific PKI component"""
+    
+    logger.info(f"[{session_id}] User '{current_user.username}' deleting component: {component_id}")
     
     try:
-        certificates = CertificateStorage.get_all(session_id)
-        logger.info(f"[{session_id}] Retrieved {len(certificates)} certificates for user {current_user.username}")
+        session = session_pki_storage.get_or_create_session(session_id)
         
-        return {
-            "success": True,
-            "certificates": certificates,
-            "count": len(certificates),
-            "timestamp": datetime.datetime.now().isoformat(),
-            "session_id": session_id
-        }
+        if component_id not in session.components:
+            raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
         
-    except Exception as e:
-        logger.error(f"[{session_id}] Certificate retrieval error: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to retrieve certificates: {str(e)}"
-        )
-
-@router.get("/certificates", tags=["certificates"])
-def get_certificates_simple(session_id: str = Depends(get_session_id)):
-    """Get all stored certificates - simple endpoint"""
-    logger.info(f"[{session_id}] Retrieving certificates (simple)")
-    
-    try:
-        certificates = CertificateStorage.get_all(session_id)
-        logger.info(f"[{session_id}] Retrieved {len(certificates)} certificates")
+        component = session.components[component_id]
+        component_type = component.type.type_name
         
-        return {
-            "success": True,
-            "certificates": certificates,
-            "count": len(certificates),
-            "session_id": session_id
-        }
+        success = session.remove_component(component_id)
         
-    except Exception as e:
-        logger.error(f"[{session_id}] Certificate retrieval error: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to retrieve certificates: {str(e)}"
-        )
-
-@router.get("/validate", tags=["validation"])
-def validate_certificates_simple(session_id: str = Depends(get_session_id)):
-    """Run validation checks on uploaded certificates using unified storage"""
-    logger.info(f"[{session_id}] Starting certificate validation")
-    
-    from certificates.validation.validator import run_validations
-    
-    try:
-        certificates = CertificateStorage.get_all(session_id)
-        logger.info(f"[{session_id}] Running validations on {len(certificates)} certificates")
-        
-        if not certificates:
+        if success:
+            logger.info(f"[{session_id}] Successfully deleted {component_type} component for user {current_user.username}")
             return {
                 "success": True,
-                "validations": [],
-                "count": 0,
-                "timestamp": datetime.datetime.now().isoformat(),
-                "session_id": session_id,
-                "message": "No certificates to validate"
+                "message": f"{component_type} component deleted successfully",
+                "component_id": component_id
             }
+        else:
+            raise HTTPException(status_code=500, detail=f"Failed to delete component {component_id}")
         
-        # Run validations with unified storage
-        validations = run_validations(certificates, session_id)
-        
-        # Convert to dictionary format
-        validation_dicts = []
-        for validation in validations:
-            validation_dict = validation.to_dict()
-            validation_dicts.append(validation_dict)
-        
-        passed_count = sum(1 for v in validations if v.is_valid)
-        failed_count = len(validations) - passed_count
-        logger.info(f"[{session_id}] Validation complete: {passed_count} passed, {failed_count} failed ({len(validations)} total)")
-
-        return {
-            "success": True,
-            "validations": validation_dicts,
-            "count": len(validations),
-            "timestamp": datetime.datetime.now().isoformat(),
-            "session_id": session_id
-        }
-        
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"[{session_id}] Validation error: {e}")
-        import traceback
-        logger.error(f"[{session_id}] Full traceback: {traceback.format_exc()}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to run validations: {str(e)}"
-        )
+        logger.error(f"[{session_id}] Component deletion error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete component: {str(e)}")
 
-@router.post("/api/certificates/validate", tags=["certificates"])
-def validate_certificates(
+@router.post("/certificates/clear", tags=["certificates"])
+def clear_all_components(
     current_user: Annotated[User, Depends(get_current_active_user)],
     session_id: str = Depends(get_session_id)
 ):
-    """Run validation checks on stored certificates using unified storage"""
-    logger.info(f"[{session_id}] User '{current_user.username}' starting certificate validation")
-
-    from certificates.validation.validator import run_validations
+    """Clear all PKI components from session"""
+    
+    logger.info(f"[{session_id}] User '{current_user.username}' clearing all components")
     
     try:
-        all_certificates = CertificateStorage.get_all(session_id)
+        success = session_pki_storage.clear_session(session_id)
         
-        if not all_certificates:
+        if success:
+            logger.info(f"[{session_id}] Successfully cleared all components for user {current_user.username}")
             return {
-                "success": False,
-                "message": "No certificates found to validate",
-                "validations": [],
+                "success": True,
+                "message": "All PKI components cleared successfully",
+                "session_id": session_id
+            }
+        else:
+            logger.warning(f"[{session_id}] No components found to clear")
+            return {
+                "success": True,
+                "message": "No components found to clear",
                 "session_id": session_id
             }
         
-        # Run validations directly on unified certificate models
-        validations = run_validations(all_certificates, session_id)
-        
-        logger.debug(f"[{session_id}] Validation completed: {len(validations)} results for user {current_user.username}")
-        
-        # Convert to dict format for API response
-        validation_dicts = []
-        for validation in validations:
-            validation_dict = validation.to_dict()
-            validation_dicts.append(validation_dict)
-        
-        passed_count = sum(1 for v in validations if v.is_valid)
-        failed_count = len(validations) - passed_count
-        logger.info(f"[{session_id}] Validation complete for user '{current_user.username}': {passed_count} passed, {failed_count} failed")
-
-        return {
-            "success": True,
-            "validations": validation_dicts,
-            "count": len(validations),
-            "timestamp": datetime.datetime.now().isoformat(),
-            "session_id": session_id
-        }
-        
     except Exception as e:
-        logger.error(f"[{session_id}] Validation error: {e}")
-        import traceback
-        logger.error(f"[{session_id}] Full traceback: {traceback.format_exc()}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to run validations: {str(e)}"
-        )
+        logger.error(f"[{session_id}] Component clearing error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to clear components: {str(e)}")
 
-@router.delete("/api/certificates/{cert_id}", tags=["certificates"])
-def delete_certificate(
-    cert_id: str,
+@router.post("/certificates/replace/{component_id}", tags=["certificates"])
+async def replace_component(
+    component_id: str,
     current_user: Annotated[User, Depends(get_current_active_user)],
+    certificate: UploadFile = File(...),
+    password: str = Form(None),
     session_id: str = Depends(get_session_id)
 ):
-    """Delete a certificate from unified storage"""
-    logger.info(f"[{session_id}] User '{current_user.username}' deleting certificate {cert_id}")
+    """Replace an existing PKI component with a new one"""
+    
+    filename = certificate.filename or "unknown_file"
+    logger.info(f"[{session_id}] User '{current_user.username}' replacing component: {component_id}")
     
     try:
-        # Check if certificate exists
-        cert = CertificateStorage.get_by_id(cert_id, session_id)
-        if not cert:
+        session = session_pki_storage.get_or_create_session(session_id)
+        
+        if component_id not in session.components:
+            raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
+        
+        old_component = session.components[component_id]
+        old_type = old_component.type
+        
+        # Read new file content
+        file_content = await certificate.read()
+        
+        if len(file_content) == 0:
+            raise HTTPException(status_code=400, detail="Empty file uploaded")
+        
+        # For replacement, we temporarily analyze the new file to get its components
+        temp_session_id = f"temp_{session_id}"
+        analysis_result = analyze_uploaded_certificate(
+            file_content=file_content,
+            filename=filename,
+            password=password,
+            session_id=temp_session_id
+        )
+        
+        # Get the temporary components
+        temp_session = session_pki_storage.get_or_create_session(temp_session_id)
+        temp_components = list(temp_session.components.values())
+        
+        # Find a component of the same type to replace with
+        replacement_component = None
+        for comp in temp_components:
+            if comp.type == old_type:
+                replacement_component = comp
+                break
+        
+        if not replacement_component:
+            # Clean up temp session
+            session_pki_storage.clear_session(temp_session_id)
             raise HTTPException(
-                status_code=404,
-                detail=f"Certificate {cert_id} not found"
+                status_code=400, 
+                detail=f"No {old_type.type_name} found in uploaded file"
             )
         
-        # Remove from unified storage
-        success = CertificateStorage.remove(cert_id, session_id)
+        # Update the component with new content
+        replacement_component.filename = filename
+        replacement_component.uploaded_at = datetime.datetime.now().isoformat()
+        
+        # Replace in main session
+        success = session.replace_component(component_id, replacement_component)
+        
+        # Clean up temp session
+        session_pki_storage.clear_session(temp_session_id)
         
         if success:
-            logger.info(f"[{session_id}] Successfully deleted certificate {cert_id} for user {current_user.username}")
+            logger.info(f"[{session_id}] Successfully replaced {old_type.type_name} component")
             return {
                 "success": True,
-                "message": f"Certificate {cert.filename} deleted successfully",
-                "cert_id": cert_id
+                "message": f"{old_type.type_name} component replaced successfully",
+                "component_id": component_id,
+                "new_filename": filename
             }
         else:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to delete certificate {cert_id}"
-            )
+            raise HTTPException(status_code=500, detail="Failed to replace component")
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[{session_id}] Certificate deletion error: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to delete certificate: {str(e)}"
-        )
+        logger.error(f"[{session_id}] Component replacement error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to replace component: {str(e)}")
 
-@router.post("/api/certificates/clear", tags=["certificates"])
-def clear_certificates(
-    current_user: Annotated[User, Depends(get_current_active_user)],
-    session_id: str = Depends(get_session_id)
-):
-    """Clear all certificates from unified storage"""
-    logger.info(f"[{session_id}] User '{current_user.username}' clearing all certificates")
-    
-    try:
-        CertificateStorage.clear_session(session_id)
-        logger.info(f"[{session_id}] Successfully cleared all certificates for user {current_user.username}")
-        
-        return {
-            "success": True,
-            "message": "All certificates cleared successfully",
-            "session_id": session_id
-        }
-        
-    except Exception as e:
-        logger.error(f"[{session_id}] Certificate clearing error: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to clear certificates: {str(e)}"
-        )
-
-@router.get("/api/certificates/session-summary", tags=["certificates"])
+@router.get("/certificates/session-summary", tags=["certificates"])
 def get_session_summary(
     current_user: Annotated[User, Depends(get_current_active_user)],
     session_id: str = Depends(get_session_id)
 ):
-    """Get session summary from unified storage"""
+    """Get PKI session summary"""
+    
     logger.info(f"[{session_id}] User '{current_user.username}' requesting session summary")
     
     try:
-        summary = CertificateStorage.get_session_summary(session_id)
-        logger.debug(f"[{session_id}] Session summary retrieved for user {current_user.username}")
+        session = session_pki_storage.get_or_create_session(session_id)
         
-        return {
+        # Count components by type
+        component_counts = {}
+        for component in session.components.values():
+            type_name = component.type.type_name
+            component_counts[type_name] = component_counts.get(type_name, 0) + 1
+        
+        # Check PKI completeness
+        has_private_key = PKIComponentType.PRIVATE_KEY.type_name in component_counts
+        has_certificate = PKIComponentType.CERTIFICATE.type_name in component_counts
+        has_issuing_ca = PKIComponentType.ISSUING_CA.type_name in component_counts
+        has_root_ca = PKIComponentType.ROOT_CA.type_name in component_counts
+        
+        is_complete_pki = has_certificate and (has_issuing_ca or has_root_ca)
+        
+        summary = {
             "success": True,
-            "summary": summary,
-            "timestamp": datetime.datetime.now().isoformat(),
-            "session_id": session_id
+            "session_id": session_id,
+            "created_at": session.created_at,
+            "last_updated": session.last_updated,
+            "total_components": len(session.components),
+            "component_counts": component_counts,
+            "pki_status": {
+                "is_complete": is_complete_pki,
+                "has_private_key": has_private_key,
+                "has_certificate": has_certificate,
+                "has_issuing_ca": has_issuing_ca,
+                "has_root_ca": has_root_ca,
+                "can_create_p12": has_certificate and has_private_key,
+                "can_create_chain": has_certificate and (has_issuing_ca or has_root_ca)
+            },
+            "timestamp": datetime.datetime.now().isoformat()
         }
+        
+        logger.debug(f"[{session_id}] Session summary generated for user {current_user.username}")
+        return summary
         
     except Exception as e:
         logger.error(f"[{session_id}] Session summary error: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to get session summary: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Failed to get session summary: {str(e)}")
+
+@router.get("/certificates/types", tags=["certificates"])
+def get_available_component_types():
+    """Get list of available PKI component types"""
+    
+    types = []
+    for component_type in PKIComponentType:
+        types.append({
+            "type": component_type.type_name,
+            "order": component_type.order,
+            "description": _get_type_description(component_type)
+        })
+    
+    return {
+        "success": True,
+        "component_types": sorted(types, key=lambda x: x["order"])
+    }
+
+def _get_type_description(component_type: PKIComponentType) -> str:
+    """Get human-readable description for component type"""
+    descriptions = {
+        PKIComponentType.PRIVATE_KEY: "Private key for certificate encryption and signing",
+        PKIComponentType.CSR: "Certificate Signing Request - request for certificate issuance",
+        PKIComponentType.CERTIFICATE: "End-entity certificate for servers/clients",
+        PKIComponentType.ISSUING_CA: "Certificate Authority that issued the end-entity certificate",
+        PKIComponentType.INTERMEDIATE_CA: "Intermediate Certificate Authority in the chain",
+        PKIComponentType.ROOT_CA: "Root Certificate Authority - top of the trust chain"
+    }
+    return descriptions.get(component_type, "PKI component")

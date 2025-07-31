@@ -1,5 +1,5 @@
 // frontend/src/components/Layout/Layout.jsx
-// Updated for unified storage backend
+// Complete fresh version - bundle expansion with fixed auth
 
 import React, { useState, useEffect, useMemo } from 'react'
 import Header from '../Header/Header'
@@ -7,7 +7,6 @@ import Footer from '../Footer/Footer'
 import FloatingPanel from '../FloatingPanel/FloatingPanel'
 import FileUpload from '../FileUpload/FileUpload'
 import CertificateDetails from '../CertificateDetails/CertificateDetails'
-import ValidationPanel from '../ValidationPanel/ValidationPanel'
 import { CertificateProvider, useCertificates } from '../../contexts/CertificateContext'
 import api from '../../services/api'
 import styles from './Layout.module.css'
@@ -47,11 +46,7 @@ const LayoutContent = () => {
   }, [])
 
   // Helper function to determine certificate order in PKI hierarchy
-  // Updated for unified certificate model - proper PKI hierarchy
   const getPKIOrder = (certificate) => {
-    // PKCS12/PKCS7 files should be expanded, not treated as single items
-    // We look at what they CONTAIN, not the format
-    
     // 1. Private Key (standalone private key files)
     if (certificate.has_private_key && !certificate.has_certificate && !certificate.has_csr) {
       return 1
@@ -77,16 +72,14 @@ const LayoutContent = () => {
       return 5
     }
 
-    // 6. PKCS12/PKCS7 bundles with multiple certificates (these should be processed to extract individual certs)
-    if (certificate.original_format === 'PKCS12' || certificate.original_format === 'PKCS7') {
-      return 6
-    }
-
     // Default order for unknown types
     return 999
   }
 
   const createSortedCertificates = (certificates) => {
+    // No bundle expansion - trust the backend to provide correctly structured data
+    // The backend should already handle PKCS12/PKCS7 expansion and proper ordering
+    
     // Cache the order calculations to avoid repeated computation
     const certificateOrders = new Map()
     
@@ -118,11 +111,7 @@ const LayoutContent = () => {
     })
   }
 
-  // Create sorted certificates for display using the unified model
-  const sortedCertificates = useMemo(() => {
-    return createSortedCertificates(certificates)
-  }, [certificates])
-
+  // Login/logout handlers
   const handleLoginSuccess = async () => {
     setIsAuthenticated(true)
     
@@ -142,17 +131,22 @@ const LayoutContent = () => {
     setCurrentUser(null)
   }
 
-  // Show loading while checking authentication
+  // Memoize the sorted certificates to avoid unnecessary recalculations
+  const sortedCertificates = useMemo(() => {
+    return createSortedCertificates(certificates)
+  }, [certificates])
+
   if (isCheckingAuth) {
     return (
-      <div className={styles.loading}>
-        <div className={styles.loadingSpinner}></div>
-        <p>Loading...</p>
+      <div className={styles.loadingContainer}>
+        <div className={styles.loading}>
+          <div className={styles.spinner}></div>
+          <p>Loading...</p>
+        </div>
       </div>
     )
   }
 
-  // Show main application with authentication-aware components
   return (
     <div className={styles.layout}>
       <Header 
@@ -161,38 +155,45 @@ const LayoutContent = () => {
         onLogout={handleLogout}
         currentUser={currentUser}
       />
+      
       <main className={styles.main}>
-        <div className={styles.content}>
-          <h1>Certificate Tools</h1>
-          <p>Professional certificate management and conversion platform.</p>
-          <FileUpload />
+        <div className={styles.container}>
+          {/* File Upload Section */}
+          <div className={styles.uploadSection}>
+            <FileUpload />
+          </div>
           
+          {/* Certificate Details Section */}
           {sortedCertificates.length > 0 && (
             <div className={styles.certificatesSection}>
               <h2>Certificate Analysis</h2>
-              
-              {/* Validation Panel - appears above certificate details */}
-              <ValidationPanel 
-                certificates={sortedCertificates}
-              />
-              
-              {sortedCertificates.map((certificate) => (
-                <CertificateDetails 
-                  key={certificate.id} 
-                  certificate={certificate} 
-                />
-              ))}
+              <div className={styles.certificatesList}>
+                {sortedCertificates.map(certificate => (
+                  <CertificateDetails 
+                    key={certificate.id} 
+                    certificate={certificate} 
+                  />
+                ))}
+              </div>
             </div>
           )}
+          
+          {/* Validation Panel removed - validation is in individual certificate headers */}
         </div>
       </main>
-      <FloatingPanel isAuthenticated={isAuthenticated} />
+      
       <Footer />
+      
+      {/* Floating System Panel */}
+      <FloatingPanel 
+        isAuthenticated={isAuthenticated}
+        currentUser={currentUser}
+      />
     </div>
   )
 }
 
-// Main Layout component that provides the context
+// Main Layout component with Context Provider
 const Layout = () => {
   return (
     <CertificateProvider>

@@ -138,7 +138,10 @@ export const CertificateProvider = ({ children }) => {
       })
       
       setCertificates([])
-      await api.delete('/certificates')
+      
+      // Use the correct endpoint: POST /api/certificates/clear (requires auth)
+      await api.post('/api/certificates/clear')
+      
     } catch (error) {
       console.error('Error clearing all files:', error)
       setError('Failed to clear all files')

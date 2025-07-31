@@ -1,5 +1,5 @@
 // frontend/src/components/CertificateDetails/CertificateDetails.jsx
-// Updated for unified storage backend
+// Updated: Validation in header, no separate validation section, always expanded
 
 import React, { useState } from 'react'
 import { 
@@ -10,7 +10,7 @@ import {
 import styles from './CertificateDetails.module.css'
 
 const CertificateDetails = ({ certificate }) => {
-  const [isExpanded, setIsExpanded] = useState(false)
+  const [isExpanded, setIsExpanded] = useState(true) // Default to expanded
   const [showSensitiveData, setShowSensitiveData] = useState(false)
 
   if (!certificate) {
@@ -45,11 +45,11 @@ const CertificateDetails = ({ certificate }) => {
   }
 
   const getStatusColor = () => {
-    return certificate.is_valid ? '#22c55e' : '#ef4444'
+    return certificate.is_valid ? '#10b981' : '#ef4444'
   }
 
   const formatDate = (dateString) => {
-    if (!dateString) return 'Not specified'
+    if (!dateString) return 'N/A'
     try {
       return new Date(dateString).toLocaleString()
     } catch {
@@ -64,28 +64,36 @@ const CertificateDetails = ({ certificate }) => {
 
     return (
       <>
-        {/* Subject Information */}
         <div className={styles.section}>
-          <h4><User size={16} /> Subject Information</h4>
+          <h4><Award size={16} /> Certificate Information</h4>
           <div className={styles.grid}>
             <div className={styles.field}>
-              <span className={styles.label}>Distinguished Name:</span>
+              <span className={styles.label}>Subject:</span>
               <span className={styles.value}>{info.subject}</span>
             </div>
             <div className={styles.field}>
-              <span className={styles.label}>Serial Number:</span>
-              <span className={styles.value}>{info.serial_number}</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Issuer Information */}
-        <div className={styles.section}>
-          <h4><Building size={16} /> Issuer Information</h4>
-          <div className={styles.grid}>
-            <div className={styles.field}>
-              <span className={styles.label}>Distinguished Name:</span>
+              <span className={styles.label}>Issuer:</span>
               <span className={styles.value}>{info.issuer}</span>
+            </div>
+            <div className={styles.field}>
+              <span className={styles.label}>Serial Number:</span>
+              <span className={styles.value} style={{ fontFamily: 'monospace' }}>
+                {info.serial_number}
+              </span>
+            </div>
+            <div className={styles.field}>
+              <span className={styles.label}>Valid From:</span>
+              <span className={styles.value}>{formatDate(info.not_before)}</span>
+            </div>
+            <div className={styles.field}>
+              <span className={styles.label}>Valid Until:</span>
+              <span className={styles.value}>{formatDate(info.not_after)}</span>
+            </div>
+            <div className={styles.field}>
+              <span className={styles.label}>Certificate Authority:</span>
+              <span className={`${styles.value} ${info.is_ca ? styles.yes : styles.no}`}>
+                {info.is_ca ? 'Yes' : 'No'}
+              </span>
             </div>
             <div className={styles.field}>
               <span className={styles.label}>Self-Signed:</span>
@@ -93,30 +101,12 @@ const CertificateDetails = ({ certificate }) => {
                 {info.is_self_signed ? 'Yes' : 'No'}
               </span>
             </div>
-          </div>
-        </div>
-
-        {/* Validity Period */}
-        <div className={styles.section}>
-          <h4><Calendar size={16} /> Validity Period</h4>
-          <div className={styles.grid}>
             <div className={styles.field}>
-              <span className={styles.label}>Valid From:</span>
-              <span className={styles.value}>{formatDate(info.not_valid_before)}</span>
+              <span className={styles.label}>Version:</span>
+              <span className={styles.value}>v{info.version}</span>
             </div>
             <div className={styles.field}>
-              <span className={styles.label}>Valid Until:</span>
-              <span className={styles.value}>{formatDate(info.not_valid_after)}</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Public Key Information */}
-        <div className={styles.section}>
-          <h4><Key size={16} /> Public Key</h4>
-          <div className={styles.grid}>
-            <div className={styles.field}>
-              <span className={styles.label}>Algorithm:</span>
+              <span className={styles.label}>Public Key Algorithm:</span>
               <span className={styles.value}>{info.public_key_algorithm}</span>
             </div>
             {info.public_key_size && (
@@ -137,15 +127,21 @@ const CertificateDetails = ({ certificate }) => {
           <h4><Hash size={16} /> Fingerprints</h4>
           <div className={styles.grid}>
             <div className={styles.field}>
+              <span className={styles.label}>SHA-256:</span>
+              <span className={styles.value} style={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>
+                {info.fingerprint_sha256}
+              </span>
+            </div>
+            <div className={styles.field}>
               <span className={styles.label}>SHA-1:</span>
-              <span className={styles.value} style={{ fontFamily: 'monospace' }}>
+              <span className={styles.value} style={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>
                 {info.fingerprint_sha1}
               </span>
             </div>
             <div className={styles.field}>
-              <span className={styles.label}>SHA-256:</span>
-              <span className={styles.value} style={{ fontFamily: 'monospace' }}>
-                {info.fingerprint_sha256}
+              <span className={styles.label}>Public Key:</span>
+              <span className={styles.value} style={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>
+                {info.public_key_fingerprint}
               </span>
             </div>
           </div>
@@ -156,39 +152,30 @@ const CertificateDetails = ({ certificate }) => {
           <div className={styles.section}>
             <h4><Shield size={16} /> Extensions</h4>
             
-            {/* Basic Constraints */}
-            {info.extensions.basic_constraints && (
+            {/* Subject Alternative Names */}
+            {info.extensions.subject_alt_name && info.extensions.subject_alt_name.length > 0 && (
               <div className={styles.extensionItem}>
-                <h5>Basic Constraints</h5>
-                <div className={styles.grid}>
-                  <div className={styles.field}>
-                    <span className={styles.label}>Certificate Authority:</span>
-                    <span className={`${styles.value} ${info.extensions.basic_constraints.ca ? styles.yes : styles.no}`}>
-                      {info.extensions.basic_constraints.ca ? 'Yes' : 'No'}
+                <h5>Subject Alternative Names</h5>
+                <div className={styles.sanList}>
+                  {info.extensions.subject_alt_name.map((san, index) => (
+                    <span key={index} className={styles.sanItem}>
+                      {san}
                     </span>
-                  </div>
-                  {info.extensions.basic_constraints.path_length !== null && (
-                    <div className={styles.field}>
-                      <span className={styles.label}>Path Length:</span>
-                      <span className={styles.value}>{info.extensions.basic_constraints.path_length}</span>
-                    </div>
-                  )}
+                  ))}
                 </div>
               </div>
             )}
 
             {/* Key Usage */}
-            {info.extensions.key_usage && (
+            {info.extensions.key_usage && info.extensions.key_usage.length > 0 && (
               <div className={styles.extensionItem}>
                 <h5>Key Usage</h5>
                 <div className={styles.usageList}>
-                  {Object.entries(info.extensions.key_usage).map(([usage, enabled]) => 
-                    enabled && (
-                      <span key={usage} className={styles.usageItem}>
-                        {usage.replace(/_/g, ' ')}
-                      </span>
-                    )
-                  )}
+                  {info.extensions.key_usage.map((usage, index) => (
+                    <span key={index} className={styles.usageItem}>
+                      {usage}
+                    </span>
+                  ))}
                 </div>
               </div>
             )}
@@ -201,20 +188,6 @@ const CertificateDetails = ({ certificate }) => {
                   {info.extensions.extended_key_usage.map((usage, index) => (
                     <span key={index} className={styles.usageItem}>
                       {usage}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Subject Alternative Names */}
-            {info.extensions.subject_alt_name && info.extensions.subject_alt_name.length > 0 && (
-              <div className={styles.extensionItem}>
-                <h5>Subject Alternative Names</h5>
-                <div className={styles.sanList}>
-                  {info.extensions.subject_alt_name.map((san, index) => (
-                    <span key={index} className={styles.sanItem}>
-                      {san}
                     </span>
                   ))}
                 </div>
@@ -253,7 +226,7 @@ const CertificateDetails = ({ certificate }) => {
           </div>
           <div className={styles.field}>
             <span className={styles.label}>Public Key Fingerprint:</span>
-            <span className={styles.value} style={{ fontFamily: 'monospace' }}>
+            <span className={styles.value} style={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>
               {info.public_key_fingerprint}
             </span>
           </div>
@@ -270,20 +243,18 @@ const CertificateDetails = ({ certificate }) => {
     return (
       <>
         <div className={styles.section}>
-          <h4><User size={16} /> CSR Subject Information</h4>
+          <h4><FileText size={16} /> Certificate Request Information</h4>
           <div className={styles.grid}>
             <div className={styles.field}>
-              <span className={styles.label}>Distinguished Name:</span>
+              <span className={styles.label}>Subject:</span>
               <span className={styles.value}>{info.subject}</span>
             </div>
-          </div>
-        </div>
-
-        <div className={styles.section}>
-          <h4><Key size={16} /> Public Key Information</h4>
-          <div className={styles.grid}>
             <div className={styles.field}>
-              <span className={styles.label}>Algorithm:</span>
+              <span className={styles.label}>Version:</span>
+              <span className={styles.value}>v{info.version}</span>
+            </div>
+            <div className={styles.field}>
+              <span className={styles.label}>Public Key Algorithm:</span>
               <span className={styles.value}>{info.public_key_algorithm}</span>
             </div>
             {info.public_key_size && (
@@ -329,49 +300,9 @@ const CertificateDetails = ({ certificate }) => {
     )
   }
 
-  const renderAdditionalCertificates = () => {
-    if (!certificate.additional_certificates_info || certificate.additional_certificates_info.length === 0) {
-      return null
-    }
-
-    return (
-      <div className={styles.section}>
-        <h4><Building size={16} /> Additional Certificates ({certificate.additional_certs_count})</h4>
-        <div className={styles.additionalCerts}>
-          {certificate.additional_certificates_info.map((certInfo, index) => (
-            <div key={index} className={styles.additionalCert}>
-              <div className={styles.certHeader}>
-                <span className={styles.certIndex}>#{index + 1}</span>
-                <span className={`${styles.certType} ${certInfo.is_ca ? styles.ca : styles.endEntity}`}>
-                  {certInfo.is_ca ? (certInfo.is_self_signed ? 'Root CA' : 'Intermediate CA') : 'End Entity'}
-                </span>
-              </div>
-              <div className={styles.certInfo}>
-                <div className={styles.field}>
-                  <span className={styles.label}>Subject:</span>
-                  <span className={styles.value}>{certInfo.subject}</span>
-                </div>
-                <div className={styles.field}>
-                  <span className={styles.label}>Issuer:</span>
-                  <span className={styles.value}>{certInfo.issuer}</span>
-                </div>
-                <div className={styles.field}>
-                  <span className={styles.label}>Fingerprint:</span>
-                  <span className={styles.value} style={{ fontFamily: 'monospace' }}>
-                    {certInfo.fingerprint_sha256}
-                  </span>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    )
-  }
-
   return (
     <div className={styles.container}>
-      {/* Header */}
+      {/* Header with validation status */}
       <div className={styles.header} onClick={() => setIsExpanded(!isExpanded)}>
         <div className={styles.titleSection}>
           {getTypeIcon()}
@@ -380,10 +311,15 @@ const CertificateDetails = ({ certificate }) => {
             <div className={styles.subtitle}>
               <span className={styles.type}>{getTypeLabel()}</span>
               <span className={styles.format}>({certificate.original_format})</span>
+              {/* Bundle source indicator */}
+              {certificate.is_bundle_component && (
+                <span className={styles.bundleSource}>from {certificate.bundle_source}</span>
+              )}
             </div>
           </div>
         </div>
         <div className={styles.controls}>
+          {/* Validation status in header */}
           <div className={styles.statusBadge} style={{ borderColor: getStatusColor() }}>
             {certificate.is_valid ? (
               <CheckCircle size={14} style={{ color: getStatusColor() }} />
@@ -394,14 +330,25 @@ const CertificateDetails = ({ certificate }) => {
               {certificate.is_valid ? 'Valid' : 'Invalid'}
             </span>
           </div>
+          
+          {/* Show validation errors count in header if any */}
+          {certificate.validation_errors && certificate.validation_errors.length > 0 && (
+            <div className={styles.errorCount}>
+              <AlertTriangle size={14} style={{ color: '#ef4444' }} />
+              <span style={{ color: '#ef4444', fontSize: '0.75rem' }}>
+                {certificate.validation_errors.length} error{certificate.validation_errors.length > 1 ? 's' : ''}
+              </span>
+            </div>
+          )}
+          
           {isExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
         </div>
       </div>
 
-      {/* Content */}
+      {/* Content - always show if expanded */}
       {isExpanded && (
         <div className={styles.content}>
-          {/* File Information */}
+          {/* File Information - Always expanded */}
           <div className={styles.section}>
             <h4><Info size={16} /> File Information</h4>
             <div className={styles.grid}>
@@ -430,32 +377,15 @@ const CertificateDetails = ({ certificate }) => {
             </div>
           </div>
 
-          {/* Content Summary */}
+          {/* Content Summary - Always expanded */}
           <div className={styles.section}>
             <h4><Shield size={16} /> Content Summary</h4>
-            <div className={styles.contentFlags}>
-              <div className={`${styles.contentFlag} ${certificate.has_certificate ? styles.present : styles.absent}`}>
-                <Award size={14} />
-                <span>Certificate {certificate.has_certificate ? '✓' : '✗'}</span>
-              </div>
-              <div className={`${styles.contentFlag} ${certificate.has_private_key ? styles.present : styles.absent}`}>
-                <Key size={14} />
-                <span>Private Key {certificate.has_private_key ? '✓' : '✗'}</span>
-              </div>
-              <div className={`${styles.contentFlag} ${certificate.has_csr ? styles.present : styles.absent}`}>
-                <FileText size={14} />
-                <span>CSR {certificate.has_csr ? '✓' : '✗'}</span>
-              </div>
-              {certificate.additional_certs_count > 0 && (
-                <div className={`${styles.contentFlag} ${styles.present}`}>
-                  <Building size={14} />
-                  <span>+{certificate.additional_certs_count} Additional</span>
-                </div>
-              )}
+            <div className={styles.contentSummary}>
+              <p>This section will show user-friendly validation information in a future update.</p>
             </div>
           </div>
 
-          {/* Validation Errors */}
+          {/* Show validation errors if any - in content area */}
           {certificate.validation_errors && certificate.validation_errors.length > 0 && (
             <div className={styles.section}>
               <h4><AlertTriangle size={16} /> Validation Errors</h4>
@@ -478,9 +408,6 @@ const CertificateDetails = ({ certificate }) => {
 
           {/* CSR Information */}
           {renderCSRInfo()}
-
-          {/* Additional Certificates */}
-          {renderAdditionalCertificates()}
         </div>
       )}
     </div>

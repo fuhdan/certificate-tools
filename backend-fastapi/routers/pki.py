@@ -1,28 +1,28 @@
-# routers/pki.py
-# PKI bundle endpoints
+# backend-fastapi/routers/pki.py
+# Updated PKI bundle endpoints for unified storage
 
 import datetime
 import logging
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import JSONResponse
+
 from certificates.storage import CertificateStorage
 from certificates.storage.pki_bundle import PKIBundleManager
 from middleware.session_middleware import get_session_id
 from auth.dependencies import get_current_user
 
 logger = logging.getLogger(__name__)
-
 router = APIRouter()
 
 @router.get("/pki-bundle", tags=["pki"])
 def get_pki_bundle(
     session_id: str = Depends(get_session_id),
-    current_user: str = Depends(get_current_user)  # Add admin authentication
+    current_user: str = Depends(get_current_user)
 ):
-    """Get current PKI bundle - regenerates automatically if needed"""
+    """Get current PKI bundle - regenerates automatically from unified storage"""
 
     try:
-        # Always get the latest certificates from storage
+        # Get the latest certificates from unified storage
         all_certificates = CertificateStorage.get_all(session_id)
         
         if not all_certificates:
@@ -32,7 +32,7 @@ def get_pki_bundle(
                 "bundle": None
             }
         
-        # Force regeneration to ensure bundle includes ALL current certificates
+        # Force regeneration from unified storage
         logger.info(f"[{session_id}] Admin {current_user} forcing PKI bundle regeneration for {len(all_certificates)} certificates")
         PKIBundleManager.auto_generate_pki_bundle(session_id, all_certificates)
         
@@ -71,12 +71,12 @@ def get_pki_bundle(
 @router.get("/pki-bundle/download", tags=["pki"])
 def download_pki_bundle(
     session_id: str = Depends(get_session_id),
-    current_user: str = Depends(get_current_user)  # Add admin authentication
+    current_user: str = Depends(get_current_user)
 ):
     """Download PKI bundle as JSON file"""
     
     try:
-        # Always get the latest certificates from storage
+        # Get the latest certificates from unified storage
         all_certificates = CertificateStorage.get_all(session_id)
         
         if not all_certificates:

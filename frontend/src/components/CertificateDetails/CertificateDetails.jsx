@@ -47,11 +47,13 @@ const CertificateDetails = ({ certificate }) => {
   const getTypeIcon = (type) => {
     switch (type) {
       case 'Certificate':
-      case 'CA Certificate':
+      case 'IssuingCA':
+      case 'IntermediateCA':
+      case 'RootCA':
         return <Shield size={20} />
       case 'CSR':
         return <FileText size={20} />
-      case 'Private Key':
+      case 'PrivateKey':
         return <Key size={20} />
       default:
         return <FileText size={20} />
@@ -61,48 +63,24 @@ const CertificateDetails = ({ certificate }) => {
   const getEnhancedCertificateType = () => {
     const type = analysis.type || ''
     
-    if (type === 'CSR') return { label: 'Certificate Signing Request', color: '#3b82f6' }
-    if (type === 'Private Key') return { label: 'Private Key', color: '#dc2626' }
-    if (type === 'Public Key') return { label: 'Public Key', color: '#059669' }
-    if (type === 'Certificate Chain') return { label: 'Certificate Chain', color: '#2563eb' }
-    
-    // For certificates, determine specific type
-    if (type === 'Certificate' || type === 'CA Certificate' || type === 'PKCS12 Certificate') {
-      const isCA = details.extensions?.basicConstraints?.isCA || false
-      const issuer = details.issuer?.commonName || ''
-      const subject = details.subject?.commonName || ''
-      
-      if (!isCA) {
-        return { label: 'End-Entity Certificate', color: '#1e40af' }
-      } else {
-        if (issuer === subject) {
-          return { label: 'Root Certificate Authority', color: '#7c2d12' }
-        } else {
-          const subjectLower = subject.toLowerCase()
-          if (subjectLower.includes('issuing') || subjectLower.includes('leaf')) {
-            return { label: 'Issuing Certificate Authority', color: '#1d4ed8' }
-          } else {
-            return { label: 'Intermediate Certificate Authority', color: '#1e40af' }
-          }
-        }
-      }
-    }
-    
-    return { label: type, color: '#6b7280' }
-  }
-
-  const getTypeColor = (type) => {
+    // Handle standardized types only
     switch (type) {
-      case 'Certificate':
-        return '#1e40af'
-      case 'CA Certificate':
-        return '#1d4ed8'
       case 'CSR':
-        return '#3b82f6'
-      case 'Private Key':
-        return '#dc2626'
+        return { label: 'Certificate Signing Request', color: '#3b82f6' }
+      case 'PrivateKey':
+        return { label: 'Private Key', color: '#dc2626' }
+      case 'Certificate':
+        return { label: 'End-Entity Certificate', color: '#1e40af' }
+      case 'IssuingCA':
+        return { label: 'Issuing Certificate Authority', color: '#1d4ed8' }
+      case 'IntermediateCA':
+        return { label: 'Intermediate Certificate Authority', color: '#1e40af' }
+      case 'RootCA':
+        return { label: 'Root Certificate Authority', color: '#7c2d12' }
+      case 'CertificateChain':
+        return { label: 'Certificate Chain', color: '#2563eb' }
       default:
-        return '#6b7280'
+        return { label: type, color: '#6b7280' }
     }
   }
 
@@ -418,9 +396,12 @@ const CertificateDetails = ({ certificate }) => {
       </div>
 
       <div className={styles.content}>
-        {analysis.type.includes('Certificate') && renderCertificateDetails()}
+        {(analysis.type === 'Certificate' || 
+          analysis.type === 'IssuingCA' || 
+          analysis.type === 'IntermediateCA' || 
+          analysis.type === 'RootCA') && renderCertificateDetails()}
         {analysis.type === 'CSR' && renderCSRDetails()}
-        {analysis.type === 'Private Key' && renderPrivateKeyDetails()}
+        {analysis.type === 'PrivateKey' && renderPrivateKeyDetails()}
       </div>
     </div>
   )

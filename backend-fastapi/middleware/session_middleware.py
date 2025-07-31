@@ -64,9 +64,13 @@ async def get_session_id(request: Request) -> str:
     
     if not session_id:
         # No session ID provided - use default session for backward compatibility
-        session_id = SessionMiddlewareConfig.DEFAULT_SESSION_ID
-        logger.info(
-            f"Using default session ID: {session_id} for {request_info} (no X-Session-ID header)"
+        # session_id = SessionMiddlewareConfig.DEFAULT_SESSION_ID
+        logger.warning(
+            f"No session ID for {request_info} (no X-Session-ID header)"
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=f"No session ID received. Expected UUID v4 ..."
         )
     elif not is_valid_uuid(session_id):
         # Invalid session ID format - generate replacement

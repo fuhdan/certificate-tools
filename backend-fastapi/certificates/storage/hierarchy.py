@@ -11,96 +11,29 @@ class HierarchyManager:
     
     @staticmethod
     def get_certificate_order(cert_data: Dict[str, Any]) -> int:
-        """Determine certificate order in PKI hierarchy"""
-        logger.debug(f"=== CERTIFICATE ORDER DETERMINATION ===")
+        """Get certificate order using standardized certificate types"""
+        from certificates.types import CertificateType, HierarchyOrder, normalize_certificate_type
+        
+        # Try fileType first (if available)
+        file_type = cert_data.get('fileType')
+        if file_type:
+            try:
+                cert_type = CertificateType(file_type)
+                return HierarchyOrder.get_order(cert_type)
+            except ValueError:
+                # fileType not in enum, fall through to analysis
+                pass
+            
+        # Fall back to analysis.type with normalization
         analysis = cert_data.get('analysis', {})
-        cert_type = analysis.get('type', '')
-        details = analysis.get('details')  # This can be None!
-        filename = cert_data.get('filename', 'NO_FILENAME')
+        raw_type = analysis.get('type')
+        if raw_type:
+            details = analysis.get('details')
+            cert_type = normalize_certificate_type(raw_type, details)
+            return HierarchyOrder.get_order(cert_type)
         
-        logger.debug(f"Certificate: {filename}")
-        logger.debug(f"Type: {cert_type}")
-        logger.debug(f"Has details: {details is not None}")
-        
-        # FIX: Handle None details gracefully
-        if details is None:
-            logger.debug(f"Certificate {filename} has no details (likely invalid), using defaults")
-            details = {}
-        
-        # Ensure details is a dictionary
-        if not isinstance(details, dict):
-            logger.warning(f"Certificate {filename} has invalid details type: {type(details)}, using empty dict")
-            details = {}
-        
-        # CSR = 1 (only one)
-        if cert_type == 'CSR':
-            logger.debug(f"Categorized as CSR (order 1)")
-            return 1
-            
-        # Private Key = 2 (only one)
-        if cert_type == 'Private Key':
-            logger.debug(f"Categorized as Private Key (order 2)")
-            return 2
-            
-        # For certificates, determine hierarchy
-        if 'Certificate' in cert_type and 'Chain' not in cert_type:
-            logger.debug(f"Processing certificate type: {cert_type}")
-            extensions = details.get('extensions', {})
-            basic_constraints = extensions.get('basicConstraints', {})
-            is_ca = basic_constraints.get('isCA', False)
-            
-            subject_cn = details.get('subject', {}).get('commonName', '')
-            issuer_cn = details.get('issuer', {}).get('commonName', '')
-            
-            logger.debug(f"Certificate analysis:")
-            logger.debug(f"  Subject CN: {subject_cn}")
-            logger.debug(f"  Issuer CN: {issuer_cn}")
-            logger.debug(f"  Is CA: {is_ca}")
-            logger.debug(f"  Has basic constraints: {bool(basic_constraints)}")
-            
-            if not is_ca:
-                # End-entity certificate = 3 (only one)
-                logger.debug(f"Categorized as End-entity Certificate (order 3)")
-                return 3
-            else:
-                # CA certificates - determine hierarchy
-                if issuer_cn == subject_cn:
-                    # Self-signed = Root CA = 6 (only one)
-                    logger.debug(f"Self-signed certificate detected - Root CA (order 6)")
-                    return 6
-                else:
-                    # Check if this is an issuing CA
-                    subject_lower = subject_cn.lower()
-                    issuing_indicators = [
-                        'issuing', 'leaf', 'server', 'client', 'ssl', 'tls',
-                        'web', 'email', 'code', 'signing'
-                    ]
-                    
-                    matching_indicators = [ind for ind in issuing_indicators if ind in subject_lower]
-                    is_issuing_ca = len(matching_indicators) > 0
-                    
-                    logger.debug(f"Issuing CA analysis:")
-                    logger.debug(f"  Subject (lowercase): {subject_lower}")
-                    logger.debug(f"  Matching indicators: {matching_indicators}")
-                    logger.debug(f"  Is issuing CA: {is_issuing_ca}")
-                    
-                    if is_issuing_ca:
-                        # Issuing CA = 4 (only one)
-                        logger.debug(f"Categorized as Issuing CA (order 4)")
-                        return 4
-                    else:
-                        # Intermediate CA = 5 (can have multiple)
-                        logger.debug(f"Categorized as Intermediate CA (order 5)")
-                        return 5
-        
-        # Certificate Chain = 7
-        if cert_type == 'Certificate Chain':
-            logger.debug(f"Categorized as Certificate Chain (order 7)")
-            return 7
-            
-        # Everything else = 8
-        logger.debug(f"Categorized as Other/Unknown (order 8)")
-        return 8
+        # Default for unknown types
+        return HierarchyOrder.get_order(CertificateType.UNKNOWN)
     
     @staticmethod
     def is_duplicate_certificate(cert1: Dict[str, Any], cert2: Dict[str, Any]) -> bool:

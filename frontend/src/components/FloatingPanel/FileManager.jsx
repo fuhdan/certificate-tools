@@ -19,67 +19,26 @@ const FileManager = () => {
     if (!analysis || !analysis.type) return 'Unknown'
     
     const type = analysis.type
-    const details = analysis.details || {}
     
-    // Map certificate types to simplified names
+    // Handle standardized types only
     switch (type) {
       case 'CSR':
         return 'CSR'
-      case 'Private Key':
+      case 'PrivateKey':
         return 'Private Key'
       case 'Certificate':
-        // Check if it's a CA certificate
-        const isCA = details.extensions?.basicConstraints?.isCA || false
-        if (isCA) {
-          // Try to determine CA level
-          const issuer = details.issuer?.commonName || ''
-          const subject = details.subject?.commonName || ''
-          
-          if (issuer === subject) {
-            return 'Root CA'
-          } else {
-            return 'Intermediate CA'
-          }
-        }
-        return 'Cert'
-      case 'CA Certificate':
-        // Check if root or intermediate - determine specific CA type
-        const issuerCA = details.issuer?.commonName || ''
-        const subjectCA = details.subject?.commonName || ''
-        
-        if (issuerCA === subjectCA) {
-          return 'Root CA'
-        } else {
-          // Try to identify as Issuing CA vs Intermediate CA
-          const subjectOrgUnit = details.subject?.organizationalUnit || ''
-          const issuerOrgUnit = details.issuer?.organizationalUnit || ''
-          
-          // If subject contains "Issuing" or similar patterns
-          if (subjectOrgUnit.toLowerCase().includes('issuing') || 
-              subjectCA.toLowerCase().includes('issuing')) {
-            return 'Issuing CA'
-          }
-          return 'Intermediate CA'
-        }
-      case 'PKCS12 Certificate':
-        return 'Cert'
+        return 'Certificate'
+      case 'IssuingCA':
+        return 'Issuing CA'
+      case 'IntermediateCA':
+        return 'Intermediate CA'
+      case 'RootCA':
+        return 'Root CA'
+      case 'CertificateChain':
+        return 'Certificate Chain'
       default:
         return type
     }
-  }
-
-  const getFormat = (analysis) => {
-    if (!analysis) return 'Unknown'
-    
-    // Check the format from analysis
-    const format = analysis.format || 'Unknown'
-    
-    // Most certificates are stored as PEM in our system
-    if (format === 'PKCS12') {
-      return 'PKCS12'
-    }
-    
-    return 'PEM'
   }
 
   const hasPassword = (fileGroup) => {

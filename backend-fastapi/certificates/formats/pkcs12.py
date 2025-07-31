@@ -132,8 +132,19 @@ def analyze_pkcs12(file_content: bytes, password: Optional[str]) -> Dict[str, An
             }
 
 def _process_pkcs12_success(cert, private_key, additional_certs) -> Dict[str, Any]:
-    """Process successfully parsed PKCS12 content - extract all components"""
+    """Process successfully parsed PKCS12 content - extract all components with standardized types"""
     logger.debug(f"=== PKCS12 SUCCESS PROCESSING ===")
+    
+    # Import standardization functions
+    get_consistent_types = None
+    use_standardized = False
+    
+    try:
+        from ..types import get_consistent_types
+        use_standardized = True
+        logger.debug("Using standardized certificate types")
+    except ImportError:
+        logger.warning("Standardized types not available, using legacy types")
     
     # Log component details
     if cert:
@@ -198,9 +209,18 @@ def _process_pkcs12_success(cert, private_key, additional_certs) -> Dict[str, An
     else:
         logger.debug("No main certificate to extract details from")
     
+    # Determine main certificate type using standardization
+    if use_standardized and get_consistent_types and cert:
+        type_info = get_consistent_types("PKCS12 Certificate", details)
+        main_type = type_info["type"]  # Will be "Certificate"
+        logger.debug(f"Main certificate standardized type: {main_type}")
+    else:
+        main_type = "PKCS12 Certificate"  # Legacy fallback
+        logger.debug(f"Main certificate legacy type: {main_type}")
+    
     # Prepare main result (certificate)
     result = {
-        "type": "PKCS12 Certificate",
+        "type": main_type,  # Now uses standardized type ("Certificate")
         "isValid": True,
         "content_hash": content_hash,
         "details": details
@@ -220,15 +240,24 @@ def _process_pkcs12_success(cert, private_key, additional_certs) -> Dict[str, An
             logger.debug(f"Private key hash: {key_hash[:16]}...")
             logger.debug(f"Private key details: {key_details}")
             
+            # Use standardized type if available
+            if use_standardized and get_consistent_types:
+                type_info = get_consistent_types("Private Key", key_details)
+                item_type = type_info["type"]  # Will be "PrivateKey"
+                logger.debug(f"Private key standardized type: {item_type}")
+            else:
+                item_type = "Private Key"  # Legacy fallback
+                logger.debug(f"Private key legacy type: {item_type}")
+            
             additional_items.append({
-                "type": "Private Key",
+                "type": item_type,  # Now uses "PrivateKey" instead of "Private Key"
                 "format": "PKCS12",
                 "isValid": True,
                 "size": 0,  # Size is part of the PKCS12 container
                 "content_hash": key_hash,  # Use consistent hash based on key material
                 "details": key_details
             })
-            logger.debug(f"Extracted private key from PKCS12 with hash: {key_hash[:16]}...")
+            logger.debug(f"Extracted private key from PKCS12 with type: {item_type}")
         except Exception as key_err:
             logger.error(f"Error extracting private key from PKCS12: {key_err}")
             import traceback
@@ -246,15 +275,24 @@ def _process_pkcs12_success(cert, private_key, additional_certs) -> Dict[str, An
                     
                     logger.debug(f"Additional cert [{i}] hash: {cert_hash[:16]}...")
                     
+                    # Use standardized type if available
+                    if use_standardized and get_consistent_types:
+                        type_info = get_consistent_types("Certificate", cert_details)
+                        item_type = type_info["type"]  # Will be "Certificate", "IssuingCA", "IntermediateCA", or "RootCA"
+                        logger.debug(f"Additional cert [{i}] standardized type: {item_type}")
+                    else:
+                        item_type = "Certificate"  # Legacy fallback
+                        logger.debug(f"Additional cert [{i}] legacy type: {item_type}")
+                    
                     additional_items.append({
-                        "type": "Certificate",
+                        "type": item_type,  # Now uses standardized types
                         "format": "PKCS12",
                         "isValid": True,
                         "size": 0,  # Size is part of the PKCS12 container
                         "content_hash": cert_hash,
                         "details": cert_details
                     })
-                    logger.debug(f"Extracted additional certificate {i} from PKCS12 with hash: {cert_hash[:16]}...")
+                    logger.debug(f"Extracted additional certificate {i} from PKCS12 with type: {item_type}")
                 except Exception as cert_err:
                     logger.error(f"Error extracting additional certificate {i} from PKCS12: {cert_err}")
                     import traceback
@@ -269,12 +307,20 @@ def _process_pkcs12_success(cert, private_key, additional_certs) -> Dict[str, An
     else:
         logger.debug("No additional items extracted from PKCS12")
     
-    # Generate summary log
-    parts = [f"{int(bool(cert))} Certificate", f"{int(bool(private_key))} Private Key"]
-    if additional_certs:
-        parts.append(f"1 Chain ({len(additional_certs)} certs)")
+    # Generate summary log with standardized types
+    cert_count = int(bool(cert))
+    key_count = int(bool(private_key))
+    additional_count = len(additional_certs or [])
     
-    total = sum([bool(cert), bool(private_key), len(additional_certs or [])])
+    parts = []
+    if cert_count:
+        parts.append(f"{cert_count} Certificate")
+    if key_count:
+        parts.append(f"{key_count} Private Key")
+    if additional_count:
+        parts.append(f"1 Chain ({additional_count} certs)")
+    
+    total = cert_count + key_count + additional_count
     logger.info(f"PKCS12 extraction complete: {', '.join(parts)} ({total} total)")
 
     logger.debug(f"PKCS12 processing complete - main type: {result['type']}")

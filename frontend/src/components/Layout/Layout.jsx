@@ -1,5 +1,5 @@
 // frontend/src/components/Layout/Layout.jsx
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import Header from '../Header/Header'
 import Footer from '../Footer/Footer'
 import FloatingPanel from '../FloatingPanel/FloatingPanel'
@@ -45,135 +45,100 @@ const LayoutContent = () => {
   }, [])
 
   // Helper function to determine certificate order in PKI hierarchy
-  const getCertificateOrder = (cert) => {
-    const analysis = cert.analysis
-    const type = analysis?.type
-    const details = analysis?.details
-    
-    // 1. Private Key
-    if (type === 'Private Key') {
+  const getPKIOrder = (type, details, filename) => {
+    // 1. Private Key (always first)
+    if (type === 'PrivateKey' || type === 'Private Key') {
       return 1
     }
-    
-    // 2. CSR
+
+    // 2. CSR (Certificate Signing Request)
     if (type === 'CSR') {
       return 2
     }
-    
-    // 3. Certificate (End Entity) - not a CA
-    if (type === 'Certificate' && !details?.extensions?.basicConstraints?.isCA) {
+
+    // 3. End-Entity Certificate (leaf certificate)
+    if (type === 'Certificate' && details?.extensions?.basicConstraints?.isCA === false) {
       return 3
     }
-    
-    // 4. Issuing CA 
+
+    // 4. Issuing CA
     if (type === 'IssuingCA') {
       return 4
     }
-    
+
     // 5. Intermediate CA
     if (type === 'IntermediateCA') {
       return 5
     }
-    
+
     // 6. Root CA
     if (type === 'RootCA') {
       return 6
     }
-    
+
     // Legacy CA Certificate types - determine by basic constraints
     if (type === 'CA Certificate' || (type === 'Certificate' && details?.extensions?.basicConstraints?.isCA)) {
       const subjectCN = details?.subject?.commonName || ''
       const issuerCN = details?.issuer?.commonName || ''
-      
+
       // Root CA: self-signed (subject == issuer)
       if (subjectCN === issuerCN) {
         return 6
       }
-      
+
       // Otherwise treat as intermediate
       return 5
     }
-    
+
     // 7. Certificate Chain
     if (type === 'Certificate Chain') {
       return 7
     }
-    
-    // 8. Everything else
-    return 8
+
+    // Default order for unknown types
+    return 999
   }
 
-  // Create sorted certificates for display using the correct PKI hierarchy order
-  const sortedCertificates = certificates.slice().sort((a, b) => {
-    const typeA = a.analysis?.type || ''
-    const typeB = b.analysis?.type || ''
+  const createSortedCertificates = (certificates) => {
+    // Cache the order calculations to avoid repeated computation
+    const certificateOrders = new Map()
     
-    // DEBUG: Log what we're working with
-    console.log('SORTING DEBUG:')
-    console.log('Certificate A:', a.filename, 'Type:', typeA, 'isCA:', a.analysis?.details?.extensions?.basicConstraints?.isCA)
-    console.log('Certificate B:', b.filename, 'Type:', typeB, 'isCA:', b.analysis?.details?.extensions?.basicConstraints?.isCA)
-    
-    // Special handling for Certificate type - check if it's End-Entity vs CA
-    const getTypeOrder = (cert) => {
+    const getSortOrder = (cert) => {
+      const cacheKey = cert.id || cert.filename
+      if (certificateOrders.has(cacheKey)) {
+        return certificateOrders.get(cacheKey)
+      }
+      
       const type = cert.analysis?.type || ''
-      const isCA = cert.analysis?.details?.extensions?.basicConstraints?.isCA
+      const details = cert.analysis?.details
       const filename = cert.filename || ''
+      const order = getPKIOrder(type, details, filename)
       
-      // Private Key
-      if (type === 'Private Key') {
-        console.log(`${filename} -> Order 1 (Private Key)`)
-        return 1
-      }
-      
-      // CSR
-      if (type === 'CSR') {
-        console.log(`${filename} -> Order 2 (CSR)`)
-        return 2
-      }
-      
-      // Certificate types - determine by isCA flag
-      if (type === 'Certificate' || type === 'PKCS12 Certificate') {
-        if (isCA === false || isCA === undefined) {
-          console.log(`${filename} -> Order 3 (End-Entity Certificate, isCA: ${isCA})`)
-          return 3 // End-Entity Certificate
-        } else {
-          // It's a CA certificate, check subject/issuer to determine type
-          const subject = cert.analysis?.details?.subject?.commonName || ''
-          const issuer = cert.analysis?.details?.issuer?.commonName || ''
-          
-          if (subject === issuer) {
-            console.log(`${filename} -> Order 6 (Root CA, subject=issuer)`)
-            return 6 // Root CA (self-signed)
-          } else if (subject.includes('Issuing')) {
-            console.log(`${filename} -> Order 4 (Issuing CA)`)
-            return 4 // Issuing CA
-          } else {
-            console.log(`${filename} -> Order 5 (Intermediate CA)`)
-            return 5 // Intermediate CA
-          }
-        }
-      }
-      
-      // Specific types
-      const typeOrder = {
-        'IssuingCA': 4,
-        'IntermediateCA': 5,
-        'RootCA': 6,
-        'CA Certificate': 7,
-        'Certificate Chain': 8
-      }
-      
-      const order = typeOrder[type] || 999
-      console.log(`${filename} -> Order ${order} (${type})`)
+      certificateOrders.set(cacheKey, order)
       return order
     }
     
-    const orderA = getTypeOrder(a)
-    const orderB = getTypeOrder(b)
-    
-    console.log(`Final comparison: ${orderA} vs ${orderB}`)
-    return orderA - orderB
-  })
+    // Sort certificates by PKI hierarchy order
+    return certificates.slice().sort((a, b) => {
+      const orderA = getSortOrder(a)
+      const orderB = getSortOrder(b)
+      
+      // Primary sort by PKI order
+      if (orderA !== orderB) {
+        return orderA - orderB
+      }
+      
+      // Secondary sort by filename for consistent ordering
+      const filenameA = a.filename || ''
+      const filenameB = b.filename || ''
+      return filenameA.localeCompare(filenameB)
+    })
+  }
+
+  // Create sorted certificates for display using the correct PKI hierarchy order
+  const sortedCertificates = useMemo(() => {
+    return createSortedCertificates(certificates)
+  }, [certificates])
 
   const handleLoginSuccess = async () => {
     setIsAuthenticated(true)

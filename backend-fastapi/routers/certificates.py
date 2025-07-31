@@ -1,19 +1,20 @@
-# routers/certificates.py
-# Certificate analysis endpoints with session support
+# backend-fastapi/routers/certificates.py
+# Updated certificate endpoints for unified storage
 
 import datetime
 import logging
 import uuid
-from certificates.storage import CertificateStorage
 from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, Form
 
 from auth.models import User
 from auth.dependencies import get_current_active_user
 from middleware.session_middleware import get_session_id
+from certificates.storage import CertificateStorage
+from certificates.analyzer import analyze_uploaded_certificate
+from certificates.models.certificate import storage_to_api_model
 
 logger = logging.getLogger(__name__)
-
 router = APIRouter()
 
 @router.post("/analyze-certificate", tags=["certificates"], status_code=201)
@@ -22,213 +23,73 @@ async def analyze_certificate(
     password: str = Form(None),
     session_id: str = Depends(get_session_id)
 ):
-    """Analyze uploaded certificate file with crypto object storage"""
-    from certificates.analyzer import analyze_uploaded_certificate
+    """Analyze uploaded certificate file with unified storage"""
     
     try:
         file_content = await certificate.read()
-        logger.info(f"[{session_id}] === RUNNING UPLOADED CERTIFICATE ===")
+        logger.info(f"[{session_id}] Analyzing certificate: {certificate.filename}")
         
-        # Analyze the certificate - returns both analysis and crypto objects
-        result = analyze_uploaded_certificate(file_content, certificate.filename or "unknown", password)
+        # Analyze the certificate - returns certificate ID
+        cert_id = analyze_uploaded_certificate(
+            file_content, 
+            certificate.filename or "unknown", 
+            password,
+            session_id
+        )
         
-        # Extract analysis and crypto objects from the result
-        if isinstance(result, dict) and 'analysis' in result:
-            # NEW FORMAT: {analysis: {...}, crypto_objects: {...}}
-            analysis = result['analysis']
-            crypto_objects = result.get('crypto_objects', {})
-        else:
-            # FALLBACK: old format where result IS the analysis
-            analysis = result
-            crypto_objects = {}
+        # Get the stored certificate data
+        cert_model = CertificateStorage.get_by_id(cert_id, session_id)
+        
+        if not cert_model:
+            logger.error(f"[{session_id}] Certificate {cert_id} not found after storage")
+            raise HTTPException(
+                status_code=500,
+                detail="Certificate analysis failed - storage error"
+            )
         
         # Check if password is required
-        if analysis.get('requiresPassword', False):
-            if not password:
-                logger.info(f"[{session_id}] Password required for '{certificate.filename}' - {analysis.get('type', 'Unknown type')}")
-                return {
-                    "success": False,
-                    "requiresPassword": True,
-                    "certificate": {
-                        "filename": certificate.filename or "unknown",
-                        "analysis": analysis
-                    },
-                    "message": f"Password required for {certificate.filename}",
-                    "session_id": session_id
-                }
-            else:
-                return {
-                    "success": False,
-                    "requiresPassword": True,
-                    "certificate": {
-                        "filename": certificate.filename or "unknown",
-                        "analysis": analysis
-                    },
-                    "message": f"Invalid password for {certificate.filename}",
-                    "session_id": session_id
-                }
-        
-        # Check for duplicates based on content hash
-        logger.debug(f"[{session_id}] Checking for duplicates with content_hash: {analysis['content_hash']}")
-        existing_cert = CertificateStorage.find_by_hash(analysis["content_hash"], session_id)
-        
-        if existing_cert:
-            logger.debug(f"[{session_id}] Found duplicate: {existing_cert.get('filename')} has same content_hash")
-        else:
-            logger.debug(f"[{session_id}] No duplicate found for content_hash: {analysis['content_hash']}")
-        
-        # Create certificate data (without crypto objects)
-        certificate_data = {
-            "id": str(uuid.uuid4()),
-            "filename": certificate.filename,
-            "analysis": analysis,
-            "uploadedAt": datetime.datetime.now().isoformat(),
-            "size": len(file_content),
-            "isDuplicate": existing_cert is not None
-        }
-        
-        # Store main certificate and collect additional items
-        added_certificates = []
-        
-        if existing_cert:
-            # Replace existing certificate
-            logger.info(f"[{session_id}] Replacing duplicate: '{existing_cert.get('filename')}' -> '{certificate.filename}'")
-            replaced_cert = CertificateStorage.replace(existing_cert, certificate_data, session_id)
-            added_certificates.append(replaced_cert)
-            # Store crypto objects separately for the replaced certificate
-            if crypto_objects:
-                CertificateStorage.store_crypto_objects(replaced_cert['id'], crypto_objects, session_id)
-        else:
-            # Add new certificate
-            logger.info(f"[{session_id}] Added new {analysis.get('type', 'certificate')}: '{certificate.filename}'")
-            new_cert = CertificateStorage.add(certificate_data, session_id)
-            added_certificates.append(new_cert)
-            # Store crypto objects separately for the new certificate
-            if crypto_objects:
-                CertificateStorage.store_crypto_objects(new_cert['id'], crypto_objects, session_id)
-        
-        # Handle additional items from PKCS12 (private keys, additional certificates) - FIXED VERSION
-        if analysis.get('additional_items'):
-            logger.info(f"[{session_id}] Processing {len(analysis['additional_items'])} additional items from PKCS12")
-            
-            # Get all crypto objects from PKCS12
-            pkcs12_private_key = crypto_objects.get('private_key')
-            pkcs12_additional_certs = crypto_objects.get('additional_certificates', [])
-            
-            logger.debug(f"[{session_id}] PKCS12 crypto objects available:")
-            logger.debug(f"  Private key: {'YES' if pkcs12_private_key else 'NO'}")
-            logger.debug(f"  Additional certificates: {len(pkcs12_additional_certs)}")
-            
-            additional_cert_index = 0  # Track which additional cert we're processing
-            
-            for item_index, item in enumerate(analysis['additional_items']):
-                # Check for existing duplicate of this additional item
-                existing_additional_item = None
-                if item.get('content_hash'):
-                    existing_additional_item = CertificateStorage.find_by_hash(item['content_hash'], session_id)
-                
-                # Create filename for additional item
-                item_filename = f"{certificate.filename or 'unknown'} ({item['type']})"
-                
-                additional_data = {
-                    "id": str(uuid.uuid4()),
-                    "filename": item_filename,
-                    "analysis": item,
-                    "uploadedAt": datetime.datetime.now().isoformat(),
-                    "size": item.get('size', 0)
-                }
-                
-                # Store crypto objects for additional items - FIXED LOGIC
-                item_crypto_objects = {}
-                
-                if item['type'] == 'Private Key' and pkcs12_private_key:
-                    item_crypto_objects['private_key'] = pkcs12_private_key
-                    logger.debug(f"[{session_id}] ✓ Storing private key crypto object for {item_filename}")
-                    
-                elif item['type'] == 'Certificate' and pkcs12_additional_certs:
-                    # Use the corresponding additional certificate by index
-                    if additional_cert_index < len(pkcs12_additional_certs):
-                        item_crypto_objects['certificate'] = pkcs12_additional_certs[additional_cert_index]
-                        logger.debug(f"[{session_id}] ✓ Storing certificate crypto object for {item_filename} (cert index {additional_cert_index})")
-                        additional_cert_index += 1
-                    else:
-                        logger.warning(f"[{session_id}] No additional certificate available for {item_filename} at index {additional_cert_index}")
-                
-                if existing_additional_item:
-                    logger.info(f"[{session_id}] Replaced {item['type']}: '{existing_additional_item.get('filename')}' -> '{item_filename}'")
-                    # Replace existing additional item
-                    replaced_item = CertificateStorage.replace(existing_additional_item, additional_data, session_id)
-                    added_certificates.append(replaced_item)
-                    # Store crypto objects for replaced item
-                    if item_crypto_objects:
-                        CertificateStorage.store_crypto_objects(replaced_item['id'], item_crypto_objects, session_id)
-                        logger.debug(f"[{session_id}] Stored crypto objects for replaced item: {list(item_crypto_objects.keys())}")
-                    logger.info(f"[{session_id}] Replaced duplicate {item['type']}: {existing_additional_item.get('filename')} -> {item_filename}")
-                else:
-                    logger.info(f"[{session_id}] Added {item['type']} from PKCS12: '{item_filename}'")
-                    # Add new additional item
-                    added_item = CertificateStorage.add(additional_data, session_id)
-                    added_certificates.append(added_item)
-                    # Store crypto objects for new item
-                    if item_crypto_objects:
-                        CertificateStorage.store_crypto_objects(added_item['id'], item_crypto_objects, session_id)
-                        logger.debug(f"[{session_id}] Stored crypto objects for new item: {list(item_crypto_objects.keys())}")
-                    logger.debug(f"[{session_id}] Added new {item['type']} from PKCS12: {item_filename}")
-        
-        total_items = len(added_certificates)
-        logger.info(f"[{session_id}] Analysis complete: {total_items} item(s) processed for '{certificate.filename}'")
-        # Return response (no crypto objects in JSON response)
-        if existing_cert:
+        if cert_model.requires_password and not password:
+            logger.info(f"[{session_id}] Password required for '{certificate.filename}'")
             return {
-                "success": True,
-                "isDuplicate": True,
-                "replaced": True,
-                "certificate": added_certificates[0],
-                "additional_items": added_certificates[1:] if len(added_certificates) > 1 else [],
-                "replacedCertificate": existing_cert,
-                "message": f"Automatically replaced {existing_cert.get('filename')} with {certificate.filename or 'unknown'} (identical content)",
-                "timestamp": datetime.datetime.now().isoformat(),
-                "session_id": session_id
-            }
-        else:
-            return {
-                "success": True,
-                "isDuplicate": False,
-                "certificate": added_certificates[0],
-                "additional_items": added_certificates[1:] if len(added_certificates) > 1 else [],
-                "timestamp": datetime.datetime.now().isoformat(),
-                "session_id": session_id
+                "success": False,
+                "requiresPassword": True,
+                "certificate": cert_model,
+                "message": f"Password required for {certificate.filename}",
+                "errors": []
             }
         
-    except Exception as e:
-        logger.error(f"[{session_id}] Certificate analysis error: {e}")
-        import traceback
-        logger.error(f"[{session_id}] Full traceback: {traceback.format_exc()}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to analyze certificate: {str(e)}"
-        )
-
-@router.get("/certificates", tags=["certificates"])
-def get_certificates_simple(session_id: str = Depends(get_session_id)):
-    """Get all stored certificates (simple endpoint - no auth required)"""
-    logger.info(f"[{session_id}] Retrieving all certificates")
-    try:
-        certificates = CertificateStorage.get_all(session_id)
-        logger.info(f"[{session_id}] Retrieved {len(certificates)} certificates")
+        # Check if certificate is valid
+        if not cert_model.is_valid:
+            logger.warning(f"[{session_id}] Invalid certificate: {certificate.filename}")
+            logger.warning(f"[{session_id}] Validation errors: {cert_model.validation_errors}")
+            
+            return {
+                "success": False,
+                "requiresPassword": False,
+                "certificate": cert_model,
+                "message": f"Certificate analysis failed for {certificate.filename}",
+                "errors": cert_model.validation_errors
+            }
+        
+        logger.info(f"[{session_id}] Successfully analyzed: {certificate.filename}")
         
         return {
             "success": True,
-            "certificates": certificates,
-            "count": len(certificates),
-            "session_id": session_id
+            "requiresPassword": False,
+            "certificate": cert_model,
+            "message": f"Certificate '{certificate.filename}' analyzed successfully",
+            "errors": []
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"[{session_id}] Certificate retrieval error: {e}")
+        logger.error(f"[{session_id}] Certificate analysis error: {e}")
+        import traceback
+        logger.error(f"Full traceback: {traceback.format_exc()}")
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to retrieve certificates: {str(e)}"
+            detail=f"Certificate analysis failed: {str(e)}"
         )
 
 @router.get("/api/certificates", tags=["certificates"])
@@ -236,7 +97,7 @@ def get_certificates(
     current_user: Annotated[User, Depends(get_current_active_user)],
     session_id: str = Depends(get_session_id)
 ):
-    """Get all stored certificates"""
+    """Get all stored certificates from unified storage"""
     logger.info(f"[{session_id}] User '{current_user.username}' retrieving certificates")
     
     try:
@@ -258,77 +119,70 @@ def get_certificates(
             detail=f"Failed to retrieve certificates: {str(e)}"
         )
 
+@router.get("/certificates", tags=["certificates"])
+def get_certificates_simple(session_id: str = Depends(get_session_id)):
+    """Get all stored certificates - simple endpoint"""
+    logger.info(f"[{session_id}] Retrieving certificates (simple)")
+    
+    try:
+        certificates = CertificateStorage.get_all(session_id)
+        logger.info(f"[{session_id}] Retrieved {len(certificates)} certificates")
+        
+        return {
+            "success": True,
+            "certificates": certificates,
+            "count": len(certificates),
+            "session_id": session_id
+        }
+        
+    except Exception as e:
+        logger.error(f"[{session_id}] Certificate retrieval error: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to retrieve certificates: {str(e)}"
+        )
+
 @router.get("/validate", tags=["validation"])
 def validate_certificates_simple(session_id: str = Depends(get_session_id)):
-    """Run validation checks on uploaded certificates using real cryptographic comparison"""
+    """Run validation checks on uploaded certificates using unified storage"""
     logger.info(f"[{session_id}] Starting certificate validation")
+    
     from certificates.validation.validator import run_validations
     
     try:
         certificates = CertificateStorage.get_all(session_id)
-        logger.info(f"[{session_id}] Running cryptographic validations on {len(certificates)} certificates")
+        logger.info(f"[{session_id}] Running validations on {len(certificates)} certificates")
         
-        # Enhanced debug logging for validation
-        logger.debug(f"[{session_id}] === VALIDATION DEBUG ===")
-        for cert in certificates:
-            cert_id = cert.get('id')
-            filename = cert.get('filename', 'NO_FILENAME')
-            cert_type = cert.get('analysis', {}).get('type', 'NO_TYPE')
-            if cert_id:  # Only call if cert_id is not None
-                crypto_objects = CertificateStorage.get_crypto_objects(cert_id, session_id)
-                logger.debug(f"[{session_id}] Cert: {filename} | Type: {cert_type} | Crypto: {list(crypto_objects.keys()) if crypto_objects else 'None'}")
-            else:
-                logger.debug(f"[{session_id}] Cert: {filename} | Type: {cert_type} | Crypto: NO_ID")
+        if not certificates:
+            return {
+                "success": True,
+                "validations": [],
+                "count": 0,
+                "timestamp": datetime.datetime.now().isoformat(),
+                "session_id": session_id,
+                "message": "No certificates to validate"
+            }
         
-        # Prepare certificates with crypto objects for validation
-        certificates_with_crypto = []
-        for cert in certificates:
-            cert_copy = cert.copy()
-            cert_id = cert.get('id')
-            if cert_id:
-                try:
-                    crypto_objects = CertificateStorage.get_crypto_objects(cert_id, session_id)
-                    cert_copy['crypto_objects'] = crypto_objects
-                except Exception as e:
-                    logger.warning(f"[{session_id}] Could not get crypto objects for cert {cert_id}: {e}")
-                    cert_copy['crypto_objects'] = {}
-            else:
-                cert_copy['crypto_objects'] = {}
-            certificates_with_crypto.append(cert_copy)
+        # Run validations with unified storage
+        validations = run_validations(certificates, session_id)
         
-        validations = run_validations(certificates_with_crypto, session_id)
-        
-        # CRITICAL DEBUG: Log exactly what we're returning
-        logger.debug(f"[{session_id}] === FINAL VALIDATION RESULTS ===")
+        # Convert to dictionary format
         validation_dicts = []
-        for i, validation in enumerate(validations):
+        for validation in validations:
             validation_dict = validation.to_dict()
             validation_dicts.append(validation_dict)
-            
-            logger.debug(f"[{session_id}] Validation {i}:")
-            logger.debug(f"[{session_id}]   Type: {validation_dict.get('validationType')}")
-            logger.debug(f"[{session_id}]   isValid (dict): {validation_dict.get('isValid')}")
-            logger.debug(f"[{session_id}]   Raw is_valid: {validation.is_valid}")
-            logger.debug(f"[{session_id}]   Error: {validation_dict.get('error')}")
-            
-            # Check if there's any manipulation happening
-            if validation.is_valid != validation_dict.get('isValid'):
-                logger.error(f"[{session_id}] MISMATCH! Raw: {validation.is_valid}, Dict: {validation_dict.get('isValid')}")
         
         passed_count = sum(1 for v in validations if v.is_valid)
         failed_count = len(validations) - passed_count
         logger.info(f"[{session_id}] Validation complete: {passed_count} passed, {failed_count} failed ({len(validations)} total)")
 
-        response_data = {
+        return {
             "success": True,
             "validations": validation_dicts,
             "count": len(validations),
             "timestamp": datetime.datetime.now().isoformat(),
             "session_id": session_id
         }
-        
-        logger.debug(f"[{session_id}] Returning response with {len(validation_dicts)} validations")
-        return response_data
         
     except Exception as e:
         logger.error(f"[{session_id}] Validation error: {e}")
@@ -344,10 +198,10 @@ def validate_certificates(
     current_user: Annotated[User, Depends(get_current_active_user)],
     session_id: str = Depends(get_session_id)
 ):
-    """Run validation checks on stored certificates"""
+    """Run validation checks on stored certificates using unified storage"""
     logger.info(f"[{session_id}] User '{current_user.username}' starting certificate validation")
 
-    from certificates.validation import run_validations
+    from certificates.validation.validator import run_validations
     
     try:
         all_certificates = CertificateStorage.get_all(session_id)
@@ -360,33 +214,24 @@ def validate_certificates(
                 "session_id": session_id
             }
         
-        # Prepare certificates with crypto objects for validation
-        certificates_with_crypto = []
-        for cert in all_certificates:
-            cert_copy = cert.copy()
-            cert_id = cert.get('id')
-            if cert_id:
-                try:
-                    crypto_objects = CertificateStorage.get_crypto_objects(cert_id, session_id)
-                    cert_copy['crypto_objects'] = crypto_objects
-                except Exception as e:
-                    logger.warning(f"[{session_id}] Could not get crypto objects for cert {cert_id}: {e}")
-                    cert_copy['crypto_objects'] = {}
-            else:
-                cert_copy['crypto_objects'] = {}
-            certificates_with_crypto.append(cert_copy)
-        
-        validations = run_validations(certificates_with_crypto, session_id)
+        # Run validations directly on unified certificate models
+        validations = run_validations(all_certificates, session_id)
         
         logger.debug(f"[{session_id}] Validation completed: {len(validations)} results for user {current_user.username}")
         
-        passed_count = sum(1 for v in validations if getattr(v, 'is_valid', False))
+        # Convert to dict format for API response
+        validation_dicts = []
+        for validation in validations:
+            validation_dict = validation.to_dict()
+            validation_dicts.append(validation_dict)
+        
+        passed_count = sum(1 for v in validations if v.is_valid)
         failed_count = len(validations) - passed_count
         logger.info(f"[{session_id}] Validation complete for user '{current_user.username}': {passed_count} passed, {failed_count} failed")
 
         return {
             "success": True,
-            "validations": validations,
+            "validations": validation_dicts,
             "count": len(validations),
             "timestamp": datetime.datetime.now().isoformat(),
             "session_id": session_id
@@ -401,37 +246,96 @@ def validate_certificates(
             detail=f"Failed to run validations: {str(e)}"
         )
 
-@router.delete("/certificates/{certificate_id}", tags=["certificates"])
+@router.delete("/api/certificates/{cert_id}", tags=["certificates"])
 def delete_certificate(
-    certificate_id: str,
+    cert_id: str,
+    current_user: Annotated[User, Depends(get_current_active_user)],
     session_id: str = Depends(get_session_id)
 ):
-    """Delete certificate by ID"""
-
-    logger.info(f"[{session_id}] Attempting to delete certificate '{certificate_id}'")
+    """Delete a certificate from unified storage"""
+    logger.info(f"[{session_id}] User '{current_user.username}' deleting certificate {cert_id}")
     
-    success = CertificateStorage.remove_by_id(certificate_id, session_id)
-    if success:
-        logger.info(f"[{session_id}] Certificate {certificate_id} deleted successfully")
+    try:
+        # Check if certificate exists
+        cert = CertificateStorage.get_by_id(cert_id, session_id)
+        if not cert:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Certificate {cert_id} not found"
+            )
+        
+        # Remove from unified storage
+        success = CertificateStorage.remove(cert_id, session_id)
+        
+        if success:
+            logger.info(f"[{session_id}] Successfully deleted certificate {cert_id} for user {current_user.username}")
+            return {
+                "success": True,
+                "message": f"Certificate {cert.filename} deleted successfully",
+                "cert_id": cert_id
+            }
+        else:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to delete certificate {cert_id}"
+            )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[{session_id}] Certificate deletion error: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to delete certificate: {str(e)}"
+        )
+
+@router.post("/api/certificates/clear", tags=["certificates"])
+def clear_certificates(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    session_id: str = Depends(get_session_id)
+):
+    """Clear all certificates from unified storage"""
+    logger.info(f"[{session_id}] User '{current_user.username}' clearing all certificates")
+    
+    try:
+        CertificateStorage.clear_session(session_id)
+        logger.info(f"[{session_id}] Successfully cleared all certificates for user {current_user.username}")
+        
         return {
             "success": True,
-            "message": "Certificate deleted successfully",
+            "message": "All certificates cleared successfully",
             "session_id": session_id
         }
-    else:
-        logger.warning(f"[{session_id}] Certificate {certificate_id} not found for deletion")
-        raise HTTPException(status_code=404, detail="Certificate not found")
+        
+    except Exception as e:
+        logger.error(f"[{session_id}] Certificate clearing error: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to clear certificates: {str(e)}"
+        )
 
-@router.delete("/certificates", tags=["certificates"])
-def clear_all_certificates(session_id: str = Depends(get_session_id)):
-    """Clear all certificates"""
-
-    logger.info(f"[{session_id}] Clearing all certificates")
+@router.get("/api/certificates/session-summary", tags=["certificates"])
+def get_session_summary(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    session_id: str = Depends(get_session_id)
+):
+    """Get session summary from unified storage"""
+    logger.info(f"[{session_id}] User '{current_user.username}' requesting session summary")
     
-    CertificateStorage.clear_all(session_id)
-    logger.info(f"[{session_id}] All certificates cleared")
-    return {
-        "success": True,
-        "message": "All certificates cleared",
-        "session_id": session_id
-    }
+    try:
+        summary = CertificateStorage.get_session_summary(session_id)
+        logger.debug(f"[{session_id}] Session summary retrieved for user {current_user.username}")
+        
+        return {
+            "success": True,
+            "summary": summary,
+            "timestamp": datetime.datetime.now().isoformat(),
+            "session_id": session_id
+        }
+        
+    except Exception as e:
+        logger.error(f"[{session_id}] Session summary error: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get session summary: {str(e)}"
+        )

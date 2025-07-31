@@ -1,24 +1,26 @@
-# certificates/analyzer.py
-# Main certificate analysis entry point with comprehensive debugging
+# backend-fastapi/certificates/analyzer.py
+# Updated analyzer to use unified PEM storage model
 
 import hashlib
 import logging
+import uuid
 from typing import Dict, Any, Optional, List
+from datetime import datetime
+from cryptography import x509
+from cryptography.hazmat.primitives import serialization
 
-from .formats.pem import (
-    analyze_pem_certificate, analyze_pem_csr, 
-    analyze_pem_private_key, analyze_pem_public_key
+from .storage.unified_storage import (
+    UnifiedCertificateData, 
+    unified_storage,
+    create_certificate_info,
+    create_private_key_info,
+    create_csr_info
 )
-from .formats.der import analyze_der_formats
-from .formats.pkcs12 import analyze_pkcs12
-from .formats.pkcs7 import analyze_pkcs7
-from .utils.hashing import generate_file_hash
 
 logger = logging.getLogger(__name__)
 
 def get_file_format(filename: str) -> str:
-    """Determine file format from filename - UPDATED with PKCS7 support"""
-    logger.info(f"=== RUNNING ANALYSE CERTIFICATE ===")
+    """Determine file format from filename"""
     extension = filename.split('.')[-1].lower()
     format_map = {
         'pem': 'PEM',
@@ -27,10 +29,10 @@ def get_file_format(filename: str) -> str:
         'der': 'DER',
         'p12': 'PKCS12',
         'pfx': 'PKCS12',
-        'p7b': 'PKCS7',  # Added PKCS7 formats
+        'p7b': 'PKCS7',
         'p7c': 'PKCS7',
         'p7s': 'PKCS7',
-        'spc': 'PKCS7',  # Software Publisher Certificate
+        'spc': 'PKCS7',
         'jks': 'JKS',
         'key': 'Private Key',
         'csr': 'CSR',
@@ -38,475 +40,335 @@ def get_file_format(filename: str) -> str:
         'pk8': 'PKCS8'
     }
     detected_format = format_map.get(extension, extension.upper())
-    logger.debug(f"File format detection: {filename} -> extension: {extension} -> format: {detected_format}")
+    logger.debug(f"File format detection: {filename} -> {detected_format}")
     return detected_format
 
-def analyze_uploaded_certificate(file_content: bytes, filename: str, password: Optional[str] = None) -> Dict[str, Any]:
-    """Main certificate analysis function - routes to format-specific analyzers and stores crypto objects separately"""
-    logger.debug(f"=== CERTIFICATE ANALYSIS START ===")
+def analyze_uploaded_certificate(file_content: bytes, filename: str, password: Optional[str] = None, session_id: Optional[str] = None) -> str:
+    """
+    Main certificate analysis function - creates UnifiedCertificateData and stores it
+    Returns: certificate ID for retrieval
+    """
+    logger.debug(f"=== UNIFIED CERTIFICATE ANALYSIS START ===")
     logger.debug(f"File: {filename}")
     logger.debug(f"Size: {len(file_content)} bytes")
     logger.debug(f"Password provided: {'YES' if password else 'NO'}")
     
-    analysis = {
-        "type": "Unknown",
-        "format": get_file_format(filename),
-        "isValid": False,
-        "size": len(file_content),
-        "hash": hashlib.sha256(file_content).hexdigest(),
-        "content_hash": None,
-        "details": None,
-        "requiresPassword": False,
-        "usedPassword": bool(password)
-        # NOTE: crypto_objects will be stored separately, not in this response
-    }
+    # Generate unique certificate ID
+    cert_id = str(uuid.uuid4())
     
-    # This will hold crypto objects temporarily
-    temp_crypto_objects = {}
+    # Create base unified certificate data
+    unified_cert = UnifiedCertificateData(
+        id=cert_id,
+        filename=filename,
+        original_format=get_file_format(filename),
+        uploaded_at=datetime.utcnow().isoformat(),
+        file_size=len(file_content),
+        file_hash=hashlib.sha256(file_content).hexdigest(),
+        content_hash="",  # Will be set after content analysis
+        requires_password=False,
+        used_password=bool(password)
+    )
     
     try:
-        # Try to decode as text first
-        try:
-            content_str = file_content.decode('utf-8')
-            is_pem = '-----BEGIN' in content_str
-            logger.debug(f"UTF-8 decode successful. PEM format: {is_pem}")
-        except UnicodeDecodeError:
-            content_str = None
-            is_pem = False
-            logger.debug("Binary content detected")
+        # Determine format and parse accordingly
+        original_format = unified_cert.original_format
         
-        if is_pem and content_str:
-            logger.info("Analyzing PEM content...")
-            result = _analyze_pem_content_with_crypto_extraction(content_str, file_content, password)
-            if isinstance(result, dict) and 'analysis' in result:
-                analysis.update(result['analysis'])
-                temp_crypto_objects = result.get('crypto_objects', {})
-            else:
-                # Fallback: result is the analysis directly
-                analysis.update(result)
-                temp_crypto_objects = {}
-            
+        if original_format in ['PKCS12']:
+            _parse_pkcs12_content(file_content, password, unified_cert)
+        elif original_format in ['PKCS7', 'P7B', 'P7C']:
+            _parse_pkcs7_content(file_content, password, unified_cert)
+        elif original_format in ['DER', 'PKCS8']:
+            _parse_der_content(file_content, password, unified_cert)
         else:
-            logger.info("Analyzing binary content...")
-            result = _analyze_binary_content_with_crypto_extraction(file_content, analysis['format'], password)
-            if isinstance(result, dict) and 'analysis' in result:
-                analysis.update(result['analysis'])
-                temp_crypto_objects = result.get('crypto_objects', {})
-            else:
-                # Fallback: result is the analysis directly (THIS IS THE ISSUE!)
-                analysis.update(result)
-                temp_crypto_objects = {}
-                
+            # Try PEM format (most common)
+            _parse_pem_content(file_content, password, unified_cert)
+        
+        # Generate content hash from PEM content
+        unified_cert.content_hash = _generate_content_hash(unified_cert)
+        
+        # Mark as valid if we have any content
+        unified_cert.is_valid = any([
+            unified_cert.certificate_pem,
+            unified_cert.private_key_pem,
+            unified_cert.csr_pem,
+            unified_cert.additional_certificates_pem
+        ])
+        
+        logger.debug(f"Analysis complete: valid={unified_cert.is_valid}")
+        
     except Exception as e:
-        logger.error(f"Certificate analysis error: {e}")
-        import traceback
-        logger.error(f"Full traceback: {traceback.format_exc()}")
-        analysis["error"] = str(e)
-        if analysis["content_hash"] is None:
-            analysis["content_hash"] = generate_file_hash(file_content)
+        logger.error(f"Certificate analysis failed: {e}")
+        unified_cert.is_valid = False
+        unified_cert.validation_errors.append(str(e))
     
-    # Ensure content_hash is always set
-    if analysis["content_hash"] is None:
-        analysis["content_hash"] = analysis["hash"]
-    
-    logger.info(f"Analysis complete - Type: {analysis['type']}, Valid: {analysis.get('isValid')}")
-    logger.debug(f"Crypto objects extracted: {list(temp_crypto_objects.keys())}")
-    
-    # Return both analysis and crypto objects (crypto objects will be stored separately)
-    return {
-        'analysis': analysis,
-        'crypto_objects': temp_crypto_objects
-    }
-
-def _analyze_pem_content_with_crypto_extraction(content_str: str, file_content: bytes, password: Optional[str]) -> Dict[str, Any]:
-    """Route PEM content to appropriate analyzer with crypto object extraction - FIXED PKCS7 DETECTION"""
-    logger.debug("=== PEM CONTENT ANALYSIS WITH CRYPTO EXTRACTION ===")
-    logger.debug(f"Content length: {len(content_str)} chars")
-    logger.debug(f"Content preview (first 200 chars): {content_str[:200]}")
-    
-    # Check for PKCS7 content FIRST (before other certificate types)
-    if ('-----BEGIN PKCS7-----' in content_str or 
-        content_str.count('-----BEGIN CERTIFICATE-----') > 1):
-        logger.debug("Detected PKCS7 content - routing to PKCS7 analyzer")
-        from .formats.pkcs7 import analyze_pkcs7
-        analysis_result = analyze_pkcs7(file_content, password)
-        crypto_objects = {}
-        
-        # Extract crypto objects if valid
-        if analysis_result.get('isValid'):
-            crypto_objects = _extract_pkcs7_crypto_objects(analysis_result, file_content)
-        
-        return {'analysis': analysis_result, 'crypto_objects': crypto_objects}
-    
-    # Single certificate
-    elif content_str.count('-----BEGIN CERTIFICATE-----') == 1:
-        logger.debug("Detected single PEM certificate")
-        from .formats.pem import analyze_pem_certificate
-        analysis_result = analyze_pem_certificate(content_str, file_content)
-        crypto_objects = {}
-        
-        # Extract certificate object if valid
-        if analysis_result.get('isValid'):
-            try:
-                from cryptography import x509
-                cert = x509.load_pem_x509_certificate(file_content)
-                crypto_objects['certificate'] = cert
-                logger.debug("Stored certificate crypto object")
-            except Exception as e:
-                logger.error(f"Error extracting certificate crypto object: {e}")
-        
-        return {'analysis': analysis_result, 'crypto_objects': crypto_objects}
-        
-    elif '-----BEGIN CERTIFICATE REQUEST-----' in content_str:
-        logger.debug("Detected PEM CSR")
-        from .formats.pem import analyze_pem_csr
-        analysis_result = analyze_pem_csr(file_content)
-        crypto_objects = {}
-        
-        # Extract CSR object if valid
-        if analysis_result.get('isValid'):
-            try:
-                from cryptography import x509
-                csr = x509.load_pem_x509_csr(file_content)
-                crypto_objects['csr'] = csr
-                logger.debug("Stored CSR crypto object")
-            except Exception as e:
-                logger.error(f"Error extracting CSR crypto object: {e}")
-        
-        return {'analysis': analysis_result, 'crypto_objects': crypto_objects}
-        
-    elif ('-----BEGIN PRIVATE KEY-----' in content_str or 
-          '-----BEGIN RSA PRIVATE KEY-----' in content_str or
-          '-----BEGIN EC PRIVATE KEY-----' in content_str or
-          '-----BEGIN ENCRYPTED PRIVATE KEY-----' in content_str):
-        logger.debug("Detected PEM private key")
-        from .formats.pem import analyze_pem_private_key
-        analysis_result = analyze_pem_private_key(file_content, password)
-        crypto_objects = {}
-        
-        # Extract private key object if valid
-        if analysis_result.get('isValid'):
-            try:
-                from cryptography.hazmat.primitives import serialization
-                private_key = serialization.load_pem_private_key(
-                    file_content, 
-                    password=password.encode('utf-8') if password else None
-                )
-                crypto_objects['private_key'] = private_key
-                logger.debug("Stored private key crypto object")
-            except Exception as e:
-                logger.error(f"Error extracting private key crypto object: {e}")
-        
-        return {'analysis': analysis_result, 'crypto_objects': crypto_objects}
-        
-    elif '-----BEGIN PUBLIC KEY-----' in content_str:
-        logger.debug("Detected PEM public key")
-        from .formats.pem import analyze_pem_public_key
-        analysis_result = analyze_pem_public_key(file_content)
-        crypto_objects = {}
-        
-        # Extract public key object if valid
-        if analysis_result.get('isValid'):
-            try:
-                from cryptography.hazmat.primitives import serialization
-                public_key = serialization.load_pem_public_key(file_content)
-                crypto_objects['public_key'] = public_key
-                logger.debug("Stored public key crypto object")
-            except Exception as e:
-                logger.error(f"Error extracting public key crypto object: {e}")
-        
-        return {'analysis': analysis_result, 'crypto_objects': crypto_objects}
-        
+    # Store in unified storage
+    if session_id:
+        unified_storage.store_certificate(unified_cert, session_id)
+        logger.debug(f"Stored certificate {cert_id} in session {session_id}")
     else:
-        # Unknown PEM content
-        logger.warning("Unknown PEM content - no recognized BEGIN markers found")
-        logger.debug("Available BEGIN markers in content:")
-        import re
-        begin_markers = re.findall(r'-----BEGIN ([^-]+)-----', content_str)
-        for marker in begin_markers:
-            logger.debug(f"  Found marker: {marker}")
-        
-        from .utils.hashing import generate_file_hash
-        return {
-            'analysis': {
-                "type": "Unknown PEM",
-                "isValid": False,
-                "content_hash": generate_file_hash(file_content),
-                "error": f"Unrecognized PEM content type. Found markers: {begin_markers}"
-            },
-            'crypto_objects': {}
-        }
-
-def _analyze_binary_content_with_crypto_extraction(file_content: bytes, file_format: str, password: Optional[str]) -> Dict[str, Any]:
-    """Route binary content to appropriate analyzer with crypto object extraction - UPDATED"""
-    logger.debug("=== BINARY CONTENT ANALYSIS WITH CRYPTO EXTRACTION ===")
-    logger.debug(f"File format: {file_format}")
+        logger.warning(f"No session_id provided, certificate {cert_id} not stored")
     
-    if file_format in ['DER', 'PKCS8']:
-        from .formats.der import analyze_der_formats
-        analysis_result = analyze_der_formats(file_content, password)
-        crypto_objects = {}
+    return cert_id
+
+def _parse_pem_content(file_content: bytes, password: Optional[str], unified_cert: UnifiedCertificateData):
+    """Parse PEM format content and populate unified certificate data"""
+    logger.debug("Parsing PEM content")
+    
+    try:
+        content_str = file_content.decode('utf-8')
+    except UnicodeDecodeError:
+        raise ValueError("File is not valid PEM format (not UTF-8)")
+    
+    if '-----BEGIN' not in content_str:
+        raise ValueError("No PEM markers found in file")
+    
+    # Extract all PEM objects
+    import re
+    pem_objects = re.findall(r'-----BEGIN ([A-Z\s]+)-----.*?-----END \1-----', content_str, re.DOTALL)
+    
+    for match in re.finditer(r'-----BEGIN ([A-Z\s]+)-----.*?-----END \1-----', content_str, re.DOTALL):
+        pem_object = match.group(0)
+        object_type = match.group(1)
         
-        if analysis_result.get('isValid'):
-            crypto_objects = _extract_der_crypto_objects(analysis_result, file_content, password)
-        
-        return {'analysis': analysis_result, 'crypto_objects': crypto_objects}
-        
-    elif file_format == 'PKCS12':
-        from .formats.pkcs12 import analyze_pkcs12
-        analysis_result = analyze_pkcs12(file_content, password)
-        crypto_objects = {}
-        
-        if analysis_result.get('isValid'):
-            crypto_objects = _extract_pkcs12_crypto_objects(analysis_result, file_content, password)
-        
-        return {'analysis': analysis_result, 'crypto_objects': crypto_objects}
-        
-    elif file_format in ['PKCS7', 'P7B', 'P7C']:
-        from .formats.pkcs7 import analyze_pkcs7
-        analysis_result = analyze_pkcs7(file_content, password)
-        crypto_objects = {}
-        
-        if analysis_result.get('isValid'):
-            crypto_objects = _extract_pkcs7_crypto_objects(analysis_result, file_content)
-        
-        return {'analysis': analysis_result, 'crypto_objects': crypto_objects}
-        
-    else:
-        # Try DER as fallback
         try:
-            from .formats.der import analyze_der_formats
-            analysis_result = analyze_der_formats(file_content, password)
-            crypto_objects = {}
-            
-            if analysis_result.get('isValid'):
-                crypto_objects = _extract_der_crypto_objects(analysis_result, file_content, password)
-            
-            return {'analysis': analysis_result, 'crypto_objects': crypto_objects}
-        except Exception as der_err:
-            logger.debug(f"DER fallback failed: {der_err}")
-        
-        from .utils.hashing import generate_file_hash
-        return {
-            'analysis': {
-                "type": "Unknown Binary",
-                "isValid": False,
-                "content_hash": generate_file_hash(file_content)
-            },
-            'crypto_objects': {}
-        }
-
-def _extract_der_crypto_objects(analysis_result: Dict[str, Any], file_content: bytes, password: Optional[str]) -> Dict[str, Any]:
-    """Extract crypto objects for DER formats"""
-    logger.debug("Extracting DER crypto objects...")
-    crypto_objects = {}
-    
-    try:
-        cert_type = analysis_result.get('type', '')
-        if 'Certificate' in cert_type and 'Chain' not in cert_type:
-            from cryptography import x509
-            cert = x509.load_der_x509_certificate(file_content)
-            crypto_objects['certificate'] = cert
-            logger.debug("Stored DER certificate crypto object")
-            
-        elif cert_type == 'CSR':
-            from cryptography import x509
-            csr = x509.load_der_x509_csr(file_content)
-            crypto_objects['csr'] = csr
-            logger.debug("Stored DER CSR crypto object")
-            
-        elif cert_type == 'Private Key':
-            from cryptography.hazmat.primitives import serialization
-            private_key = serialization.load_der_private_key(
-                file_content,
-                password=password.encode('utf-8') if password else None
-            )
-            crypto_objects['private_key'] = private_key
-            logger.debug("Stored DER private key crypto object")
-            
-    except Exception as e:
-        logger.error(f"Error extracting DER crypto objects: {e}")
-    
-    return crypto_objects
-
-def _extract_pkcs12_crypto_objects(analysis_result: Dict[str, Any], file_content: bytes, password: Optional[str]) -> Dict[str, Any]:
-    """Extract crypto objects for PKCS12 formats - FIXED VERSION"""
-    logger.debug("Extracting PKCS12 crypto objects...")
-    crypto_objects = {}
-    
-    try:
-        from cryptography.hazmat.primitives.serialization import pkcs12
-        
-        # Use the password as bytes if provided
-        password_bytes = None
-        if password:
-            password_bytes = password.encode('utf-8')
-        
-        private_key, cert, additional_certs = pkcs12.load_key_and_certificates(
-            file_content, 
-            password=password_bytes
-        )
-        
-        if cert:
-            crypto_objects['certificate'] = cert
-            logger.debug("Stored PKCS12 certificate crypto object")
-        if private_key:
-            crypto_objects['private_key'] = private_key
-            logger.debug("Stored PKCS12 private key crypto object")
-        if additional_certs:
-            crypto_objects['additional_certificates'] = additional_certs
-            logger.debug(f"Stored {len(additional_certs)} additional PKCS12 certificate crypto objects")
-            
-    except Exception as e:
-        logger.error(f"Error extracting PKCS12 crypto objects: {e}")
-    
-    return crypto_objects
-
-def _extract_pkcs7_crypto_objects(analysis_result: Dict[str, Any], file_content: bytes) -> Dict[str, Any]:
-    """Extract crypto objects for PKCS7 formats - IMPROVED VERSION"""
-    logger.debug("Extracting PKCS7 crypto objects...")
-    crypto_objects = {}
-    
-    try:
-        # Try to decode as text first for PEM format
-        try:
-            content_str = file_content.decode('utf-8')
-            is_pem = '-----BEGIN' in content_str
-        except UnicodeDecodeError:
-            content_str = None
-            is_pem = False
-        
-        certificates = []
-        
-        if is_pem and content_str:
-            logger.debug("Processing PEM PKCS7...")
-            
-            # Handle -----BEGIN PKCS7----- format
-            import re
-            import base64
-            
-            if '-----BEGIN PKCS7-----' in content_str:
-                logger.debug("Found -----BEGIN PKCS7----- block")
-                pkcs7_match = re.search(
-                    r'-----BEGIN PKCS7-----\s*(.*?)\s*-----END PKCS7-----',
-                    content_str,
-                    re.DOTALL
-                )
+            if 'CERTIFICATE' in object_type and 'REQUEST' not in object_type:
+                # X.509 Certificate
+                cert = x509.load_pem_x509_certificate(pem_object.encode())
                 
-                if pkcs7_match:
-                    pkcs7_b64 = pkcs7_match.group(1).replace('\n', '').replace('\r', '').replace(' ', '')
-                    pkcs7_der = base64.b64decode(pkcs7_b64)
-                    certificates = _extract_certificates_from_pkcs7_der(pkcs7_der)
-                    logger.debug(f"Extracted {len(certificates)} certificates from PKCS7 DER")
-            
-            # Handle multiple -----BEGIN CERTIFICATE----- blocks (PKCS7-like)
-            if not certificates:
-                logger.debug("Checking for multiple certificate blocks...")
-                from cryptography import x509
-                cert_blocks = re.findall(
-                    r'-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----',
-                    content_str,
-                    re.DOTALL
-                )
-                
-                logger.debug(f"Found {len(cert_blocks)} certificate blocks")
-                
-                for i, cert_block in enumerate(cert_blocks):
-                    try:
-                        cert = x509.load_pem_x509_certificate(cert_block.encode())
-                        certificates.append(cert)
-                        logger.debug(f"Loaded certificate block {i}")
-                    except Exception as cert_err:
-                        logger.warning(f"Failed to parse certificate block {i}: {cert_err}")
-                        continue
-        else:
-            logger.debug("Processing binary PKCS7...")
-            # Handle binary PKCS7
-            certificates = _extract_certificates_from_pkcs7_der(file_content)
-        
-        if certificates:
-            if len(certificates) == 1:
-                crypto_objects['certificate'] = certificates[0]
-                logger.debug(f"Stored single PKCS7 certificate crypto object")
-            else:
-                crypto_objects['certificate'] = certificates[0]  # Main certificate
-                crypto_objects['additional_certificates'] = certificates[1:]  # Additional certificates
-                logger.debug(f"Stored PKCS7 main certificate + {len(certificates)-1} additional certificates")
-        else:
-            logger.warning("No certificates extracted from PKCS7")
-            
-    except Exception as e:
-        logger.error(f"Error extracting PKCS7 crypto objects: {e}")
-        import traceback
-        logger.error(f"Full traceback: {traceback.format_exc()}")
-    
-    return crypto_objects
-
-def _extract_certificates_from_pkcs7_der(der_data: bytes) -> List:
-    """Extract certificates from PKCS7 DER data - IMPROVED PARSER"""
-    logger.debug(f"Extracting certificates from PKCS7 DER data ({len(der_data)} bytes)...")
-    certificates = []
-    
-    try:
-        from cryptography import x509
-        
-        # Look for certificate sequences in the DER data
-        data_hex = der_data.hex()
-        logger.debug(f"DER data hex length: {len(data_hex)} chars")
-        logger.debug(f"DER data header: {data_hex[:64]}")
-        
-        i = 0
-        cert_count = 0
-        
-        while i < len(data_hex) - 8:
-            if data_hex[i:i+4].lower() == '3082':  # ASN.1 SEQUENCE with long form length
+                if unified_cert.certificate_pem is None:
+                    # Main certificate
+                    unified_cert.certificate_pem = pem_object
+                    unified_cert.certificate_info = create_certificate_info(cert)
+                    logger.debug("Stored main certificate")
+                else:
+                    # Additional certificate
+                    unified_cert.additional_certificates_pem.append(pem_object)
+                    unified_cert.additional_certificates_info.append(create_certificate_info(cert))
+                    logger.debug("Stored additional certificate")
+                    
+            elif 'PRIVATE KEY' in object_type:
+                # Private Key
                 try:
-                    # Get the length
-                    length_hex = data_hex[i+4:i+8]
-                    length = int(length_hex, 16)
+                    if 'ENCRYPTED' in object_type:
+                        if not password:
+                            unified_cert.requires_password = True
+                            raise ValueError("Password required for encrypted private key")
+                        private_key = serialization.load_pem_private_key(
+                            pem_object.encode(), 
+                            password=password.encode() if password else None
+                        )
+                        is_encrypted = True
+                    else:
+                        private_key = serialization.load_pem_private_key(
+                            pem_object.encode(), 
+                            password=None
+                        )
+                        is_encrypted = False
                     
-                    # Extract potential certificate
-                    cert_start = i // 2
-                    cert_length = length + 4
+                    unified_cert.private_key_pem = pem_object
+                    unified_cert.private_key_info = create_private_key_info(private_key, is_encrypted)
+                    logger.debug("Stored private key")
                     
-                    logger.debug(f"Potential cert at position {cert_start}, length {cert_length}")
+                except Exception as e:
+                    if "password" in str(e).lower():
+                        unified_cert.requires_password = True
+                    raise e
                     
-                    if cert_start + cert_length <= len(der_data):
-                        cert_data = der_data[cert_start:cert_start + cert_length]
-                        
-                        try:
-                            cert = x509.load_der_x509_certificate(cert_data)
-                            certificates.append(cert)
-                            cert_count += 1
-                            
-                            # Log certificate info
-                            try:
-                                subject_cn = None
-                                for attribute in cert.subject:
-                                    if attribute.oid._name == 'commonName':
-                                        subject_cn = attribute.value
-                                        break
-                                logger.debug(f"Extracted certificate {cert_count}: {subject_cn}")
-                            except Exception:
-                                logger.debug(f"Extracted certificate {cert_count} (subject extraction failed)")
-                            
-                            # Skip past this certificate
-                            i += cert_length * 2
-                            continue
-                            
-                        except Exception as cert_parse_err:
-                            logger.debug(f"Certificate parsing failed at position {cert_start}: {cert_parse_err}")
+            elif 'CERTIFICATE REQUEST' in object_type:
+                # CSR
+                csr = x509.load_pem_x509_csr(pem_object.encode())
+                unified_cert.csr_pem = pem_object
+                unified_cert.csr_info = create_csr_info(csr)
+                logger.debug("Stored CSR")
                 
-                except Exception as extract_err:
-                    logger.debug(f"Error during certificate extraction: {extract_err}")
-            
-            i += 2
+        except Exception as e:
+            logger.warning(f"Failed to parse PEM object {object_type}: {e}")
+            unified_cert.validation_errors.append(f"Failed to parse {object_type}: {str(e)}")
+
+def _parse_pkcs12_content(file_content: bytes, password: Optional[str], unified_cert: UnifiedCertificateData):
+    """Parse PKCS12 content and populate unified certificate data"""
+    logger.debug("Parsing PKCS12 content")
+    
+    from cryptography.hazmat.primitives.serialization import pkcs12
+    
+    try:
+        # Try without password first
+        private_key, cert, additional_certs = pkcs12.load_key_and_certificates(file_content, password=None)
+        logger.debug("PKCS12 loaded without password")
+    except Exception:
+        # Try with password
+        if not password:
+            unified_cert.requires_password = True
+            raise ValueError("Password required for PKCS12 file")
         
-        logger.debug(f"PKCS7 certificate extraction complete: found {len(certificates)} certificates")
+        try:
+            private_key, cert, additional_certs = pkcs12.load_key_and_certificates(
+                file_content, 
+                password=password.encode()
+            )
+            logger.debug("PKCS12 loaded with password")
+        except Exception as e:
+            raise ValueError(f"Failed to decrypt PKCS12 file: {e}")
+    
+    # Convert crypto objects to PEM and store
+    if cert:
+        unified_cert.certificate_pem = cert.public_bytes(serialization.Encoding.PEM).decode('utf-8')
+        unified_cert.certificate_info = create_certificate_info(cert)
+        logger.debug("Stored PKCS12 certificate")
+    
+    if private_key:
+        unified_cert.private_key_pem = private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption()
+        ).decode('utf-8')
+        unified_cert.private_key_info = create_private_key_info(private_key, is_encrypted=bool(password))
+        logger.debug("Stored PKCS12 private key")
+    
+    if additional_certs:
+        for additional_cert in additional_certs:
+            pem_cert = additional_cert.public_bytes(serialization.Encoding.PEM).decode('utf-8')
+            unified_cert.additional_certificates_pem.append(pem_cert)
+            unified_cert.additional_certificates_info.append(create_certificate_info(additional_cert))
+        logger.debug(f"Stored {len(additional_certs)} additional PKCS12 certificates")
+
+def _parse_pkcs7_content(file_content: bytes, password: Optional[str], unified_cert: UnifiedCertificateData):
+    """Parse PKCS7 content and populate unified certificate data"""
+    logger.debug("Parsing PKCS7 content")
+    
+    # Try PEM format first
+    try:
+        content_str = file_content.decode('utf-8')
+        if '-----BEGIN PKCS7-----' in content_str:
+            _parse_pkcs7_pem(content_str, unified_cert)
+            return
+        elif '-----BEGIN CERTIFICATE-----' in content_str:
+            # Multiple certificates in PEM format
+            _parse_pem_content(file_content, password, unified_cert)
+            return
+    except UnicodeDecodeError:
+        pass
+    
+    # Try DER format
+    _parse_pkcs7_der(file_content, unified_cert)
+
+def _parse_pkcs7_pem(content_str: str, unified_cert: UnifiedCertificateData):
+    """Parse PEM PKCS7 content"""
+    import re
+    import base64
+    
+    pkcs7_match = re.search(
+        r'-----BEGIN PKCS7-----\s*(.*?)\s*-----END PKCS7-----',
+        content_str,
+        re.DOTALL
+    )
+    
+    if pkcs7_match:
+        pkcs7_b64 = pkcs7_match.group(1).replace('\n', '').replace('\r', '').replace(' ', '')
+        pkcs7_der = base64.b64decode(pkcs7_b64)
+        _parse_pkcs7_der(pkcs7_der, unified_cert)
+
+def _parse_pkcs7_der(der_content: bytes, unified_cert: UnifiedCertificateData):
+    """Parse DER PKCS7 content"""
+    try:
+        from cryptography.hazmat.primitives.serialization import pkcs7
+        
+        # Try to load PKCS7 data
+        pkcs7_data = pkcs7.load_der_pkcs7_certificates(der_content)
+        
+        # Convert certificates to PEM
+        for i, cert in enumerate(pkcs7_data):
+            pem_cert = cert.public_bytes(serialization.Encoding.PEM).decode('utf-8')
+            
+            if i == 0:
+                # First certificate is main certificate
+                unified_cert.certificate_pem = pem_cert
+                unified_cert.certificate_info = create_certificate_info(cert)
+            else:
+                # Additional certificates
+                unified_cert.additional_certificates_pem.append(pem_cert)
+                unified_cert.additional_certificates_info.append(create_certificate_info(cert))
+        
+        logger.debug(f"Stored {len(pkcs7_data)} certificates from PKCS7")
         
     except Exception as e:
-        logger.error(f"Error extracting certificates from PKCS7 DER: {e}")
-        import traceback
-        logger.error(f"Full traceback: {traceback.format_exc()}")
+        logger.error(f"Failed to parse PKCS7 DER: {e}")
+        raise ValueError(f"Invalid PKCS7 format: {e}")
+
+def _parse_der_content(file_content: bytes, password: Optional[str], unified_cert: UnifiedCertificateData):
+    """Parse DER format content"""
+    logger.debug("Parsing DER content")
     
-    return certificates
+    # Try different DER types
+    parsers = [
+        ("Certificate", lambda: x509.load_der_x509_certificate(file_content)),
+        ("CSR", lambda: x509.load_der_x509_csr(file_content)),
+        ("Private Key", lambda: serialization.load_der_private_key(file_content, password=password.encode() if password else None))
+    ]
+    
+    for content_type, parser in parsers:
+        try:
+            obj = parser()
+            
+            if content_type == "Certificate":
+                unified_cert.certificate_pem = obj.public_bytes(serialization.Encoding.PEM).decode('utf-8')
+                unified_cert.certificate_info = create_certificate_info(obj)
+                logger.debug("Stored DER certificate")
+                return
+                
+            elif content_type == "CSR":
+                unified_cert.csr_pem = obj.public_bytes(serialization.Encoding.PEM).decode('utf-8')
+                unified_cert.csr_info = create_csr_info(obj)
+                logger.debug("Stored DER CSR")
+                return
+                
+            elif content_type == "Private Key":
+                unified_cert.private_key_pem = obj.private_bytes(
+                    encoding=serialization.Encoding.PEM,
+                    format=serialization.PrivateFormat.PKCS8,
+                    encryption_algorithm=serialization.NoEncryption()
+                ).decode('utf-8')
+                unified_cert.private_key_info = create_private_key_info(obj, is_encrypted=bool(password))
+                logger.debug("Stored DER private key")
+                return
+                
+        except Exception as e:
+            logger.debug(f"Not a {content_type}: {e}")
+            if "password" in str(e).lower():
+                unified_cert.requires_password = True
+    
+    raise ValueError("Unable to parse DER content as any known type")
+
+def _generate_content_hash(unified_cert: UnifiedCertificateData) -> str:
+    """Generate content hash from PEM content for deduplication"""
+    content_parts = []
+    
+    if unified_cert.certificate_pem:
+        content_parts.append(unified_cert.certificate_pem)
+    if unified_cert.private_key_pem:
+        content_parts.append(unified_cert.private_key_pem)
+    if unified_cert.csr_pem:
+        content_parts.append(unified_cert.csr_pem)
+    if unified_cert.additional_certificates_pem:
+        content_parts.extend(unified_cert.additional_certificates_pem)
+    
+    combined_content = ''.join(sorted(content_parts))
+    return hashlib.sha256(combined_content.encode()).hexdigest()
+
+# Backward compatibility functions for existing API
+
+def get_certificate_by_id(cert_id: str, session_id: str) -> Optional[UnifiedCertificateData]:
+    """Get certificate by ID from unified storage"""
+    return unified_storage.get_certificate(cert_id, session_id)
+
+def get_all_certificates(session_id: str) -> List[UnifiedCertificateData]:
+    """Get all certificates for session from unified storage"""
+    return unified_storage.get_all_certificates(session_id)
+
+def remove_certificate(cert_id: str, session_id: str) -> bool:
+    """Remove certificate from unified storage"""
+    return unified_storage.remove_certificate(cert_id, session_id)
+
+def clear_session(session_id: str):
+    """Clear session from unified storage"""
+    unified_storage.clear_session(session_id)

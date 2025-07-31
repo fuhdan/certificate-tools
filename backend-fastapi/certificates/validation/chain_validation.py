@@ -46,18 +46,27 @@ def validate_certificate_chain(certificates: List[Dict[str, Any]], session_id: s
                 'not_after': cert_obj.not_valid_after_utc.isoformat()
             }
             cert_objects.append(cert_info)
-    
-    logger.debug(f"Found {len(cert_objects)} certificates for chain validation")
-    
+            logger.debug(f"[{session_id}] Added cert for chain validation: subject='{cert_info['subject']}', issuer='{cert_info['issuer']}', CA={cert_info['is_ca']}, filename={cert_info['filename']}")
+        else:
+            logger.debug(f"[{session_id}] Skipped cert for chain validation: type='{cert_type}', valid={analysis.get('isValid')}, has_crypto={ 'certificate' in crypto_objects }, filename={cert.get('filename')}")
+
+    logger.debug(f"[{session_id}] Found {len(cert_objects)} certificates for chain validation")
+
     # Build and validate chains
     if len(cert_objects) >= 2:
         chains = _build_certificate_chains(cert_objects)
-        
-        for chain in chains:
+        logger.debug(f"[{session_id}] Built {len(chains)} certificate chain(s)")
+
+        for idx, chain in enumerate(chains):
+            chain_subjects = " -> ".join(cert['subject'] for cert in chain)
+            logger.debug(f"[{session_id}] Validating chain {idx + 1}: {chain_subjects}")
             validation = _validate_single_chain_detailed(chain)
             validations.append(validation)
-    
+    else:
+        logger.warning(f"[{session_id}] Not enough certificates to build chains (need >= 2, got {len(cert_objects)})")
+
     return validations
+
 
 def _build_certificate_chains(cert_objects: List[Dict]) -> List[List[Dict]]:
     """Build possible certificate chains"""
@@ -77,15 +86,18 @@ def _build_certificate_chains(cert_objects: List[Dict]) -> List[List[Dict]]:
     for end_entity in end_entities:
         logger.debug(f"Looking for issuer of: {end_entity['subject']} (issued by: {end_entity['issuer']})")
         
+        matched = False
         for ca in cas:
             logger.debug(f"  Checking CA: {ca['subject']}")
-            
             # Check if this CA could be the issuer
             if end_entity['issuer'] == ca['subject']:
                 logger.debug(f"  ✓ Found issuer match: {end_entity['subject']} → {ca['subject']}")
                 chains.append([end_entity, ca])
+                matched = True
             else:
                 logger.debug(f"  ✗ No match: '{end_entity['issuer']}' != '{ca['subject']}'")
+        if not matched:
+            logger.warning(f"No issuer found among CA certs for end-entity: {end_entity['subject']}")
     
     logger.debug(f"Built {len(chains)} possible certificate chains")
     return chains
@@ -112,9 +124,11 @@ def _validate_single_chain_detailed(chain: List[Dict]) -> ValidationResult:
             end_entity['certificate_obj'], 
             issuing_ca['certificate_obj']
         )
+        logger.debug(f"Signature verification result: {signature_result}")
         
         # Check name chaining
         name_chain_valid = end_entity['issuer'] == issuing_ca['subject']
+        logger.debug(f"Name chaining valid: {name_chain_valid} ({end_entity['issuer']} == {issuing_ca['subject']})")
         
         # Extract certificate fingerprints
         ee_fingerprint = _get_certificate_fingerprint(end_entity['certificate_obj'])
@@ -125,6 +139,7 @@ def _validate_single_chain_detailed(chain: List[Dict]) -> ValidationResult:
         ee_aki = _get_authority_key_identifier(end_entity['certificate_obj'])
         ca_ski = _get_subject_key_identifier(issuing_ca['certificate_obj'])
         ca_aki = _get_authority_key_identifier(issuing_ca['certificate_obj'])
+        
         
         # Build comprehensive validation details
         validation_details = {

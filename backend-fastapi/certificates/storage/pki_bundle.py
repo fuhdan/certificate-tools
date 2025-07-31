@@ -1,70 +1,60 @@
 # backend-fastapi/certificates/storage/pki_bundle.py
-# PKI Bundle management - auto-generation and storage - SESSION AWARE
+# Updated PKI Bundle management for unified PEM storage
 
 import logging
 import datetime
 from typing import Dict, Any, List, Optional
-from cryptography.hazmat.primitives import serialization
+
+from .unified_storage import unified_storage
 from session_manager import SessionManager
 
 logger = logging.getLogger(__name__)
 
 class PKIBundleManager:
-    """Manages automatic PKI bundle generation and storage - SESSION AWARE"""
+    """Manages PKI bundle generation from unified storage"""
     
     @staticmethod
-    def auto_generate_pki_bundle(session_id: str, uploaded_certificates: Optional[List[Dict[str, Any]]] = None):
-        """Automatically generate and store PKI bundle when certificates change"""
-        logger.info(f"[{session_id}] === AUTO-GENERATING PKI BUNDLE ===")
+    def auto_generate_pki_bundle(session_id: str, certificates: Optional[List] = None):
+        """Automatically generate PKI bundle from unified storage"""
+        logger.info(f"[{session_id}] Auto-generating PKI bundle from unified storage")
         
         try:
-            # If certificates not provided, get them from storage
-            if uploaded_certificates is None:
-                # Import here to avoid circular import
-                from .core import CertificateStorage
-                all_certificates = CertificateStorage.get_all(session_id)  # Core storage is session-aware
+            # Get certificates from unified storage if not provided
+            if certificates is None:
+                unified_certs = unified_storage.get_all_certificates(session_id)
             else:
-                # Sort the provided certificates
-                from .hierarchy import HierarchyManager
-                all_certificates = sorted(uploaded_certificates, key=lambda cert: (
-                    HierarchyManager.get_certificate_order(cert),
-                    cert.get('filename', '')
-                ))
+                # Convert API models to unified cert data if needed
+                unified_certs = []
+                for cert in certificates:
+                    if hasattr(cert, 'id'):  # API model
+                        unified_cert = unified_storage.get_certificate(cert.id, session_id)
+                        if unified_cert:
+                            unified_certs.append(unified_cert)
+                    else:
+                        # Already unified cert data
+                        unified_certs.append(cert)
             
-            if not all_certificates:
+            if not unified_certs:
                 logger.debug(f"[{session_id}] No certificates found, clearing PKI bundle")
                 PKIBundleManager.clear_pki_bundle(session_id)
                 return
             
-            # Generate the bundle
-            bundle = PKIBundleManager._generate_pki_bundle_internal(all_certificates, session_id)
+            # Generate bundle from unified certificates
+            bundle = PKIBundleManager._generate_pki_bundle_from_unified(unified_certs, session_id)
             
-            # Store it in session
+            # Store in session
             session_data = SessionManager.get_or_create_session(session_id)
             session_data["pki_bundle"] = bundle
             
-            logger.debug(f"[{session_id}] PKI bundle auto-generated with {len(bundle.get('components', []))} components")
-            
-            # Log bundle summary
-            component_types = [comp.get('fileType') for comp in bundle.get('components', [])]
-            type_counts = {}
-            for comp_type in component_types:
-                type_counts[comp_type] = type_counts.get(comp_type, 0) + 1
-            
-            logger.info(f"[{session_id}] PKI bundle composition: {type_counts}")
+            logger.info(f"[{session_id}] PKI bundle generated with {len(bundle.get('components', []))} components")
             
         except Exception as e:
             logger.error(f"[{session_id}] Error auto-generating PKI bundle: {e}")
-            import traceback
-            logger.error(f"[{session_id}] Full traceback: {traceback.format_exc()}")
     
     @staticmethod
-    def _generate_pki_bundle_internal(certificates: List[Dict[str, Any]], session_id: str) -> Dict[str, Any]:
-        """Internal PKI bundle generation"""
-        logger.debug(f"[{session_id}] === GENERATING PKI BUNDLE ===")
-        
-        # Import here to avoid circular import
-        from .crypto_storage import CryptoObjectsStorage
+    def _generate_pki_bundle_from_unified(unified_certs: List, session_id: str) -> Dict[str, Any]:
+        """Generate PKI bundle from unified certificate data"""
+        logger.debug(f"[{session_id}] Generating PKI bundle from {len(unified_certs)} unified certificates")
         
         bundle = {
             "version": "1.0",
@@ -73,115 +63,199 @@ class PKIBundleManager:
             "components": []
         }
         
+        # Sort certificates by PKI hierarchy
+        sorted_certs = sorted(unified_certs, key=lambda cert: (
+            PKIBundleManager._get_cert_order(cert),
+            cert.filename
+        ))
+        
         # Process each certificate
-        for cert in certificates:
-            cert_id = cert.get('id')
-            analysis = cert.get('analysis', {})
-            filename = cert.get('filename', 'unknown')
+        for unified_cert in sorted_certs:
+            # Add certificate component
+            if unified_cert.certificate_pem:
+                cert_component = PKIBundleManager._create_certificate_component(unified_cert)
+                bundle["components"].append(cert_component)
             
-            # Get crypto objects (session-aware in crypto storage)
-            if cert_id is not None:
-                crypto_objects = CryptoObjectsStorage.get_crypto_objects(cert_id, session_id)
-            else:
-                logger.warning(f"[{session_id}] Certificate {filename} has no ID, cannot retrieve crypto objects")
-                crypto_objects = {}
+            # Add private key component
+            if unified_cert.private_key_pem:
+                key_component = PKIBundleManager._create_private_key_component(unified_cert)
+                bundle["components"].append(key_component)
             
-            # Generate PEM content
-            pem_content = PKIBundleManager._extract_pem_content(
-                analysis.get('type'), 
-                crypto_objects,
-                session_id
-            )
+            # Add CSR component
+            if unified_cert.csr_pem:
+                csr_component = PKIBundleManager._create_csr_component(unified_cert)
+                bundle["components"].append(csr_component)
             
-            if pem_content:
-                component = {
-                    "fileType": PKIBundleManager._normalize_file_type(analysis.get('type'), analysis.get('details')),
-                    "file": pem_content,
-                    "details": {
-                        "name": filename,
-                        "password": None,  # Not stored for security
-                        "uploadedAt": cert.get('uploadedAt'),
-                        "format": analysis.get('format'),
-                        "isValid": analysis.get('isValid'),
-                        "size": analysis.get('size'),
-                        "analysis": analysis.get('details')
-                    }
-                }
-                bundle["components"].append(component)
-                logger.debug(f"[{session_id}] Added {component['fileType']} to PKI bundle: {filename}")
+            # Add additional certificates
+            for i, additional_cert_pem in enumerate(unified_cert.additional_certificates_pem):
+                additional_component = PKIBundleManager._create_additional_certificate_component(
+                    unified_cert, additional_cert_pem, i
+                )
+                bundle["components"].append(additional_component)
         
-        # Sort by PKI hierarchy
-        bundle["components"] = PKIBundleManager._sort_by_hierarchy(bundle["components"])
-        
-        logger.debug(f"[{session_id}] PKI bundle generated with {len(bundle['components'])} components")
+        logger.debug(f"[{session_id}] Bundle generated with {len(bundle['components'])} components")
         return bundle
     
     @staticmethod
-    def _extract_pem_content(cert_type: str, crypto_objects: Dict, session_id: str) -> Optional[str]:
-        """Extract PEM content from crypto objects"""
-        try:
-            if cert_type == 'CSR' and 'csr' in crypto_objects:
-                csr = crypto_objects['csr']
-                return csr.public_bytes(serialization.Encoding.PEM).decode('utf-8')
-                
-            elif cert_type == 'Private Key' and 'private_key' in crypto_objects:
-                private_key = crypto_objects['private_key']
-                return private_key.private_bytes(
-                    encoding=serialization.Encoding.PEM,
-                    format=serialization.PrivateFormat.PKCS8,
-                    encryption_algorithm=serialization.NoEncryption()
-                ).decode('utf-8')
-                
-            elif 'Certificate' in cert_type and 'certificate' in crypto_objects:
-                cert = crypto_objects['certificate']
-                return cert.public_bytes(serialization.Encoding.PEM).decode('utf-8')
-                
-        except Exception as e:
-            logger.error(f"[{session_id}] Error extracting PEM for {cert_type}: {e}")
-        return None
-    
-    @staticmethod
-    def _normalize_file_type(cert_type: str, details: Optional[Dict] = None) -> str:
-        """
-        Determine the correct PKI component type (internal version, calls public method).
-        This maintains backward compatibility with existing code.
-        """
-        # Create a mock certificate data structure for the public method
-        cert_data = {
-            'analysis': {
-                'type': cert_type,
-                'details': details or {}
+    def _create_certificate_component(unified_cert) -> Dict[str, Any]:
+        """Create certificate component for PKI bundle"""
+        cert_info = unified_cert.certificate_info
+        
+        # Determine file type based on certificate properties
+        if cert_info and cert_info.is_ca:
+            if cert_info.is_self_signed:
+                file_type = "RootCA"
+            else:
+                file_type = "IntermediateCA"
+        else:
+            file_type = "Certificate"
+        
+        return {
+            "fileType": file_type,
+            "file": unified_cert.certificate_pem,
+            "details": {
+                "name": unified_cert.filename,
+                "password": None,
+                "uploadedAt": unified_cert.uploaded_at,
+                "format": unified_cert.original_format,
+                "isValid": unified_cert.is_valid,
+                "size": unified_cert.file_size,
+                "analysis": {
+                    "subject": cert_info.subject if cert_info else "",
+                    "issuer": cert_info.issuer if cert_info else "",
+                    "serialNumber": cert_info.serial_number if cert_info else "",
+                    "notValidBefore": cert_info.not_valid_before if cert_info else "",
+                    "notValidAfter": cert_info.not_valid_after if cert_info else "",
+                    "signatureAlgorithm": cert_info.signature_algorithm if cert_info else "",
+                    "publicKeyAlgorithm": cert_info.public_key_algorithm if cert_info else "",
+                    "publicKeySize": cert_info.public_key_size if cert_info else None,
+                    "isCA": cert_info.is_ca if cert_info else False,
+                    "isSelfSigned": cert_info.is_self_signed if cert_info else False,
+                    "fingerprint": {
+                        "sha1": cert_info.fingerprint_sha1 if cert_info else "",
+                        "sha256": cert_info.fingerprint_sha256 if cert_info else ""
+                    },
+                    "extensions": cert_info.extensions if cert_info else {}
+                }
             }
         }
-        return PKIBundleManager.determine_file_type(cert_data)
     
     @staticmethod
-    def _sort_by_hierarchy(components: List[Dict]) -> List[Dict]:
-        """Sort components by PKI hierarchy"""
-        hierarchy_order = {
-            'CSR': 1,
-            'PrivateKey': 2,
-            'Certificate': 3,
-            'IssuingCA': 4,
-            'IntermediateCA': 5,
-            'RootCA': 6,
-            'Unknown': 7
+    def _create_private_key_component(unified_cert) -> Dict[str, Any]:
+        """Create private key component for PKI bundle"""
+        key_info = unified_cert.private_key_info
+        
+        return {
+            "fileType": "PrivateKey",
+            "file": unified_cert.private_key_pem,
+            "details": {
+                "name": f"{unified_cert.filename}_private_key",
+                "password": None,
+                "uploadedAt": unified_cert.uploaded_at,
+                "format": "PEM",
+                "isValid": unified_cert.is_valid,
+                "analysis": {
+                    "keyAlgorithm": key_info.algorithm if key_info else "",
+                    "keySize": key_info.key_size if key_info else None,
+                    "isEncrypted": key_info.is_encrypted if key_info else False
+                }
+            }
         }
-        
-        return sorted(components, key=lambda x: hierarchy_order.get(x['fileType'], 999))
     
     @staticmethod
-    def clear_pki_bundle(session_id: str):
-        """Clear the stored PKI bundle from session"""
-        session_data = SessionManager.get_or_create_session(session_id)
-        if "pki_bundle" in session_data:
-            del session_data["pki_bundle"]
+    def _create_csr_component(unified_cert) -> Dict[str, Any]:
+        """Create CSR component for PKI bundle"""
+        csr_info = unified_cert.csr_info
         
-        logger.debug(f"[{session_id}] PKI bundle cleared")
+        return {
+            "fileType": "CSR",
+            "file": unified_cert.csr_pem,
+            "details": {
+                "name": unified_cert.filename,
+                "password": None,
+                "uploadedAt": unified_cert.uploaded_at,
+                "format": unified_cert.original_format,
+                "isValid": unified_cert.is_valid,
+                "analysis": {
+                    "subject": csr_info.subject if csr_info else "",
+                    "signatureAlgorithm": csr_info.signature_algorithm if csr_info else "",
+                    "publicKeyAlgorithm": csr_info.public_key_algorithm if csr_info else "",
+                    "publicKeySize": csr_info.public_key_size if csr_info else None,
+                    "extensions": csr_info.extensions if csr_info else {}
+                }
+            }
+        }
+    
+    @staticmethod
+    def _create_additional_certificate_component(unified_cert, cert_pem: str, index: int) -> Dict[str, Any]:
+        """Create component for additional certificate"""
+        additional_cert_info = None
+        if index < len(unified_cert.additional_certificates_info):
+            additional_cert_info = unified_cert.additional_certificates_info[index]
+        
+        # Determine file type
+        if additional_cert_info and additional_cert_info.is_ca:
+            if additional_cert_info.is_self_signed:
+                file_type = "RootCA"
+            else:
+                file_type = "IntermediateCA"
+        else:
+            file_type = "Certificate"
+        
+        return {
+            "fileType": file_type,
+            "file": cert_pem,
+            "details": {
+                "name": f"{unified_cert.filename}_additional_{index}",
+                "password": None,
+                "uploadedAt": unified_cert.uploaded_at,
+                "format": "PEM",
+                "isValid": True,
+                "analysis": {
+                    "subject": additional_cert_info.subject if additional_cert_info else "",
+                    "issuer": additional_cert_info.issuer if additional_cert_info else "",
+                    "serialNumber": additional_cert_info.serial_number if additional_cert_info else "",
+                    "isCA": additional_cert_info.is_ca if additional_cert_info else False,
+                    "isSelfSigned": additional_cert_info.is_self_signed if additional_cert_info else False,
+                    "fingerprint": {
+                        "sha256": additional_cert_info.fingerprint_sha256 if additional_cert_info else ""
+                    }
+                }
+            }
+        }
+    
+    @staticmethod
+    def _get_cert_order(unified_cert) -> int:
+        """Get certificate order for PKI hierarchy sorting"""
+        # PKCS12/PKCS7 bundles first
+        if unified_cert.original_format in ['PKCS12', 'PKCS7']:
+            return 0
+        
+        # CA certificates
+        if unified_cert.certificate_info and unified_cert.certificate_info.is_ca:
+            return 1
+        
+        # Certificate chains
+        if unified_cert.additional_certificates_pem:
+            return 2
+        
+        # End entity certificates
+        if unified_cert.certificate_pem:
+            return 3
+        
+        # Private keys
+        if unified_cert.private_key_pem:
+            return 4
+        
+        # CSRs last
+        if unified_cert.csr_pem:
+            return 5
+        
+        return 6
     
     @staticmethod
     def get_pki_bundle(session_id: str) -> Dict[str, Any]:
-        """Get the current PKI bundle from session"""
+        """Get the current PKI bundle for session"""
         session_data = SessionManager.get_or_create_session(session_id)
         return session_data.get("pki_bundle", {}).copy() if session_data.get("pki_bundle") else {}
     
@@ -191,6 +265,14 @@ class PKIBundleManager:
         session_data = SessionManager.get_or_create_session(session_id)
         pki_bundle = session_data.get("pki_bundle", {})
         return bool(pki_bundle and pki_bundle.get('components'))
+    
+    @staticmethod
+    def clear_pki_bundle(session_id: str):
+        """Clear PKI bundle from session"""
+        session_data = SessionManager.get_or_create_session(session_id)
+        if "pki_bundle" in session_data:
+            del session_data["pki_bundle"]
+            logger.debug(f"[{session_id}] PKI bundle cleared")
     
     @staticmethod
     def validate_pki_bundle(session_id: str) -> Dict[str, Any]:
@@ -216,7 +298,7 @@ class PKIBundleManager:
         validation["hasCSR"] = 'CSR' in component_types
         validation["hasPrivateKey"] = 'PrivateKey' in component_types
         validation["hasCertificate"] = 'Certificate' in component_types
-        validation["hasIssuingCA"] = 'IssuingCA' in component_types
+        validation["hasIssuingCA"] = 'IntermediateCA' in component_types
         validation["hasRootCA"] = 'RootCA' in component_types
         validation["intermediateCACount"] = component_types.count('IntermediateCA')
         
@@ -224,54 +306,9 @@ class PKIBundleManager:
         if validation["hasCertificate"] or validation["hasIssuingCA"] or validation["hasRootCA"]:
             validation["isComplete"] = True
         
-        # Only add issues for truly missing essential components
+        # Add issues for missing essential components
         if not validation["hasCertificate"] and not validation["hasIssuingCA"] and not validation["hasRootCA"]:
             validation["issues"].append("Missing certificates - upload at least one certificate")
         
         logger.debug(f"[{session_id}] PKI bundle validation: {validation}")
         return validation
-
-    @staticmethod
-    def determine_file_type(cert_data: Dict[str, Any]) -> str:
-        """
-        Determine the correct PKI component type from certificate data.
-        This is the public version of the classification logic.
-
-        Args:
-            cert_data: Certificate data dictionary with analysis
-
-        Returns:
-            str: One of 'CSR', 'PrivateKey', 'Certificate', 'IssuingCA', 'IntermediateCA', 'RootCA', 'Unknown'
-        """
-        analysis = cert_data.get('analysis', {})
-        cert_type = analysis.get('type', '')
-        details = analysis.get('details', {})
-
-        if cert_type == 'CSR':
-            return 'CSR'
-        elif cert_type == 'Private Key':
-            return 'PrivateKey'
-        elif 'Certificate' in cert_type:
-            # Analyze if it's CA or end-entity
-            if details:
-                extensions = details.get('extensions', {})
-                basic_constraints = extensions.get('basicConstraints', {})
-                is_ca = basic_constraints.get('isCA', False)
-
-                if not is_ca:
-                    return 'Certificate'  # End-entity
-                else:
-                    subject = details.get('subject', {})
-                    issuer = details.get('issuer', {})
-                    subject_cn = subject.get('commonName', '')
-                    issuer_cn = issuer.get('commonName', '')
-
-                    if subject_cn == issuer_cn:
-                        return 'RootCA'
-                    elif any(indicator in subject_cn.lower() for indicator in ['issuing', 'leaf']):
-                        return 'IssuingCA'
-                    else:
-                        return 'IntermediateCA'
-            return 'Certificate'
-        else:
-            return 'Unknown'

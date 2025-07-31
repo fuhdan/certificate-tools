@@ -82,37 +82,39 @@ const FloatingPanel = ({ isAuthenticated }) => {
   }, [])
 
   useEffect(() => {
-    console.log('Certificates:', certificates);
-    
     if (!certificates || certificates.length === 0) {
-      setHasRequiredForLinux(false);
-      setHasRequiredForWindows(false);
-      setHasAnyFiles(false);
-      return;
+      setHasRequiredForLinux(false)
+      setHasRequiredForWindows(false)
+      setHasAnyFiles(false)
+      return
     }
   
-    // Normalize type strings to lowercase and check
-    const hasEndEntityCert = certificates.some(cert => {
-      const typeStr = (cert.analysis?.type || cert.Type || cert.type || '').toLowerCase();
-      // Consider certificate present if type includes 'certificate' and not 'ca certificate'
-      return typeStr.includes('certificate') && !typeStr.includes('ca certificate');
-    });
+    const certificates_analysis = certificates.map(cert => cert.analysis).filter(Boolean)
   
-    const hasPrivateKey = certificates.some(cert => {
-      const typeStr = (cert.type || cert.Type || cert.analysis?.type || '').toLowerCase();
-      return typeStr === 'private key' || typeStr === 'private_key';
-    });
+    // Use only standardized certificate types - no legacy support
+    const hasEndEntityCert = certificates_analysis.some(a => {
+      const type = a?.type
+      return type === 'Certificate' // Standardized end-entity certificate type only
+    })
   
-    const certificates_analysis = certificates.map(cert => cert.analysis).filter(Boolean);
-    const hasCACertificates = certificates_analysis.some(a => a?.type === 'Intermediate CA Certificate');
-    const hasRootCA = certificates_analysis.some(a => a?.type === 'Root CA Certificate');
+    const hasPrivateKey = certificates.some(cert => 
+      cert.analysis?.type === 'PrivateKey' // Standardized private key type only
+    )
   
-    console.log('hasEndEntityCert:', hasEndEntityCert, 'hasPrivateKey:', hasPrivateKey);
+    const hasCACertificates = certificates_analysis.some(a => {
+      const type = a?.type
+      return type === 'IssuingCA' || type === 'IntermediateCA' // Standardized CA types only
+    })
   
-    setHasRequiredForLinux(hasEndEntityCert && hasPrivateKey);
-    setHasRequiredForWindows(hasEndEntityCert && hasPrivateKey && hasCACertificates && hasRootCA);
-    setHasAnyFiles(certificates.length > 0);
-  }, [certificates]);
+    const hasRootCA = certificates_analysis.some(a => {
+      const type = a?.type
+      return type === 'RootCA' // Standardized root CA type only
+    })
+  
+    setHasRequiredForLinux(hasEndEntityCert && hasPrivateKey)
+    setHasRequiredForWindows(hasEndEntityCert && hasPrivateKey && hasCACertificates && hasRootCA)
+    setHasAnyFiles(certificates.length > 0)
+  }, [certificates])
 
   // NEW: Download handlers
   const handleLinuxApacheDownload = async () => {

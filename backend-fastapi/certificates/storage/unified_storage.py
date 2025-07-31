@@ -1,5 +1,5 @@
 # backend-fastapi/certificates/storage/unified_storage.py
-# Unified storage model - stores everything in PEM format with pre-computed crypto values
+# Complete rewrite - unified storage model with proper serialization
 
 import logging
 import hashlib
@@ -201,7 +201,7 @@ def create_certificate_info(cert: x509.Certificate) -> CertificateInfo:
     fingerprint_sha1 = cert.fingerprint(hashes.SHA1()).hex().upper()
     fingerprint_sha256 = cert.fingerprint(hashes.SHA256()).hex().upper()
     
-    # Extensions
+    # Extensions - FIXED IP ADDRESS SERIALIZATION
     extensions = {}
     is_ca = False
     
@@ -224,8 +224,13 @@ def create_certificate_info(cert: x509.Certificate) -> CertificateInfo:
         extensions['key_usage'] = {
             'digital_signature': key_usage_value.digital_signature,
             'key_encipherment': key_usage_value.key_encipherment,
+            'key_agreement': key_usage_value.key_agreement,
             'key_cert_sign': key_usage_value.key_cert_sign,
-            'crl_sign': key_usage_value.crl_sign
+            'crl_sign': key_usage_value.crl_sign,
+            'content_commitment': key_usage_value.content_commitment,
+            'data_encipherment': key_usage_value.data_encipherment,
+            'encipher_only': key_usage_value.encipher_only if key_usage_value.key_agreement else False,
+            'decipher_only': key_usage_value.decipher_only if key_usage_value.key_agreement else False,
         }
     except x509.ExtensionNotFound:
         pass
@@ -239,10 +244,51 @@ def create_certificate_info(cert: x509.Certificate) -> CertificateInfo:
         pass
     
     try:
-        # Subject Alternative Name
+        # Subject Alternative Name - CRITICAL FIX FOR IP ADDRESS SERIALIZATION
         san = cert.extensions.get_extension_for_oid(oid.ExtensionOID.SUBJECT_ALTERNATIVE_NAME)
         san_value = cast(x509.SubjectAlternativeName, san.value)
-        extensions['subject_alt_name'] = [name.value for name in san_value]
+        san_list = []
+        
+        for name in san_value:
+            if isinstance(name, x509.DNSName):
+                san_list.append(f"DNS:{name.value}")
+            elif isinstance(name, x509.IPAddress):
+                # CRITICAL FIX: Convert IPv4Address/IPv6Address to string
+                san_list.append(f"IP:{str(name.value)}")
+            elif isinstance(name, x509.RFC822Name):
+                san_list.append(f"Email:{name.value}")
+            elif isinstance(name, x509.UniformResourceIdentifier):
+                san_list.append(f"URI:{name.value}")
+            elif isinstance(name, x509.DirectoryName):
+                san_list.append(f"DirName:{name.value.rfc4514_string()}")
+            elif isinstance(name, x509.RegisteredID):
+                san_list.append(f"RegisteredID:{name.value.dotted_string}")
+            elif isinstance(name, x509.OtherName):
+                san_list.append(f"OtherName:{str(name.value)}")
+            else:
+                san_list.append(f"Other:{str(name)}")
+                
+        extensions['subject_alt_name'] = san_list
+    except x509.ExtensionNotFound:
+        pass
+    
+    try:
+        # Authority Key Identifier
+        aki = cert.extensions.get_extension_for_oid(oid.ExtensionOID.AUTHORITY_KEY_IDENTIFIER)
+        aki_value = cast(x509.AuthorityKeyIdentifier, aki.value)
+        extensions['authority_key_identifier'] = {
+            'key_identifier': aki_value.key_identifier.hex().upper() if aki_value.key_identifier else None,
+            'authority_cert_issuer': str(aki_value.authority_cert_issuer) if aki_value.authority_cert_issuer else None,
+            'authority_cert_serial_number': str(aki_value.authority_cert_serial_number) if aki_value.authority_cert_serial_number else None
+        }
+    except x509.ExtensionNotFound:
+        pass
+    
+    try:
+        # Subject Key Identifier
+        ski = cert.extensions.get_extension_for_oid(oid.ExtensionOID.SUBJECT_KEY_IDENTIFIER)
+        ski_value = cast(x509.SubjectKeyIdentifier, ski.value)
+        extensions['subject_key_identifier'] = ski_value.key_identifier.hex().upper()
     except x509.ExtensionNotFound:
         pass
     
@@ -318,13 +364,72 @@ def create_csr_info(csr: x509.CertificateSigningRequest) -> CSRInfo:
     )
     public_key_fingerprint = hashlib.sha256(public_key_der).hexdigest().upper()
     
-    # Extensions
+    # Extensions - FIXED IP ADDRESS SERIALIZATION
     extensions = {}
+    
     try:
         # Subject Alternative Name
         san = csr.extensions.get_extension_for_oid(oid.ExtensionOID.SUBJECT_ALTERNATIVE_NAME)
         san_value = cast(x509.SubjectAlternativeName, san.value)
-        extensions['subject_alt_name'] = [name.value for name in san_value]
+        san_list = []
+        
+        for name in san_value:
+            if isinstance(name, x509.DNSName):
+                san_list.append(f"DNS:{name.value}")
+            elif isinstance(name, x509.IPAddress):
+                # CRITICAL FIX: Convert IPv4Address/IPv6Address to string
+                san_list.append(f"IP:{str(name.value)}")
+            elif isinstance(name, x509.RFC822Name):
+                san_list.append(f"Email:{name.value}")
+            elif isinstance(name, x509.UniformResourceIdentifier):
+                san_list.append(f"URI:{name.value}")
+            elif isinstance(name, x509.DirectoryName):
+                san_list.append(f"DirName:{name.value.rfc4514_string()}")
+            elif isinstance(name, x509.RegisteredID):
+                san_list.append(f"RegisteredID:{name.value.dotted_string}")
+            elif isinstance(name, x509.OtherName):
+                san_list.append(f"OtherName:{str(name.value)}")
+            else:
+                san_list.append(f"Other:{str(name)}")
+                
+        extensions['subject_alt_name'] = san_list
+    except x509.ExtensionNotFound:
+        pass
+    
+    try:
+        # Basic Constraints (if present in CSR)
+        basic_constraints = csr.extensions.get_extension_for_oid(oid.ExtensionOID.BASIC_CONSTRAINTS)
+        basic_constraints_value = cast(x509.BasicConstraints, basic_constraints.value)
+        extensions['basic_constraints'] = {
+            'ca': basic_constraints_value.ca,
+            'path_length': basic_constraints_value.path_length
+        }
+    except x509.ExtensionNotFound:
+        pass
+    
+    try:
+        # Key Usage (if present in CSR)
+        key_usage = csr.extensions.get_extension_for_oid(oid.ExtensionOID.KEY_USAGE)
+        key_usage_value = cast(x509.KeyUsage, key_usage.value)
+        extensions['key_usage'] = {
+            'digital_signature': key_usage_value.digital_signature,
+            'key_encipherment': key_usage_value.key_encipherment,
+            'key_agreement': key_usage_value.key_agreement,
+            'key_cert_sign': key_usage_value.key_cert_sign,
+            'crl_sign': key_usage_value.crl_sign,
+            'content_commitment': key_usage_value.content_commitment,
+            'data_encipherment': key_usage_value.data_encipherment,
+            'encipher_only': key_usage_value.encipher_only if key_usage_value.key_agreement else False,
+            'decipher_only': key_usage_value.decipher_only if key_usage_value.key_agreement else False,
+        }
+    except x509.ExtensionNotFound:
+        pass
+    
+    try:
+        # Extended Key Usage (if present in CSR)
+        ext_key_usage = csr.extensions.get_extension_for_oid(oid.ExtensionOID.EXTENDED_KEY_USAGE)
+        ext_key_usage_value = cast(x509.ExtendedKeyUsage, ext_key_usage.value)
+        extensions['extended_key_usage'] = [usage._name for usage in ext_key_usage_value]
     except x509.ExtensionNotFound:
         pass
     

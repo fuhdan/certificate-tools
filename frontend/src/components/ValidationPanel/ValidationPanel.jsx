@@ -1,5 +1,5 @@
 // frontend/src/components/ValidationPanel/ValidationPanel.jsx
-// Updated ValidationPanel for unified storage backend
+// Fixed ValidationPanel for unified storage backend - no syntax errors
 
 import React, { useState, useEffect } from 'react'
 import { 
@@ -20,6 +20,7 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
       runValidations()
     } else {
       setValidations([])
+      setError(null)
     }
   }, [certificates])
 
@@ -28,7 +29,7 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
     setError(null)
     
     try {
-      const response = await fetch('/validate', {
+      const response = await fetch('/api/validation/results', {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -39,7 +40,16 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
         throw new Error(`Validation failed: ${response.statusText}`)
       }
 
-      const data = await response.json()
+      const text = await response.text()
+      let data
+      
+      try {
+        data = JSON.parse(text)
+      } catch (parseError) {
+        console.error('JSON Parse Error:', parseError)
+        console.error('Response text:', text)
+        throw new Error('Invalid JSON response from server')
+      }
       
       if (!data.success) {
         throw new Error(data.message || 'Validation failed')
@@ -50,6 +60,7 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
       if (onValidationComplete) {
         onValidationComplete(data.validations || [])
       }
+      
     } catch (err) {
       console.error('Validation error:', err)
       setError(err.message)
@@ -66,41 +77,28 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
   }
 
   const getValidationIcon = (validation) => {
-    return validation.isValid ? (
-      <CheckCircle size={20} className={styles.validIcon} />
-    ) : (
+    return validation.isValid ? 
+      <CheckCircle size={20} className={styles.validIcon} /> : 
       <XCircle size={20} className={styles.invalidIcon} />
-    )
   }
 
-  const getValidationTypeIcon = (validationType) => {
-    const iconProps = { size: 18, className: styles.typeIcon }
-    
-    if (validationType.includes('Private Key')) {
-      return <Key {...iconProps} />
-    } else if (validationType.includes('CSR')) {
-      return <FileText {...iconProps} />
-    } else if (validationType.includes('Certificate')) {
-      return <Award {...iconProps} />
-    } else if (validationType.includes('Chain')) {
-      return <Link2 {...iconProps} />
+  const getTypeIcon = (type) => {
+    switch (type?.toLowerCase()) {
+      case 'private key':
+      case 'privatekey':
+        return <Key size={16} className={styles.typeIcon} />
+      case 'csr':
+      case 'certificate request':
+        return <FileText size={16} className={styles.typeIcon} />
+      case 'certificate':
+      case 'ca certificate':
+      case 'root ca':
+      case 'intermediate ca':
+      case 'issuing ca':
+        return <Award size={16} className={styles.typeIcon} />
+      default:
+        return <Shield size={16} className={styles.typeIcon} />
     }
-    
-    return <Shield {...iconProps} />
-  }
-
-  const formatValidationDescription = (validation) => {
-    // Clean description - remove redundant parts if certificate1/certificate2 are shown
-    let description = validation.description || ''
-    
-    // If we have certificate names, make description more concise
-    if (validation.certificate1 && validation.certificate2) {
-      return `${validation.certificate1} ↔ ${validation.certificate2}`
-    } else if (validation.certificate1) {
-      return validation.certificate1
-    }
-    
-    return description
   }
 
   const renderValidationDetails = (validation) => {
@@ -108,48 +106,32 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
       <div className={styles.validationDetails}>
         <div className={styles.detailsContent}>
           
-          {/* Basic Information */}
+          {/* Basic validation info */}
           <div className={styles.basicInfo}>
             <div className={styles.infoRow}>
               <span className={styles.infoLabel}>Type:</span>
-              <span className={styles.infoValue}>{validation.validationType}</span>
+              <span className={styles.infoValue}>{validation.type || 'Unknown'}</span>
             </div>
-            
-            {validation.certificate1 && (
-              <div className={styles.infoRow}>
-                <span className={styles.infoLabel}>File 1:</span>
-                <span className={styles.infoValue}>{validation.certificate1}</span>
-              </div>
-            )}
-            
-            {validation.certificate2 && (
-              <div className={styles.infoRow}>
-                <span className={styles.infoLabel}>File 2:</span>
-                <span className={styles.infoValue}>{validation.certificate2}</span>
-              </div>
-            )}
-            
             <div className={styles.infoRow}>
-              <span className={styles.infoLabel}>Result:</span>
+              <span className={styles.infoLabel}>Status:</span>
               <span className={`${styles.infoValue} ${validation.isValid ? styles.valid : styles.invalid}`}>
-                {validation.isValid ? 'Valid Match' : 'No Match'}
+                {validation.isValid ? 'Valid' : 'Invalid'}
               </span>
             </div>
-            
-            {validation.description && (
+            {validation.matchPercentage && (
               <div className={styles.infoRow}>
-                <span className={styles.infoLabel}>Description:</span>
-                <span className={styles.infoValue}>{validation.description}</span>
+                <span className={styles.infoLabel}>Match:</span>
+                <span className={styles.infoValue}>{validation.matchPercentage}%</span>
               </div>
             )}
           </div>
 
-          {/* Error Information */}
+          {/* Error details */}
           {validation.error && (
             <div className={styles.errorSection}>
               <div className={styles.errorHeader}>
                 <AlertTriangle size={16} />
-                <span>Error Details</span>
+                Error Details
               </div>
               <div className={styles.errorContent}>
                 {validation.error}
@@ -157,12 +139,10 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
             </div>
           )}
 
-          {/* Additional Details */}
-          {validation.details && Object.keys(validation.details).length > 0 && (
+          {/* Technical details */}
+          {validation.details && (
             <div className={styles.detailsSection}>
-              <div className={styles.detailsHeader}>
-                <span>Technical Details</span>
-              </div>
+              <div className={styles.detailsHeader}>Technical Details</div>
               <div className={styles.detailsGrid}>
                 {Object.entries(validation.details).map(([key, value]) => (
                   <div key={key} className={styles.detailRow}>
@@ -180,41 +160,62 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
     )
   }
 
-  const hasValidations = validations.length > 0
-  const validCount = validations.filter(v => v.isValid).length
-  const invalidCount = validations.length - validCount
-
-  // Don't show panel if less than 2 certificates
   if (certificates.length < 2) {
-    return null
+    return (
+      <div className={styles.container}>
+        <div className={styles.header} onClick={() => setIsExpanded(!isExpanded)}>
+          <div className={styles.titleSection}>
+            <Shield size={24} />
+            <div className={styles.headerText}>
+              <h3>Certificate Validation</h3>
+              <p>Upload at least 2 certificates to see validation results</p>
+            </div>
+          </div>
+          <div className={styles.expandButton}>
+            {isExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+          </div>
+        </div>
+
+        {isExpanded && (
+          <div className={styles.content}>
+            <div className={styles.noValidations}>
+              <Shield size={48} className={styles.noValidationsIcon} />
+              <p>No validations available</p>
+              <small>Upload certificates, private keys, or CSRs to see cryptographic validation results</small>
+            </div>
+          </div>
+        )}
+      </div>
+    )
   }
 
   return (
     <div className={styles.container}>
       <div className={styles.header} onClick={() => setIsExpanded(!isExpanded)}>
         <div className={styles.titleSection}>
-          <Shield size={24} className={styles.headerIcon} />
-          <h3>Certificate Validation</h3>
-          {hasValidations && (
+          <Shield size={24} />
+          <div className={styles.headerText}>
+            <h3>Certificate Validation</h3>
+            {validations.length > 0 && (
+              <p>{validations.length} validation{validations.length !== 1 ? 's' : ''} completed</p>
+            )}
+          </div>
+        </div>
+
+        <div className={styles.controls}>
+          {validations.length > 0 && (
             <div className={styles.statusBadges}>
-              {validCount > 0 && (
-                <span className={styles.validBadge}>
-                  <CheckCircle size={14} />
-                  {validCount} Valid
-                </span>
-              )}
-              {invalidCount > 0 && (
-                <span className={styles.invalidBadge}>
-                  <XCircle size={14} />
-                  {invalidCount} Invalid
-                </span>
-              )}
+              <span className={`${styles.badge} ${styles.validBadge}`}>
+                {validations.filter(v => v.isValid).length} Valid
+              </span>
+              <span className={`${styles.badge} ${styles.invalidBadge}`}>
+                {validations.filter(v => !v.isValid).length} Invalid
+              </span>
             </div>
           )}
-        </div>
-        <div className={styles.controls}>
-          {isLoading && <div className={styles.spinner}></div>}
-          {isExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+          <div className={styles.expandButton}>
+            {isExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+          </div>
         </div>
       </div>
 
@@ -227,22 +228,22 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
             </div>
           )}
 
-          {isLoading && !hasValidations && (
+          {isLoading && (
             <div className={styles.loadingMessage}>
               <div className={styles.spinner}></div>
-              Running validation checks...
+              Running validations...
             </div>
           )}
 
-          {!isLoading && !hasValidations && !error && (
+          {!isLoading && !error && validations.length === 0 && (
             <div className={styles.noValidations}>
-              <Shield size={32} className={styles.noValidationsIcon} />
-              <p>No validation checks available</p>
-              <small>Upload compatible certificates (e.g., private key + CSR) to see validations</small>
+              <Shield size={48} className={styles.noValidationsIcon} />
+              <p>No validation results</p>
+              <small>Validation results will appear here once certificates are processed</small>
             </div>
           )}
 
-          {hasValidations && (
+          {validations.length > 0 && (
             <div className={styles.validationsList}>
               {validations.map((validation, index) => (
                 <div 
@@ -252,17 +253,23 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
                   <div className={styles.validationHeader}>
                     <div className={styles.validationInfo}>
                       {getValidationIcon(validation)}
+                      
                       <div className={styles.validationTypeIcons}>
-                        {getValidationTypeIcon(validation.validationType)}
-                        {validation.certificate2 && <span className={styles.arrow}>↔</span>}
+                        {getTypeIcon(validation.sourceType)}
+                        <span className={styles.arrow}>→</span>
+                        {getTypeIcon(validation.targetType)}
                       </div>
+
                       <div className={styles.validationText}>
-                        <span className={styles.validationType}>{validation.validationType}</span>
-                        <span className={styles.validationFiles}>
-                          {formatValidationDescription(validation)}
-                        </span>
+                        <div className={styles.validationType}>
+                          {validation.type || 'Unknown Validation'}
+                        </div>
+                        <div className={styles.validationFiles}>
+                          {validation.sourceFile || 'Unknown'} → {validation.targetFile || 'Unknown'}
+                        </div>
                       </div>
                     </div>
+
                     <div className={styles.validationControls}>
                       <span className={`${styles.status} ${validation.isValid ? styles.validStatus : styles.invalidStatus}`}>
                         {validation.isValid ? 'MATCH' : 'NO MATCH'}

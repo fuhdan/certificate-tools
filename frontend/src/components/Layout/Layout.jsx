@@ -1,4 +1,6 @@
 // frontend/src/components/Layout/Layout.jsx
+// Updated for unified storage backend
+
 import React, { useState, useEffect, useMemo } from 'react'
 import Header from '../Header/Header'
 import Footer from '../Footer/Footer'
@@ -45,54 +47,39 @@ const LayoutContent = () => {
   }, [])
 
   // Helper function to determine certificate order in PKI hierarchy
-  const getPKIOrder = (type, details, filename) => {
-    // 1. Private Key (always first)
-    if (type === 'PrivateKey' || type === 'Private Key') {
+  // Updated for unified certificate model - proper PKI hierarchy
+  const getPKIOrder = (certificate) => {
+    // PKCS12/PKCS7 files should be expanded, not treated as single items
+    // We look at what they CONTAIN, not the format
+    
+    // 1. Private Key (standalone private key files)
+    if (certificate.has_private_key && !certificate.has_certificate && !certificate.has_csr) {
       return 1
     }
 
-    // 2. CSR (Certificate Signing Request)
-    if (type === 'CSR') {
+    // 2. CSR (Certificate Signing Request - standalone)
+    if (certificate.has_csr && !certificate.has_certificate && !certificate.has_private_key) {
       return 2
     }
 
-    // 3. End-Entity Certificate (leaf certificate)
-    if (type === 'Certificate' && details?.extensions?.basicConstraints?.isCA === false) {
+    // 3. End-Entity Certificate (leaf certificate - not CA)
+    if (certificate.has_certificate && certificate.certificate_info?.is_ca === false) {
       return 3
     }
 
-    // 4. Issuing CA
-    if (type === 'IssuingCA') {
+    // 4. Intermediate CA Certificate (CA but not self-signed)
+    if (certificate.has_certificate && certificate.certificate_info?.is_ca === true && !certificate.certificate_info?.is_self_signed) {
       return 4
     }
 
-    // 5. Intermediate CA
-    if (type === 'IntermediateCA') {
+    // 5. Root CA Certificate (CA and self-signed)
+    if (certificate.has_certificate && certificate.certificate_info?.is_ca === true && certificate.certificate_info?.is_self_signed) {
       return 5
     }
 
-    // 6. Root CA
-    if (type === 'RootCA') {
+    // 6. PKCS12/PKCS7 bundles with multiple certificates (these should be processed to extract individual certs)
+    if (certificate.original_format === 'PKCS12' || certificate.original_format === 'PKCS7') {
       return 6
-    }
-
-    // Legacy CA Certificate types - determine by basic constraints
-    if (type === 'CA Certificate' || (type === 'Certificate' && details?.extensions?.basicConstraints?.isCA)) {
-      const subjectCN = details?.subject?.commonName || ''
-      const issuerCN = details?.issuer?.commonName || ''
-
-      // Root CA: self-signed (subject == issuer)
-      if (subjectCN === issuerCN) {
-        return 6
-      }
-
-      // Otherwise treat as intermediate
-      return 5
-    }
-
-    // 7. Certificate Chain
-    if (type === 'Certificate Chain') {
-      return 7
     }
 
     // Default order for unknown types
@@ -104,16 +91,12 @@ const LayoutContent = () => {
     const certificateOrders = new Map()
     
     const getSortOrder = (cert) => {
-      const cacheKey = cert.id || cert.filename
+      const cacheKey = cert.id
       if (certificateOrders.has(cacheKey)) {
         return certificateOrders.get(cacheKey)
       }
       
-      const type = cert.analysis?.type || ''
-      const details = cert.analysis?.details
-      const filename = cert.filename || ''
-      const order = getPKIOrder(type, details, filename)
-      
+      const order = getPKIOrder(cert)
       certificateOrders.set(cacheKey, order)
       return order
     }
@@ -135,7 +118,7 @@ const LayoutContent = () => {
     })
   }
 
-  // Create sorted certificates for display using the correct PKI hierarchy order
+  // Create sorted certificates for display using the unified model
   const sortedCertificates = useMemo(() => {
     return createSortedCertificates(certificates)
   }, [certificates])

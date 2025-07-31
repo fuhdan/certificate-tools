@@ -1,4 +1,6 @@
 // frontend/src/contexts/CertificateContext.jsx
+// Updated for unified storage backend
+
 import React, { createContext, useContext, useState, useCallback } from 'react'
 import api from '../services/api'
 
@@ -30,13 +32,39 @@ export const CertificateProvider = ({ children }) => {
       
       const response = await api.get('/certificates')
       if (response.data.success) {
+        // Map unified certificates to expected format
         const files = response.data.certificates.map(cert => ({
+          // Core identity
           id: cert.id,
-          name: cert.filename,
-          success: true,
-          analysis: cert.analysis,
           filename: cert.filename,
-          uploadedAt: cert.uploadedAt
+          original_format: cert.original_format,
+          uploaded_at: cert.uploaded_at,
+          
+          // File metadata
+          file_size: cert.file_size,
+          file_hash: cert.file_hash,
+          content_hash: cert.content_hash,
+          
+          // Content flags
+          has_certificate: cert.has_certificate,
+          has_private_key: cert.has_private_key,
+          has_csr: cert.has_csr,
+          additional_certs_count: cert.additional_certs_count,
+          
+          // Pre-computed information
+          certificate_info: cert.certificate_info,
+          private_key_info: cert.private_key_info,
+          csr_info: cert.csr_info,
+          additional_certificates_info: cert.additional_certificates_info,
+          
+          // Validation
+          is_valid: cert.is_valid,
+          validation_errors: cert.validation_errors,
+          
+          // Legacy fields for compatibility (derived from unified model)
+          name: cert.filename,
+          success: cert.is_valid,
+          uploadedAt: cert.uploaded_at
         }))
         
         setCertificates(files)
@@ -50,7 +78,32 @@ export const CertificateProvider = ({ children }) => {
   }, [])
 
   const addCertificate = useCallback((certificate) => {
-    setCertificates(prev => [...prev, certificate])
+    // Ensure certificate has unified model structure
+    const unifiedCert = {
+      id: certificate.id,
+      filename: certificate.filename || certificate.name,
+      original_format: certificate.original_format,
+      uploaded_at: certificate.uploaded_at || certificate.uploadedAt,
+      file_size: certificate.file_size,
+      file_hash: certificate.file_hash,
+      content_hash: certificate.content_hash,
+      has_certificate: certificate.has_certificate || false,
+      has_private_key: certificate.has_private_key || false,
+      has_csr: certificate.has_csr || false,
+      additional_certs_count: certificate.additional_certs_count || 0,
+      certificate_info: certificate.certificate_info,
+      private_key_info: certificate.private_key_info,
+      csr_info: certificate.csr_info,
+      additional_certificates_info: certificate.additional_certificates_info || [],
+      is_valid: certificate.is_valid || certificate.success || true,
+      validation_errors: certificate.validation_errors || [],
+      // Legacy compatibility
+      name: certificate.filename || certificate.name,
+      success: certificate.is_valid || certificate.success || true,
+      uploadedAt: certificate.uploaded_at || certificate.uploadedAt
+    }
+    
+    setCertificates(prev => [...prev, unifiedCert])
   }, [])
 
   const updateCertificate = useCallback((certificateId, updates) => {

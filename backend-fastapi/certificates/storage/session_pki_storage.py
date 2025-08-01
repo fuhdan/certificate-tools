@@ -11,6 +11,8 @@ from datetime import datetime
 from enum import Enum
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization, hashes
+from ..extractors.certificate import extract_certificate_metadata
+from ..extractors.private_key import extract_private_key_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -110,23 +112,74 @@ class SessionPKIStorage:
     
     def add_component(self, session_id: str, component_type: PKIComponentType, 
                      content: str, filename: str, metadata: Dict[str, Any]) -> str:
-        """Add PKI component to session"""
+        """Add PKI component to session with duplicate detection"""
         session = self.get_or_create_session(session_id)
         
-        component_id = str(uuid.uuid4())
-        component = PKIComponent(
-            id=component_id,
-            type=component_type,
-            order=component_type.order,
-            content=content,
-            filename=filename,
-            uploaded_at=datetime.utcnow().isoformat(),
-            metadata=metadata
-        )
+        # Check for duplicates based on component type and fingerprint
+        existing_component_id = self._find_duplicate_component(session, component_type, metadata)
         
-        session.add_component(component)
-        logger.info(f"Added {component_type.type_name} to session {session_id}: {filename}")
-        return component_id
+        if existing_component_id:
+            # Replace existing component
+            logger.info(f"Found duplicate {component_type.type_name}, replacing existing component")
+            
+            new_component = PKIComponent(
+                id=existing_component_id,  # Keep existing ID
+                type=component_type,
+                order=component_type.order,
+                content=content,
+                filename=filename,
+                uploaded_at=datetime.utcnow().isoformat(),
+                metadata=metadata
+            )
+            
+            session.replace_component(existing_component_id, new_component)
+            logger.info(f"Replaced {component_type.type_name} in session {session_id}: {filename}")
+            return existing_component_id
+        else:
+            # Add new component (original logic)
+            component_id = str(uuid.uuid4())
+            component = PKIComponent(
+                id=component_id,
+                type=component_type,
+                order=component_type.order,
+                content=content,
+                filename=filename,
+                uploaded_at=datetime.utcnow().isoformat(),
+                metadata=metadata
+            )
+            
+            session.add_component(component)
+            logger.info(f"Added {component_type.type_name} to session {session_id}: {filename}")
+            return component_id
+    
+    def _find_duplicate_component(self, session: PKISession, component_type: PKIComponentType, 
+                                 metadata: Dict[str, Any]) -> Optional[str]:
+        """Find duplicate component in session based on type and fingerprint"""
+        
+        # Only check for duplicates on specific component types
+        if component_type not in [PKIComponentType.CSR, PKIComponentType.PRIVATE_KEY]:
+            return None
+        
+        # Get the fingerprint from metadata
+        if component_type == PKIComponentType.CSR:
+            new_fingerprint = metadata.get('public_key_fingerprint')
+        elif component_type == PKIComponentType.PRIVATE_KEY:
+            new_fingerprint = metadata.get('public_key_fingerprint')
+        else:
+            return None
+        
+        if not new_fingerprint:
+            return None
+        
+        # Search for existing component with same type and fingerprint
+        for component in session.components.values():
+            if component.type == component_type:
+                existing_fingerprint = component.metadata.get('public_key_fingerprint')
+                if existing_fingerprint == new_fingerprint:
+                    logger.debug(f"Duplicate {component_type.type_name} detected: {new_fingerprint[:16]}...")
+                    return component.id
+        
+        return None
     
     def get_session_components(self, session_id: str) -> List[Dict[str, Any]]:
         """Get all components for session as API response format"""
@@ -224,12 +277,7 @@ def process_pkcs12_bundle(session_id: str, filename: str, cert, private_key, add
             encryption_algorithm=serialization.NoEncryption()
         ).decode('utf-8')
         
-        key_metadata = {
-            'algorithm': type(private_key).__name__.replace('PrivateKey', ''),
-            'key_size': getattr(private_key, 'key_size', None),
-            'is_encrypted': False,
-            'public_key_fingerprint': _get_public_key_fingerprint(private_key)
-        }
+        key_metadata = extract_private_key_metadata(private_key, is_encrypted=False)
         
         component_id = session_pki_storage.add_component(
             session_id, PKIComponentType.PRIVATE_KEY, key_pem, filename, key_metadata
@@ -243,14 +291,7 @@ def process_pkcs12_bundle(session_id: str, filename: str, cert, private_key, add
         cert_subject = cert.subject.rfc4514_string()
         cert_type = cert_roles.get(cert_subject, PKIComponentType.CERTIFICATE)
         
-        cert_metadata = {
-            'subject': cert_subject,
-            'issuer': cert.issuer.rfc4514_string(),
-            'serial_number': str(cert.serial_number),
-            'is_ca': _is_ca_certificate(cert),
-            'is_self_signed': cert.subject == cert.issuer,
-            'fingerprint_sha256': _get_cert_fingerprint(cert)
-        }
+        cert_metadata = extract_certificate_metadata(cert)
         
         component_id = session_pki_storage.add_component(
             session_id, cert_type, cert_pem, filename, cert_metadata
@@ -264,14 +305,7 @@ def process_pkcs12_bundle(session_id: str, filename: str, cert, private_key, add
         cert_subject = add_cert.subject.rfc4514_string()
         cert_type = cert_roles.get(cert_subject, PKIComponentType.INTERMEDIATE_CA)
         
-        cert_metadata = {
-            'subject': cert_subject,
-            'issuer': add_cert.issuer.rfc4514_string(),
-            'serial_number': str(add_cert.serial_number),
-            'is_ca': _is_ca_certificate(add_cert),
-            'is_self_signed': add_cert.subject == add_cert.issuer,
-            'fingerprint_sha256': _get_cert_fingerprint(add_cert)
-        }
+        cert_metadata = extract_certificate_metadata(cert)
         
         component_id = session_pki_storage.add_component(
             session_id, cert_type, cert_pem, filename, cert_metadata

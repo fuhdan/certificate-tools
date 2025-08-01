@@ -8,9 +8,9 @@ from typing import Dict, Any, Optional
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 
-from ..extractors.certificate import extract_x509_details, is_ca_certificate, extract_public_key_details
-from ..extractors.csr import extract_csr_details  
-from ..extractors.private_key import extract_private_key_details
+from ..extractors.certificate import extract_certificate_metadata, is_ca_certificate, extract_public_key_details
+from ..extractors.csr import extract_csr_metadata
+from ..extractors.private_key import extract_private_key_metadata
 from ..utils.hashing import (
     generate_certificate_hash, generate_csr_hash, generate_public_key_hash,
     generate_normalized_private_key_hash, generate_file_hash
@@ -57,17 +57,17 @@ def analyze_pem_certificate(content_str: str, file_content: bytes) -> Dict[str, 
             cert_type = "CA Certificate" if is_ca else "Certificate"
             logger.debug(f"Certificate type determined: {cert_type} (CA: {is_ca})")
             
-            logger.debug("Extracting certificate details...")
-            details = extract_x509_details(cert)
-            logger.debug(f"Certificate details extracted, keys: {list(details.keys())}")
+            logger.debug("Extracting certificate metadata...")
+            metadata = extract_certificate_metadata(cert)
+            logger.debug(f"Certificate metadata extracted, keys: {list(metadata.keys())}")
             
-            logger.debug("Certificate details:\n%s", json.dumps(details, indent=2, default=str))
+            logger.debug("Certificate metadata:\n%s", json.dumps(metadata, indent=2, default=str))
 
             result = {
                 "type": cert_type,
                 "isValid": True,
                 "content_hash": content_hash,
-                "details": details
+                "details": metadata
             }
             
             logger.info(f"PEM certificate analysis complete: {cert_type}")
@@ -99,15 +99,15 @@ def analyze_pem_csr(file_content: bytes) -> Dict[str, Any]:
         content_hash = generate_csr_hash(csr)
         logger.debug(f"CSR content hash: {content_hash[:16]}...")
         
-        logger.debug("Extracting CSR details...")
-        details = extract_csr_details(csr)
-        logger.debug(f"CSR details extracted, keys: {list(details.keys())}")
+        logger.debug("Extracting CSR metadata...")
+        metadata = extract_csr_metadata(csr)
+        logger.debug(f"CSR metadata extracted, keys: {list(metadata.keys())}")
         
         result = {
             "type": "CSR",
             "isValid": True,
             "content_hash": content_hash,
-            "details": details
+            "details": metadata
         }
         
         logger.info(f"PEM CSR analysis complete")
@@ -154,18 +154,18 @@ def analyze_pem_private_key(file_content: bytes, password: Optional[str]) -> Dic
         normalized_hash = generate_normalized_private_key_hash(private_key)
         logger.debug(f"Normalized private key hash: {normalized_hash[:16]}...")
         
-        logger.debug("Extracting private key details...")
-        details = extract_private_key_details(private_key)
-        logger.debug(f"Private key details: {details}")
+        logger.debug("Extracting private key metadata...")
+        metadata = extract_private_key_metadata(private_key, is_encrypted=False)
+        logger.debug(f"Private key metadata: {metadata}")
 
         result = {
             "type": "Private Key",
             "isValid": True,
             "content_hash": normalized_hash,
-            "details": details
+            "details": metadata
         }
         
-        logger.info(f"PEM private key analysis complete: {details.get('algorithm', 'Unknown')} {details.get('keySize', 0)} bits")
+        logger.info(f"PEM private key analysis complete: {metadata.get('algorithm', 'Unknown')} {metadata.get('key_size', 0)} bits")
         return result
         
     except Exception as e:
@@ -186,9 +186,9 @@ def analyze_pem_private_key(file_content: bytes, password: Optional[str]) -> Dic
                     "content_hash": generate_file_hash(file_content),
                     "details": {
                         "algorithm": "Encrypted (password required)",
-                        "keySize": 0,
+                        "key_size": 0,
                         "curve": "N/A",
-                        "encrypted": True,
+                        "is_encrypted": True,
                         "requiresPassword": True
                     }
                 }
@@ -206,17 +206,17 @@ def analyze_pem_private_key(file_content: bytes, password: Optional[str]) -> Dic
                     normalized_hash = generate_normalized_private_key_hash(private_key)
                     logger.debug(f"Decrypted private key hash: {normalized_hash[:16]}...")
                     
-                    details = extract_private_key_details(private_key)
-                    logger.debug(f"Decrypted private key details: {details}")
+                    metadata = extract_private_key_metadata(private_key, is_encrypted=True)
+                    logger.debug(f"Decrypted private key metadata: {metadata}")
                     
                     result = {
                         "type": "Private Key",
                         "isValid": True,
                         "content_hash": normalized_hash,
-                        "details": details
+                        "details": metadata
                     }
                     
-                    logger.info(f"Encrypted PEM private key analysis complete: {details.get('algorithm', 'Unknown')} {details.get('keySize', 0)} bits")
+                    logger.info(f"Encrypted PEM private key analysis complete: {metadata.get('algorithm', 'Unknown')} {metadata.get('key_size', 0)} bits")
                     return result
                     
                 except Exception as pwd_error:
@@ -229,9 +229,9 @@ def analyze_pem_private_key(file_content: bytes, password: Optional[str]) -> Dic
                         "content_hash": generate_file_hash(file_content),
                         "details": {
                             "algorithm": "Encrypted (incorrect password)",
-                            "keySize": 0,
+                            "key_size": 0,
                             "curve": "N/A",
-                            "encrypted": True,
+                            "is_encrypted": True,
                             "requiresPassword": True
                         }
                     }

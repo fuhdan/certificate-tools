@@ -1,30 +1,45 @@
-# certificates/extractors/csr.py
-# CSR detail extraction functions with comprehensive debugging
-
 import logging
 from typing import Dict, Any, cast
 from cryptography import x509
 from cryptography.x509.oid import ExtensionOID, ExtendedKeyUsageOID
+from cryptography.hazmat.primitives import serialization, hashes
+import hashlib
 from .certificate import extract_public_key_details
 
 logger = logging.getLogger(__name__)
 
 logger.debug("extractors/csr.py initialized")
 
-def extract_csr_details(csr: x509.CertificateSigningRequest) -> Dict[str, Any]:
-    """Extract details from CSR"""
-    logger.info(f"=== CSR EXTRACTION ===")
+def extract_csr_metadata(csr: x509.CertificateSigningRequest) -> Dict[str, Any]:
+    """Extract flattened CSR metadata for direct storage"""
+    logger.info(f"=== CSR METADATA EXTRACTION ===")
     logger.debug(f"CSR object type: {type(csr)}")
     
-    details = {
-        "subject": {},
-        "publicKey": {},
-        "signature": {},
-        "extensions": {}
+    # Calculate public key fingerprint
+    public_key = csr.public_key()
+    public_bytes = public_key.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+    public_key_fingerprint = hashlib.sha256(public_bytes).hexdigest().upper()
+    
+    # Initialize flattened metadata with basic info
+    metadata = {
+        'subject': csr.subject.rfc4514_string(),
+        'signature_algorithm': csr.signature_algorithm_oid._name,
+        'public_key_algorithm': type(csr.public_key()).__name__.replace('PublicKey', ''),
+        'public_key_size': getattr(csr.public_key(), 'key_size', None),
+        'public_key_fingerprint': public_key_fingerprint,
+        
+        # Initialize all extension fields as empty
+        'subject_alt_name': [],
+        'key_usage': {},
+        'extended_key_usage': [],
+        'basic_constraints': {}
     }
     
     try:
-        # Subject information
+        # Subject information (detailed)
         logger.debug("Extracting CSR subject information...")
         subject_attrs = {}
         subject_count = len(csr.subject)
@@ -36,37 +51,45 @@ def extract_csr_details(csr: x509.CertificateSigningRequest) -> Dict[str, Any]:
             subject_attrs[attr_name] = attr_value
             logger.debug(f"  Subject attribute [{i}]: {attr_name} = {attr_value}")
         
-        details["subject"] = {
-            "commonName": subject_attrs.get("commonName", "N/A"),
-            "organization": subject_attrs.get("organizationName", "N/A"),
-            "organizationalUnit": subject_attrs.get("organizationalUnitName", "N/A"),
-            "country": subject_attrs.get("countryName", "N/A"),
-            "state": subject_attrs.get("stateOrProvinceName", "N/A"),
-            "locality": subject_attrs.get("localityName", "N/A"),
-            "emailAddress": subject_attrs.get("emailAddress", "N/A")
-        }
-        logger.debug(f"CSR subject details: {details['subject']}")
+        # Add detailed subject fields
+        metadata.update({
+            'subject_common_name': subject_attrs.get("commonName", "N/A"),
+            'subject_organization': subject_attrs.get("organizationName", "N/A"),
+            'subject_organizational_unit': subject_attrs.get("organizationalUnitName", "N/A"),
+            'subject_country': subject_attrs.get("countryName", "N/A"),
+            'subject_state': subject_attrs.get("stateOrProvinceName", "N/A"),
+            'subject_locality': subject_attrs.get("localityName", "N/A"),
+            'subject_email': subject_attrs.get("emailAddress", "N/A")
+        })
+        logger.debug(f"CSR subject details extracted")
         
-        # Public key information
+        # Public key information (detailed)
         logger.debug("Extracting CSR public key information...")
-        public_key = csr.public_key()
-        details["publicKey"] = extract_public_key_details(public_key)
+        public_key_details = extract_public_key_details(public_key)
         
-        # Signature algorithm
+        # Add detailed public key fields
+        metadata.update({
+            'public_key_algorithm_detailed': public_key_details.get("algorithm", "Unknown"),
+            'public_key_size_detailed': public_key_details.get("keySize", 0)
+        })
+        
+        # Add algorithm-specific details
+        if public_key_details.get("algorithm") == "RSA":
+            metadata['public_key_exponent'] = public_key_details.get("exponent", "N/A")
+        elif public_key_details.get("algorithm") == "EC":
+            metadata['public_key_curve'] = public_key_details.get("curve", "N/A")
+        
+        # Signature algorithm (detailed)
         logger.debug("Extracting CSR signature algorithm...")
         sig_alg_name = csr.signature_algorithm_oid._name
         sig_alg_oid = csr.signature_algorithm_oid.dotted_string
         logger.debug(f"  CSR signature algorithm: {sig_alg_name}")
         logger.debug(f"  CSR signature algorithm OID: {sig_alg_oid}")
         
-        details["signature"] = {
-            "algorithm": sig_alg_name,
-            "algorithmOid": sig_alg_oid
-        }
+        metadata['signature_algorithm_oid'] = sig_alg_oid
 
-        # Extract extensions from CSR
+        # Extract extensions from CSR (comprehensive)
         logger.debug("Extracting CSR extensions...")
-        extensions = {}
         extension_count = len(csr.extensions)
         logger.debug(f"Found {extension_count} CSR extensions")
         
@@ -74,33 +97,31 @@ def extract_csr_details(csr: x509.CertificateSigningRequest) -> Dict[str, Any]:
         try:
             logger.debug("Checking for Subject Alternative Name extension in CSR...")
             san_ext = csr.extensions.get_extension_for_oid(ExtensionOID.SUBJECT_ALTERNATIVE_NAME)
-            # Cast to the correct type to help with type checking
             san = cast(x509.SubjectAlternativeName, san_ext.value)
             san_list = []
             
             logger.debug(f"Found SAN extension")
             for i, name in enumerate(san):
                 if isinstance(name, x509.DNSName):
-                    san_entry = {"type": 2, "typeName": "DNS", "value": name.value}
+                    san_entry = f"DNS:{name.value}"
                     logger.debug(f"    SAN [{i}]: DNS = {name.value}")
                 elif isinstance(name, x509.IPAddress):
-                    ip_str = str(name.value)
-                    san_entry = {"type": 7, "typeName": "IP", "value": ip_str}
-                    logger.debug(f"    SAN [{i}]: IP = {ip_str}")
+                    san_entry = f"IP:{str(name.value)}"
+                    logger.debug(f"    SAN [{i}]: IP = {str(name.value)}")
                 elif isinstance(name, x509.RFC822Name):
-                    san_entry = {"type": 1, "typeName": "Email", "value": name.value}
+                    san_entry = f"Email:{name.value}"
                     logger.debug(f"    SAN [{i}]: Email = {name.value}")
                 elif isinstance(name, x509.UniformResourceIdentifier):
-                    san_entry = {"type": 6, "typeName": "URI", "value": name.value}
+                    san_entry = f"URI:{name.value}"
                     logger.debug(f"    SAN [{i}]: URI = {name.value}")
                 else:
-                    san_entry = {"type": 0, "typeName": "Other", "value": str(name)}
+                    san_entry = f"Other:{str(name)}"
                     logger.debug(f"    SAN [{i}]: Other = {str(name)} (type: {type(name)})")
                 
                 san_list.append(san_entry)
             
             if san_list:
-                extensions["subjectAltName"] = san_list
+                metadata['subject_alt_name'] = san_list
                 logger.debug(f"Subject Alternative Name processed: {len(san_list)} entries")
                 
         except x509.ExtensionNotFound:
@@ -112,15 +133,14 @@ def extract_csr_details(csr: x509.CertificateSigningRequest) -> Dict[str, Any]:
         try:
             logger.debug("Checking for Basic Constraints extension in CSR...")
             bc_ext = csr.extensions.get_extension_for_oid(ExtensionOID.BASIC_CONSTRAINTS)
-            # Cast to the correct type to help with type checking
             bc_value = cast(x509.BasicConstraints, bc_ext.value)
             is_ca = bc_value.ca
             path_length = bc_value.path_length
             
             logger.debug(f"Found Basic Constraints - CA: {is_ca}, Path Length: {path_length}")
-            extensions["basicConstraints"] = {
-                "isCA": is_ca,
-                "pathLength": path_length
+            metadata['basic_constraints'] = {
+                'is_ca': is_ca,
+                'path_length': path_length
             }
         except x509.ExtensionNotFound:
             logger.debug("No Basic Constraints extension found in CSR")
@@ -131,18 +151,28 @@ def extract_csr_details(csr: x509.CertificateSigningRequest) -> Dict[str, Any]:
         try:
             logger.debug("Checking for Key Usage extension in CSR...")
             ku_ext = csr.extensions.get_extension_for_oid(ExtensionOID.KEY_USAGE)
-            # Cast to the correct type to help with type checking
             ku_value = cast(x509.KeyUsage, ku_ext.value)
             
             key_usage = {
-                "digitalSignature": ku_value.digital_signature,
-                "keyEncipherment": ku_value.key_encipherment,
-                "keyAgreement": ku_value.key_agreement,
-                "keyCertSign": ku_value.key_cert_sign,
-                "crlSign": ku_value.crl_sign
+                'digital_signature': ku_value.digital_signature,
+                'key_encipherment': ku_value.key_encipherment,
+                'key_agreement': ku_value.key_agreement,
+                'key_cert_sign': ku_value.key_cert_sign,
+                'crl_sign': ku_value.crl_sign
             }
+            
+            # Add additional key usage flags safely
+            try:
+                key_usage['content_commitment'] = ku_value.content_commitment
+                key_usage['data_encipherment'] = ku_value.data_encipherment
+                key_usage['encipher_only'] = ku_value.encipher_only
+                key_usage['decipher_only'] = ku_value.decipher_only
+            except AttributeError:
+                # Some flags may not be available in all versions
+                pass
+                
             logger.debug(f"Found Key Usage - flags: {key_usage}")
-            extensions["keyUsage"] = key_usage
+            metadata['key_usage'] = key_usage
             
         except x509.ExtensionNotFound:
             logger.debug("No Key Usage extension found in CSR")
@@ -153,7 +183,6 @@ def extract_csr_details(csr: x509.CertificateSigningRequest) -> Dict[str, Any]:
         try:
             logger.debug("Checking for Extended Key Usage extension in CSR...")
             eku_ext = csr.extensions.get_extension_for_oid(ExtensionOID.EXTENDED_KEY_USAGE)
-            # Cast to the correct type to help with type checking
             eku_value = cast(x509.ExtendedKeyUsage, eku_ext.value)
             eku_usages = []
             
@@ -180,7 +209,7 @@ def extract_csr_details(csr: x509.CertificateSigningRequest) -> Dict[str, Any]:
                 eku_usages.append(usage_name)
             
             if eku_usages:
-                extensions["extendedKeyUsage"] = eku_usages
+                metadata['extended_key_usage'] = eku_usages
                 logger.debug(f"Extended Key Usage processed: {eku_usages}")
                 
         except x509.ExtensionNotFound:
@@ -201,18 +230,8 @@ def extract_csr_details(csr: x509.CertificateSigningRequest) -> Dict[str, Any]:
                 ext.oid != ExtensionOID.KEY_USAGE and
                 ext.oid != ExtensionOID.EXTENDED_KEY_USAGE):
                 logger.debug(f"    Unhandled extension: {ext_oid}")
-
-        details["extensions"] = extensions
-        logger.debug(f"Total CSR extensions processed: {len(extensions)}")
         
-        # CSR version (if available) - Note: CSRs typically don't have a version attribute
-        # This is commented out since CSRs don't have a version attribute in the cryptography library
-        # try:
-        #     if hasattr(csr, 'version'):
-        #         details["version"] = csr.version
-        #         logger.debug(f"CSR version: {csr.version}")
-        # except Exception as version_error:
-        #     logger.debug(f"Could not extract CSR version: {version_error}")
+        logger.debug(f"Total CSR extensions processed")
         
     except Exception as e:
         logger.error(f"Error extracting CSR details: {e}")
@@ -220,6 +239,6 @@ def extract_csr_details(csr: x509.CertificateSigningRequest) -> Dict[str, Any]:
         import traceback
         logger.error(f"Full traceback: {traceback.format_exc()}")
     
-    logger.info(f"CSR extraction complete")
-    logger.debug(f"Final CSR details structure keys: {list(details.keys())}")
-    return details
+    logger.info(f"CSR metadata extraction complete")
+    logger.debug(f"Final CSR metadata structure keys: {list(metadata.keys())}")
+    return metadata

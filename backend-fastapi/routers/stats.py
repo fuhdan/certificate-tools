@@ -38,9 +38,22 @@ def get_system_stats(
     session_id: str = Depends(get_session_id)
 ):
     """Get system statistics"""
-    from certificates.storage import CertificateStorage
+    from certificates.storage.session_pki_storage import session_pki_storage
     
-    storage_summary = CertificateStorage.get_summary(session_id)
+    # Get PKI components summary instead of using non-existent method
+    components = session_pki_storage.get_session_components(session_id)
+    
+    # Create storage summary from components
+    storage_summary = {
+        "total_components": len(components),
+        "components_by_type": {},
+        "session_id": session_id
+    }
+    
+    # Count components by type
+    for comp in components:
+        comp_type = comp["type"]
+        storage_summary["components_by_type"][comp_type] = storage_summary["components_by_type"].get(comp_type, 0) + 1
     
     return {
         "success": True,

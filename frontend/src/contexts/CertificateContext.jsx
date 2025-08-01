@@ -1,5 +1,5 @@
 // frontend/src/contexts/CertificateContext.jsx
-// Updated for unified storage backend
+// Fixed to properly sort PKI components by their order field
 
 import React, { createContext, useContext, useState, useCallback } from 'react'
 import api from '../services/api'
@@ -15,7 +15,7 @@ export const useCertificates = () => {
 }
 
 export const CertificateProvider = ({ children }) => {
-  const [certificates, setCertificates] = useState([])
+  const [components, setComponents] = useState([])
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState(null)
   const [passwordState, setPasswordState] = useState({
@@ -32,104 +32,64 @@ export const CertificateProvider = ({ children }) => {
       
       const response = await api.get('/certificates')
       if (response.data.success) {
-        // Map unified certificates to expected format
-        const files = response.data.certificates.map(cert => ({
-          // Core identity
-          id: cert.id,
-          filename: cert.filename,
-          original_format: cert.original_format,
-          uploaded_at: cert.uploaded_at,
+        // Sort PKI components by their order field (backend provides the correct order)
+        const sortedComponents = (response.data.components || []).sort((a, b) => {
+          // Primary sort by order (PKI hierarchy)
+          if (a.order !== b.order) {
+            return a.order - b.order
+          }
           
-          // File metadata
-          file_size: cert.file_size,
-          file_hash: cert.file_hash,
-          content_hash: cert.content_hash,
-          
-          // Content flags
-          has_certificate: cert.has_certificate,
-          has_private_key: cert.has_private_key,
-          has_csr: cert.has_csr,
-          additional_certs_count: cert.additional_certs_count,
-          
-          // Pre-computed information
-          certificate_info: cert.certificate_info,
-          private_key_info: cert.private_key_info,
-          csr_info: cert.csr_info,
-          additional_certificates_info: cert.additional_certificates_info,
-          
-          // Validation
-          is_valid: cert.is_valid,
-          validation_errors: cert.validation_errors,
-          
-          // Legacy fields for compatibility (derived from unified model)
-          name: cert.filename,
-          success: cert.is_valid,
-          uploadedAt: cert.uploaded_at
-        }))
+          // Secondary sort by filename for consistent display
+          return (a.filename || '').localeCompare(b.filename || '')
+        })
         
-        setCertificates(files)
+        setComponents(sortedComponents)
       }
     } catch (error) {
       console.error('Error refreshing files:', error)
-      setError('Failed to refresh certificates')
+      setError('Failed to refresh PKI components')
     } finally {
       setIsLoading(false)
     }
   }, [])
 
-  const addCertificate = useCallback((certificate) => {
-    // Ensure certificate has unified model structure
-    const unifiedCert = {
-      id: certificate.id,
-      filename: certificate.filename || certificate.name,
-      original_format: certificate.original_format,
-      uploaded_at: certificate.uploaded_at || certificate.uploadedAt,
-      file_size: certificate.file_size,
-      file_hash: certificate.file_hash,
-      content_hash: certificate.content_hash,
-      has_certificate: certificate.has_certificate || false,
-      has_private_key: certificate.has_private_key || false,
-      has_csr: certificate.has_csr || false,
-      additional_certs_count: certificate.additional_certs_count || 0,
-      certificate_info: certificate.certificate_info,
-      private_key_info: certificate.private_key_info,
-      csr_info: certificate.csr_info,
-      additional_certificates_info: certificate.additional_certificates_info || [],
-      is_valid: certificate.is_valid || certificate.success || true,
-      validation_errors: certificate.validation_errors || [],
-      // Legacy compatibility
-      name: certificate.filename || certificate.name,
-      success: certificate.is_valid || certificate.success || true,
-      uploadedAt: certificate.uploaded_at || certificate.uploadedAt
-    }
-    
-    setCertificates(prev => [...prev, unifiedCert])
+  const addComponent = useCallback((component) => {
+    setComponents(prev => {
+      const newComponents = [...prev, component]
+      // Re-sort after adding new component
+      return newComponents.sort((a, b) => {
+        if (a.order !== b.order) {
+          return a.order - b.order
+        }
+        return (a.filename || '').localeCompare(b.filename || '')
+      })
+    })
   }, [])
 
-  const updateCertificate = useCallback((certificateId, updates) => {
-    setCertificates(prev => 
-      prev.map(cert => 
-        cert.id === certificateId 
-          ? { ...cert, ...updates }
-          : cert
+  const updateComponent = useCallback((componentId, updates) => {
+    setComponents(prev => 
+      prev.map(comp => 
+        comp.id === componentId 
+          ? { ...comp, ...updates }
+          : comp
       )
     )
   }, [])
 
-  const deleteCertificate = useCallback(async (certificateId) => {
+  const deleteComponent = useCallback(async (componentId) => {
     try {
-      setCertificates(prev => prev.filter(cert => cert.id !== certificateId))
-      await api.delete(`/certificates/${certificateId}`)
+      setComponents(prev => prev.filter(comp => comp.id !== componentId))
+      await api.delete(`/certificates/${componentId}`)
     } catch (error) {
-      console.error('Error deleting certificate:', error)
-      setError('Failed to delete certificate')
+      console.error('Error deleting component:', error)
+      setError('Failed to delete component')
       refreshFiles()
     }
   }, [refreshFiles])
 
   const clearAllFiles = useCallback(async () => {
     try {
-      // IMMEDIATELY reset password state
+      // Reset password state
       setPasswordState({
         needsPassword: false,
         password: '',
@@ -137,10 +97,10 @@ export const CertificateProvider = ({ children }) => {
         isAnalyzing: false
       })
       
-      setCertificates([])
+      setComponents([])
       
-      // Use the correct endpoint: POST /api/certificates/clear (requires auth)
-      await api.post('/api/certificates/clear')
+      // Clear all components
+      await api.post('/certificates/clear')
       
     } catch (error) {
       console.error('Error clearing all files:', error)
@@ -171,19 +131,72 @@ export const CertificateProvider = ({ children }) => {
     setError(null)
   }, [])
 
+  // Helper functions for PKI components
+  const getComponentsByType = useCallback((type) => {
+    return components.filter(comp => comp.type === type)
+  }, [components])
+
+  const getOrderedComponents = useCallback(() => {
+    // Components are already sorted by order
+    return components
+  }, [components])
+
+  const hasPKIBundle = useCallback(() => {
+    return components.length > 0
+  }, [components])
+
+  const getPKIStats = useCallback(() => {
+    const stats = {
+      total: components.length,
+      byType: {},
+      hasPrivateKey: false,
+      hasCertificate: false,
+      hasCSR: false,
+      hasCA: false
+    }
+
+    components.forEach(comp => {
+      // Count by type
+      stats.byType[comp.type] = (stats.byType[comp.type] || 0) + 1
+      
+      // Set flags
+      if (comp.type === 'PrivateKey') stats.hasPrivateKey = true
+      if (comp.type === 'Certificate') stats.hasCertificate = true
+      if (comp.type === 'CSR') stats.hasCSR = true
+      if (['IssuingCA', 'IntermediateCA', 'RootCA'].includes(comp.type)) stats.hasCA = true
+    })
+
+    return stats
+  }, [components])
+
   const value = {
-    certificates,
+    // Main state
+    components,
     isLoading,
     error,
     passwordState,
+    
+    // Actions
     refreshFiles,
-    addCertificate,
-    updateCertificate,
-    deleteCertificate,
+    addComponent,
+    updateComponent,
+    deleteComponent,
     clearAllFiles,
     analyzeCertificate,
     updatePasswordState,
-    clearError
+    clearError,
+    
+    // PKI helpers
+    getComponentsByType,
+    getOrderedComponents,
+    hasPKIBundle,
+    getPKIStats,
+    
+    // Legacy compatibility (map to components for existing code)
+    certificates: components,
+    addCertificate: addComponent,
+    updateCertificate: updateComponent,
+    deleteCertificate: deleteComponent
   }
 
   return (

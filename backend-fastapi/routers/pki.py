@@ -7,10 +7,10 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 
-from ..auth.models import User
-from ..auth.dependencies import get_current_active_user
-from ..middleware.session_middleware import get_session_id
-from ..certificates.storage.session_pki_storage import session_pki_storage, PKIComponentType
+from auth.models import User
+from auth.dependencies import get_current_active_user
+from middleware.session_middleware import get_session_id
+from certificates.storage.session_pki_storage import session_pki_storage, PKIComponentType
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

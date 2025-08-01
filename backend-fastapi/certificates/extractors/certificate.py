@@ -1,12 +1,10 @@
-# certificates/extractors/certificate.py
-# Certificate detail extraction functions with comprehensive debugging
-
 import datetime
 import logging
 from typing import Dict, Any, cast
 from cryptography import x509
 from cryptography.x509.oid import ExtendedKeyUsageOID, ExtensionOID
 from cryptography.hazmat.primitives.asymmetric import rsa, ec
+from cryptography.hazmat.primitives import hashes
 
 logger = logging.getLogger(__name__)
 
@@ -46,25 +44,40 @@ def extract_public_key_details(public_key) -> Dict[str, Any]:
     logger.debug(f"Public key details extracted: {details}")
     return details
 
-def extract_x509_details(cert: x509.Certificate) -> Dict[str, Any]:
-    """Extract detailed information from X.509 certificate"""
-    logger.info(f"=== CERTIFICATE EXTRACTION ===")
+def extract_certificate_metadata(cert: x509.Certificate) -> Dict[str, Any]:
+    """Extract flattened certificate metadata for direct storage"""
+    logger.info(f"=== CERTIFICATE METADATA EXTRACTION ===")
     logger.debug(f"Certificate object type: {type(cert)}")
     
-    details = {
-        "subject": {},
-        "issuer": {},
-        "validity": {},
-        "publicKey": {},
-        "signature": {},
-        "extensions": {},
-        "serialNumber": str(cert.serial_number)
+    # Calculate fingerprint
+    fingerprint_sha256 = cert.fingerprint(hashes.SHA256()).hex().upper()
+    
+    # Basic certificate info
+    is_ca = _is_ca_certificate(cert)
+    is_self_signed = cert.subject == cert.issuer
+    
+    # Initialize flattened metadata with basic info
+    metadata = {
+        'subject': cert.subject.rfc4514_string(),
+        'issuer': cert.issuer.rfc4514_string(),
+        'serial_number': str(cert.serial_number),
+        'is_ca': is_ca,
+        'is_self_signed': is_self_signed,
+        'fingerprint_sha256': fingerprint_sha256,
+        
+        # Initialize all extension fields as empty
+        'subject_alt_name': [],
+        'key_usage': {},
+        'extended_key_usage': [],
+        'basic_constraints': {},
+        'authority_key_identifier': None,
+        'subject_key_identifier': None
     }
     
-    logger.debug(f"Certificate serial number: {details['serialNumber']}")
+    logger.debug(f"Certificate serial number: {metadata['serial_number']}")
     
     try:
-        # Subject information
+        # Subject information (detailed)
         logger.debug("Extracting subject information...")
         subject_attrs = {}
         subject_count = len(cert.subject)
@@ -76,18 +89,19 @@ def extract_x509_details(cert: x509.Certificate) -> Dict[str, Any]:
             subject_attrs[attr_name] = attr_value
             logger.debug(f"  Subject attribute [{i}]: {attr_name} = {attr_value}")
         
-        details["subject"] = {
-            "commonName": subject_attrs.get("commonName", "N/A"),
-            "organization": subject_attrs.get("organizationName", "N/A"),
-            "organizationalUnit": subject_attrs.get("organizationalUnitName", "N/A"),
-            "country": subject_attrs.get("countryName", "N/A"),
-            "state": subject_attrs.get("stateOrProvinceName", "N/A"),
-            "locality": subject_attrs.get("localityName", "N/A"),
-            "emailAddress": subject_attrs.get("emailAddress", "N/A")
-        }
-        logger.debug(f"Subject details: {details['subject']}")
+        # Add detailed subject fields
+        metadata.update({
+            'subject_common_name': subject_attrs.get("commonName", "N/A"),
+            'subject_organization': subject_attrs.get("organizationName", "N/A"),
+            'subject_organizational_unit': subject_attrs.get("organizationalUnitName", "N/A"),
+            'subject_country': subject_attrs.get("countryName", "N/A"),
+            'subject_state': subject_attrs.get("stateOrProvinceName", "N/A"),
+            'subject_locality': subject_attrs.get("localityName", "N/A"),
+            'subject_email': subject_attrs.get("emailAddress", "N/A")
+        })
+        logger.debug(f"Subject details extracted")
         
-        # Issuer information
+        # Issuer information (detailed)
         logger.debug("Extracting issuer information...")
         issuer_attrs = {}
         issuer_count = len(cert.issuer)
@@ -99,18 +113,19 @@ def extract_x509_details(cert: x509.Certificate) -> Dict[str, Any]:
             issuer_attrs[attr_name] = attr_value
             logger.debug(f"  Issuer attribute [{i}]: {attr_name} = {attr_value}")
         
-        details["issuer"] = {
-            "commonName": issuer_attrs.get("commonName", "N/A"),
-            "organization": issuer_attrs.get("organizationName", "N/A"),
-            "organizationalUnit": issuer_attrs.get("organizationalUnitName", "N/A"),
-            "country": issuer_attrs.get("countryName", "N/A"),
-            "state": issuer_attrs.get("stateOrProvinceName", "N/A"),
-            "locality": issuer_attrs.get("localityName", "N/A"),
-            "emailAddress": issuer_attrs.get("emailAddress", "N/A")
-        }
-        logger.debug(f"Issuer details: {details['issuer']}")
+        # Add detailed issuer fields
+        metadata.update({
+            'issuer_common_name': issuer_attrs.get("commonName", "N/A"),
+            'issuer_organization': issuer_attrs.get("organizationName", "N/A"),
+            'issuer_organizational_unit': issuer_attrs.get("organizationalUnitName", "N/A"),
+            'issuer_country': issuer_attrs.get("countryName", "N/A"),
+            'issuer_state': issuer_attrs.get("stateOrProvinceName", "N/A"),
+            'issuer_locality': issuer_attrs.get("localityName", "N/A"),
+            'issuer_email': issuer_attrs.get("emailAddress", "N/A")
+        })
+        logger.debug(f"Issuer details extracted")
         
-        # Validity information
+        # Validity information (detailed)
         logger.debug("Extracting validity information...")
         not_before = cert.not_valid_before_utc.isoformat()
         not_after = cert.not_valid_after_utc.isoformat()
@@ -123,33 +138,43 @@ def extract_x509_details(cert: x509.Certificate) -> Dict[str, Any]:
         logger.debug(f"  Is expired: {is_expired}")
         logger.debug(f"  Days until expiry: {days_until_expiry}")
         
-        details["validity"] = {
-            "notBefore": not_before,
-            "notAfter": not_after,
-            "isExpired": is_expired,
-            "daysUntilExpiry": days_until_expiry
-        }
+        metadata.update({
+            'not_valid_before': not_before,
+            'not_valid_after': not_after,
+            'is_expired': is_expired,
+            'days_until_expiry': days_until_expiry
+        })
         
-        # Public key information
+        # Public key information (detailed)
         logger.debug("Extracting public key information...")
         public_key = cert.public_key()
-        details["publicKey"] = extract_public_key_details(public_key)
+        public_key_details = extract_public_key_details(public_key)
         
-        # Signature algorithm
+        metadata.update({
+            'public_key_algorithm': public_key_details.get("algorithm", "Unknown"),
+            'public_key_size': public_key_details.get("keySize", 0)
+        })
+        
+        # Add algorithm-specific details
+        if public_key_details.get("algorithm") == "RSA":
+            metadata['public_key_exponent'] = public_key_details.get("exponent", "N/A")
+        elif public_key_details.get("algorithm") == "EC":
+            metadata['public_key_curve'] = public_key_details.get("curve", "N/A")
+        
+        # Signature algorithm (detailed)
         logger.debug("Extracting signature algorithm...")
         sig_alg_name = cert.signature_algorithm_oid._name
         sig_alg_oid = cert.signature_algorithm_oid.dotted_string
         logger.debug(f"  Signature algorithm: {sig_alg_name}")
         logger.debug(f"  Signature algorithm OID: {sig_alg_oid}")
         
-        details["signature"] = {
-            "algorithm": sig_alg_name,
-            "algorithmOid": sig_alg_oid
-        }
+        metadata.update({
+            'signature_algorithm': sig_alg_name,
+            'signature_algorithm_oid': sig_alg_oid
+        })
         
-        # Extensions
+        # Extensions (comprehensive extraction)
         logger.debug("Extracting certificate extensions...")
-        extensions = {}
         extension_count = len(cert.extensions)
         logger.debug(f"Found {extension_count} extensions")
         
@@ -163,19 +188,22 @@ def extract_x509_details(cert: x509.Certificate) -> Dict[str, Any]:
                 san_list = []
                 for j, name in enumerate(ext.value):
                     if isinstance(name, x509.DNSName):
-                        san_entry = {"type": 2, "typeName": "DNS", "value": name.value}
+                        san_entry = f"DNS:{name.value}"
                         logger.debug(f"      SAN [{j}]: DNS = {name.value}")
                     elif isinstance(name, x509.IPAddress):
-                        san_entry = {"type": 7, "typeName": "IP", "value": str(name.value)}
+                        san_entry = f"IP:{str(name.value)}"
                         logger.debug(f"      SAN [{j}]: IP = {str(name.value)}")
                     elif isinstance(name, x509.RFC822Name):
-                        san_entry = {"type": 1, "typeName": "Email", "value": name.value}
+                        san_entry = f"Email:{name.value}"
                         logger.debug(f"      SAN [{j}]: Email = {name.value}")
+                    elif isinstance(name, x509.UniformResourceIdentifier):
+                        san_entry = f"URI:{name.value}"
+                        logger.debug(f"      SAN [{j}]: URI = {name.value}")
                     else:
-                        san_entry = {"type": 0, "typeName": "Other", "value": str(name)}
+                        san_entry = f"Other:{str(name)}"
                         logger.debug(f"      SAN [{j}]: Other = {str(name)}")
                     san_list.append(san_entry)
-                extensions["subjectAltName"] = san_list
+                metadata['subject_alt_name'] = san_list
                 logger.debug(f"    Total SAN entries: {len(san_list)}")
                 
             elif isinstance(ext.value, x509.BasicConstraints):
@@ -184,34 +212,42 @@ def extract_x509_details(cert: x509.Certificate) -> Dict[str, Any]:
                 path_length = ext.value.path_length
                 logger.debug(f"      CA: {is_ca}")
                 logger.debug(f"      Path length: {path_length}")
-                extensions["basicConstraints"] = {
-                    "isCA": is_ca,
-                    "pathLength": path_length
+                metadata['basic_constraints'] = {
+                    'is_ca': is_ca,
+                    'path_length': path_length
                 }
                 
             elif isinstance(ext.value, x509.KeyUsage):
                 logger.debug("    Processing Key Usage extension")
                 key_usage = {
-                    "digitalSignature": ext.value.digital_signature,
-                    "keyEncipherment": ext.value.key_encipherment,
-                    "keyAgreement": ext.value.key_agreement,
-                    "keyCertSign": ext.value.key_cert_sign,
-                    "crlSign": ext.value.crl_sign
+                    'digital_signature': ext.value.digital_signature,
+                    'key_encipherment': ext.value.key_encipherment,
+                    'key_agreement': ext.value.key_agreement,
+                    'key_cert_sign': ext.value.key_cert_sign,
+                    'crl_sign': ext.value.crl_sign
                 }
+                
+                # Add additional key usage flags safely
+                try:
+                    key_usage['content_commitment'] = ext.value.content_commitment
+                    key_usage['data_encipherment'] = ext.value.data_encipherment
+                    key_usage['encipher_only'] = ext.value.encipher_only
+                    key_usage['decipher_only'] = ext.value.decipher_only
+                except AttributeError:
+                    # Some flags may not be available in all versions
+                    pass
+                    
                 logger.debug(f"      Key usage flags: {key_usage}")
-                extensions["keyUsage"] = key_usage
+                metadata['key_usage'] = key_usage
 
         # Extended Key Usage (separate try block as it's optional)
         try:
             logger.debug("Checking for Extended Key Usage extension...")
-            # Fix: Get the extension object first, then access its value
             eku_ext = cert.extensions.get_extension_for_oid(ExtensionOID.EXTENDED_KEY_USAGE)
-            # Use cast to tell type checker the correct type
             eku_value = cast(x509.ExtendedKeyUsage, eku_ext.value)
             eku_usages = []
             logger.debug(f"Found Extended Key Usage extension")
             
-            # Use a counter instead of enumerate to avoid type issues
             j = 0
             for usage_oid in eku_value:
                 if usage_oid == ExtendedKeyUsageOID.SERVER_AUTH:
@@ -239,7 +275,7 @@ def extract_x509_details(cert: x509.Certificate) -> Dict[str, Any]:
                 eku_usages.append(usage_name)
                 j += 1
             
-            extensions["extendedKeyUsage"] = eku_usages
+            metadata['extended_key_usage'] = eku_usages
             logger.debug(f"Extended Key Usage processed: {eku_usages}")
             
         except x509.ExtensionNotFound:
@@ -247,8 +283,46 @@ def extract_x509_details(cert: x509.Certificate) -> Dict[str, Any]:
         except Exception as eku_error:
             logger.error(f"Error processing Extended Key Usage: {eku_error}")
         
-        details["extensions"] = extensions
-        logger.debug(f"Total extensions processed: {len(extensions)}")
+        # Authority Key Identifier
+        try:
+            logger.debug("Checking for Authority Key Identifier extension...")
+            aki_ext = cert.extensions.get_extension_for_oid(ExtensionOID.AUTHORITY_KEY_IDENTIFIER)
+            aki_value = cast(x509.AuthorityKeyIdentifier, aki_ext.value)
+            
+            aki_data = {}
+            if aki_value.key_identifier:
+                aki_data['key_identifier'] = aki_value.key_identifier.hex()
+                logger.debug(f"    AKI Key Identifier: {aki_data['key_identifier']}")
+            if aki_value.authority_cert_issuer:
+                aki_data['authority_cert_issuer'] = str(aki_value.authority_cert_issuer)
+                logger.debug(f"    AKI Authority Cert Issuer: {aki_data['authority_cert_issuer']}")
+            if aki_value.authority_cert_serial_number:
+                aki_data['authority_cert_serial_number'] = str(aki_value.authority_cert_serial_number)
+                logger.debug(f"    AKI Authority Cert Serial: {aki_data['authority_cert_serial_number']}")
+            
+            metadata['authority_key_identifier'] = aki_data
+            logger.debug(f"Authority Key Identifier processed")
+            
+        except x509.ExtensionNotFound:
+            logger.debug("No Authority Key Identifier extension found")
+        except Exception as aki_error:
+            logger.error(f"Error processing Authority Key Identifier: {aki_error}")
+        
+        # Subject Key Identifier
+        try:
+            logger.debug("Checking for Subject Key Identifier extension...")
+            ski_ext = cert.extensions.get_extension_for_oid(ExtensionOID.SUBJECT_KEY_IDENTIFIER)
+            ski_value = cast(x509.SubjectKeyIdentifier, ski_ext.value)
+            
+            metadata['subject_key_identifier'] = ski_value.digest.hex()
+            logger.debug(f"Subject Key Identifier: {metadata['subject_key_identifier']}")
+            
+        except x509.ExtensionNotFound:
+            logger.debug("No Subject Key Identifier extension found")
+        except Exception as ski_error:
+            logger.error(f"Error processing Subject Key Identifier: {ski_error}")
+        
+        logger.debug(f"Total extensions processed")
         
     except Exception as e:
         logger.error(f"Error extracting certificate details: {e}")
@@ -256,20 +330,18 @@ def extract_x509_details(cert: x509.Certificate) -> Dict[str, Any]:
         import traceback
         logger.error(f"Full traceback: {traceback.format_exc()}")
     
-    logger.info(f"Certificate extraction complete")
-    logger.debug(f"Final details structure keys: {list(details.keys())}")
-    return details
+    logger.info(f"Certificate metadata extraction complete")
+    logger.debug(f"Final metadata structure keys: {list(metadata.keys())}")
+    return metadata
 
-def is_ca_certificate(cert: x509.Certificate) -> bool:
+def _is_ca_certificate(cert: x509.Certificate) -> bool:
     """Check if certificate is a CA certificate"""
     logger.debug("=== CA CERTIFICATE CHECK ===")
     
     try:
-        # Fix: Get the extension object first, then access its value
         basic_constraints_ext = cert.extensions.get_extension_for_oid(
             ExtensionOID.BASIC_CONSTRAINTS
         )
-        # Use cast to tell type checker the correct type
         basic_constraints = cast(x509.BasicConstraints, basic_constraints_ext.value)
         is_ca = basic_constraints.ca
         logger.debug(f"Basic Constraints found - CA: {is_ca}")
@@ -280,3 +352,7 @@ def is_ca_certificate(cert: x509.Certificate) -> bool:
     except Exception as e:
         logger.error(f"Error checking CA status: {e}")
         return False
+
+def is_ca_certificate(cert: x509.Certificate) -> bool:
+    """Check if certificate is a CA certificate (public interface)"""
+    return _is_ca_certificate(cert)

@@ -6,9 +6,9 @@ from typing import Dict, Any, Optional
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 
-from ..extractors.certificate import extract_x509_details, is_ca_certificate
-from ..extractors.csr import extract_csr_details
-from ..extractors.private_key import extract_private_key_details
+from ..extractors.certificate import extract_certificate_metadata, is_ca_certificate
+from ..extractors.csr import extract_csr_metadata
+from ..extractors.private_key import extract_private_key_metadata
 from ..utils.hashing import (
     generate_certificate_hash, generate_csr_hash,
     generate_normalized_private_key_hash, generate_file_hash
@@ -31,9 +31,9 @@ def analyze_der_certificate(file_content: bytes) -> Dict[str, Any]:
         content_hash = generate_certificate_hash(cert)
         logger.debug(f"DER certificate content hash: {content_hash[:16]}...")
         
-        logger.debug("Extracting DER certificate details...")
-        details = extract_x509_details(cert)
-        logger.debug(f"DER certificate details extracted, keys: {list(details.keys())}")
+        logger.debug("Extracting DER certificate metadata...")
+        metadata = extract_certificate_metadata(cert)
+        logger.debug(f"DER certificate metadata extracted, keys: {list(metadata.keys())}")
         
         # Determine certificate type
         is_ca = is_ca_certificate(cert)
@@ -44,7 +44,7 @@ def analyze_der_certificate(file_content: bytes) -> Dict[str, Any]:
             "type": cert_type,
             "isValid": True,
             "content_hash": content_hash,
-            "details": details
+            "details": metadata
         }
         
         logger.info(f"DER certificate analysis complete: {cert_type}")
@@ -70,15 +70,15 @@ def analyze_der_csr(file_content: bytes) -> Dict[str, Any]:
         content_hash = generate_csr_hash(csr)
         logger.debug(f"DER CSR content hash: {content_hash[:16]}...")
         
-        logger.debug("Extracting DER CSR details...")
-        details = extract_csr_details(csr)
-        logger.debug(f"DER CSR details extracted, keys: {list(details.keys())}")
+        logger.debug("Extracting DER CSR metadata...")
+        metadata = extract_csr_metadata(csr)
+        logger.debug(f"DER CSR metadata extracted, keys: {list(metadata.keys())}")
         
         result = {
             "type": "CSR",
             "isValid": True,
             "content_hash": content_hash,
-            "details": details
+            "details": metadata
         }
         
         logger.info(f"DER CSR analysis complete")
@@ -107,18 +107,18 @@ def analyze_der_private_key(file_content: bytes, password: Optional[str]) -> Dic
         normalized_hash = generate_normalized_private_key_hash(private_key)
         logger.debug(f"DER private key normalized hash: {normalized_hash[:16]}...")
         
-        logger.debug("Extracting DER private key details...")
-        details = extract_private_key_details(private_key)
-        logger.debug(f"DER private key details: {details}")
+        logger.debug("Extracting DER private key metadata...")
+        metadata = extract_private_key_metadata(private_key, is_encrypted=False)
+        logger.debug(f"DER private key metadata: {metadata}")
         
         result = {
             "type": "Private Key",
             "isValid": True,
             "content_hash": normalized_hash,
-            "details": details
+            "details": metadata
         }
         
-        logger.info(f"DER private key analysis complete: {details.get('algorithm', 'Unknown')} {details.get('keySize', 0)} bits")
+        logger.info(f"DER private key analysis complete: {metadata.get('algorithm', 'Unknown')} {metadata.get('key_size', 0)} bits")
         return result
         
     except Exception as key_error:
@@ -138,9 +138,9 @@ def analyze_der_private_key(file_content: bytes, password: Optional[str]) -> Dic
                     "content_hash": generate_file_hash(file_content),
                     "details": {
                         "algorithm": "Encrypted (password required)",
-                        "keySize": 0,
+                        "key_size": 0,
                         "curve": "N/A",
-                        "encrypted": True,
+                        "is_encrypted": True,
                         "format": "DER/PKCS8"
                     }
                 }
@@ -152,23 +152,23 @@ def analyze_der_private_key(file_content: bytes, password: Optional[str]) -> Dic
                     logger.debug(f"Password encoded to {len(password_bytes)} bytes")
                     
                     private_key = serialization.load_der_private_key(file_content, password=password_bytes)
-                    logger.info("Successfully decrypted DER private key with password: : {details.get('algorithm', 'Unknown')} {details.get('keySize', 0)} bits")
+                    logger.info("Successfully decrypted DER private key with password")
                     
                     # Success with password
                     normalized_hash = generate_normalized_private_key_hash(private_key)
                     logger.debug(f"Decrypted DER private key hash: {normalized_hash[:16]}...")
                     
-                    details = extract_private_key_details(private_key)
-                    logger.debug(f"Decrypted DER private key details: {details}")
+                    metadata = extract_private_key_metadata(private_key, is_encrypted=True)
+                    logger.debug(f"Decrypted DER private key metadata: {metadata}")
                     
                     result = {
                         "type": "Private Key",
                         "isValid": True,
                         "content_hash": normalized_hash,
-                        "details": details
+                        "details": metadata
                     }
                     
-                    logger.debug(f"Encrypted DER private key analysis complete: {details.get('algorithm', 'Unknown')} {details.get('keySize', 0)} bits")
+                    logger.info(f"Encrypted DER private key analysis complete: {metadata.get('algorithm', 'Unknown')} {metadata.get('key_size', 0)} bits")
                     return result
                     
                 except Exception as pwd_error:
@@ -181,9 +181,9 @@ def analyze_der_private_key(file_content: bytes, password: Optional[str]) -> Dic
                         "content_hash": generate_file_hash(file_content),
                         "details": {
                             "algorithm": "Encrypted (incorrect password)",
-                            "keySize": 0,
+                            "key_size": 0,
                             "curve": "N/A",
-                            "encrypted": True,
+                            "is_encrypted": True,
                             "format": "DER/PKCS8"
                         }
                     }

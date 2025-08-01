@@ -1,5 +1,5 @@
 /* frontend/src/components/CertificateDetails/CertificateDetails.module.css */
-/* Updated for bundle expansion and validation in header */
+/* Updated for new session-based PKI storage and swapped header layout */
 
 .container {
   background: white;
@@ -66,7 +66,7 @@
   color: #1f2937;
   font-size: 1.125rem;
   font-weight: 600;
-  word-break: break-all;
+  word-break: break-word;
 }
 
 .subtitle {
@@ -77,14 +77,23 @@
   flex-wrap: wrap;
 }
 
-.type {
+/* NEW: Filename styling (was previously .type) */
+.filename {
   color: #374151;
   font-weight: 500;
+  font-family: monospace;
+  background: rgba(99, 102, 241, 0.1);
+  padding: 0.125rem 0.375rem;
+  border-radius: 4px;
+  border: 1px solid rgba(99, 102, 241, 0.2);
+  word-break: break-all;
 }
 
-.format {
+/* NEW: Upload time styling */
+.uploadTime {
   color: #6b7280;
   font-weight: 400;
+  font-size: 0.8rem;
 }
 
 .bundleSource {
@@ -250,6 +259,41 @@
   font-family: monospace;
 }
 
+/* NEW: PEM Content Section */
+.pemSection {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 1rem;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.showContentButton {
+  align-self: flex-start;
+  padding: 0.5rem 1rem;
+  background: #3b82f6;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.showContentButton:hover {
+  background: #2563eb;
+}
+
+.securityNote {
+  margin: 0;
+  color: #64748b;
+  font-style: italic;
+  font-size: 0.875rem;
+}
+
 /* Responsive design */
 @media (max-width: 768px) {
   .header {
@@ -274,7 +318,8 @@
     gap: 0.25rem;
   }
 
-  .contentFlags {
-    flex-direction: column;
+  .filename {
+    word-break: break-all;
+    max-width: 100%;
   }
 }

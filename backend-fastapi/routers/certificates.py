@@ -7,11 +7,11 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from fastapi.responses import JSONResponse
 
-from ..auth.models import User
-from ..auth.dependencies import get_current_active_user
-from ..middleware.session_middleware import get_session_id
-from ..certificates.analyzer import analyze_uploaded_certificate
-from ..certificates.storage.session_pki_storage import session_pki_storage, PKIComponentType
+from auth.models import User
+from auth.dependencies import get_current_active_user
+from middleware.session_middleware import get_session_id
+from certificates.analyzer import analyze_uploaded_certificate
+from certificates.storage.session_pki_storage import session_pki_storage, PKIComponentType
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -58,8 +58,23 @@ async def analyze_certificate(
         )
         
     except ValueError as ve:
-        logger.error(f"[{session_id}] Validation error for {filename}: {ve}")
-        raise HTTPException(status_code=400, detail=str(ve))
+        # Check if it's a password-related error
+        error_message = str(ve)
+        if "password required" in error_message.lower() or "password" in error_message.lower():
+            logger.info(f"[{session_id}] Password required for {filename}")
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "success": False,
+                    "requiresPassword": True,
+                    "message": error_message,
+                    "filename": filename,
+                    "session_id": session_id
+                }
+            )
+        else:
+            logger.error(f"[{session_id}] Validation error for {filename}: {ve}")
+            raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
         logger.error(f"[{session_id}] Analysis error for {filename}: {e}")
         raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
@@ -71,7 +86,7 @@ def get_certificates(session_id: str = Depends(get_session_id)):
     logger.info(f"[{session_id}] Retrieving PKI components")
     
     try:
-        # Get components from session storage
+        # Get components from session storage - return as-is
         components = session_pki_storage.get_session_components(session_id)
         
         logger.info(f"[{session_id}] Retrieved {len(components)} PKI components")
@@ -79,7 +94,7 @@ def get_certificates(session_id: str = Depends(get_session_id)):
         return {
             "success": True,
             "session_id": session_id,
-            "components": components,
+            "components": components,  # Return PKI components directly
             "count": len(components),
             "timestamp": datetime.datetime.now().isoformat()
         }

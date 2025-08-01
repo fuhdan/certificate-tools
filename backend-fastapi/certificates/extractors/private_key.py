@@ -1,45 +1,55 @@
-# certificates/extractors/private_key.py
-# Private key detail extraction functions with comprehensive debugging
-
 import logging
 from typing import Dict, Any
 from cryptography.hazmat.primitives.asymmetric import rsa, ec, dsa, ed25519, ed448
+from cryptography.hazmat.primitives import serialization, hashes
+import hashlib
 
 logger = logging.getLogger(__name__)
 
 logger.debug("extractors/private_key.py initialized")
 
-def extract_private_key_details(private_key) -> Dict[str, Any]:
-    """Extract details from private key"""
-    logger.info(f"=== PRIVATE KEY EXTRACTION ===")
+def extract_private_key_metadata(private_key, is_encrypted: bool = False) -> Dict[str, Any]:
+    """Extract flattened private key metadata for direct storage"""
+    logger.info(f"=== PRIVATE KEY METADATA EXTRACTION ===")
     logger.debug(f"Private key object type: {type(private_key)}")
     logger.debug(f"Private key class name: {type(private_key).__name__}")
     
-    details = {
-        "algorithm": "Unknown",
-        "keySize": 0,
-        "curve": "N/A",
-        "exponent": "N/A"
+    # Calculate public key fingerprint
+    public_key = private_key.public_key()
+    public_bytes = public_key.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+    public_key_fingerprint = hashlib.sha256(public_bytes).hexdigest().upper()
+    
+    # Initialize flattened metadata with basic info
+    metadata = {
+        'algorithm': type(private_key).__name__.replace('PrivateKey', ''),
+        'key_size': getattr(private_key, 'key_size', None),
+        'is_encrypted': is_encrypted,
+        'public_key_fingerprint': public_key_fingerprint
     }
     
     try:
         if isinstance(private_key, rsa.RSAPrivateKey):
             logger.debug("Processing RSA private key...")
-            details["algorithm"] = "RSA"
-            details["keySize"] = private_key.key_size
+            metadata['algorithm'] = "RSA"
+            metadata['key_size'] = private_key.key_size
             
             # Extract RSA-specific details
             try:
                 public_numbers = private_key.public_key().public_numbers()
-                details["exponent"] = str(public_numbers.e)
+                metadata['rsa_exponent'] = str(public_numbers.e)
                 
                 # Additional RSA debugging info
-                logger.debug(f"RSA key size: {details['keySize']} bits")
-                logger.debug(f"RSA public exponent: {details['exponent']}")
+                logger.debug(f"RSA key size: {metadata['key_size']} bits")
+                logger.debug(f"RSA public exponent: {metadata['rsa_exponent']}")
                 
                 # Log RSA key parameters (be careful with private info)
                 private_numbers = private_key.private_numbers()
-                logger.debug(f"RSA modulus bit length: {private_numbers.public_numbers.n.bit_length()}")
+                modulus_bits = private_numbers.public_numbers.n.bit_length()
+                metadata['rsa_modulus_bits'] = modulus_bits
+                logger.debug(f"RSA modulus bit length: {modulus_bits}")
                 logger.debug(f"RSA has p: {private_numbers.p is not None}")
                 logger.debug(f"RSA has q: {private_numbers.q is not None}")
                 
@@ -48,31 +58,32 @@ def extract_private_key_details(private_key) -> Dict[str, Any]:
                 
         elif isinstance(private_key, ec.EllipticCurvePrivateKey):
             logger.debug("Processing EC private key...")
-            details["algorithm"] = "EC"
+            metadata['algorithm'] = "EC"
             
             try:
                 curve = private_key.curve
-                details["curve"] = curve.name
-                details["keySize"] = curve.key_size
+                metadata['ec_curve'] = curve.name
+                metadata['key_size'] = curve.key_size
                 
-                logger.debug(f"EC curve name: {details['curve']}")
-                logger.debug(f"EC key size: {details['keySize']} bits")
+                logger.debug(f"EC curve name: {metadata['ec_curve']}")
+                logger.debug(f"EC key size: {metadata['key_size']} bits")
                 
                 # Additional EC debugging info
                 logger.debug(f"EC curve class: {type(curve).__name__}")
-                # Fix: Avoid direct oid access, use getattr with default
                 curve_oid = getattr(curve, 'oid', None)
                 if curve_oid is not None:
-                    logger.debug(f"EC curve OID: {curve_oid.dotted_string}")
+                    metadata['ec_curve_oid'] = curve_oid.dotted_string
+                    logger.debug(f"EC curve OID: {metadata['ec_curve_oid']}")
                 else:
                     logger.debug("EC curve has no OID attribute or OID is None")
                 
-                # Fix: Avoid direct private_value access, use getattr with safe handling
+                # Extract coordinate info safely
                 try:
                     private_value_method = getattr(private_key, 'private_value', None)
                     if private_value_method is not None:
                         private_value = private_value_method()
-                        logger.debug(f"EC private value bit length: {private_value.bit_length()}")
+                        metadata['ec_private_value_bits'] = private_value.bit_length()
+                        logger.debug(f"EC private value bit length: {metadata['ec_private_value_bits']}")
                     else:
                         logger.debug("EC private key does not have private_value method")
                 except Exception as pv_error:
@@ -80,46 +91,53 @@ def extract_private_key_details(private_key) -> Dict[str, Any]:
                 
                 public_key = private_key.public_key()
                 public_numbers = public_key.public_numbers()
-                logger.debug(f"EC public key X coordinate bit length: {public_numbers.x.bit_length()}")
-                logger.debug(f"EC public key Y coordinate bit length: {public_numbers.y.bit_length()}")
+                metadata['ec_x_coord_bits'] = public_numbers.x.bit_length()
+                metadata['ec_y_coord_bits'] = public_numbers.y.bit_length()
+                logger.debug(f"EC public key X coordinate bit length: {metadata['ec_x_coord_bits']}")
+                logger.debug(f"EC public key Y coordinate bit length: {metadata['ec_y_coord_bits']}")
                 
             except Exception as ec_error:
                 logger.error(f"Error extracting EC details: {ec_error}")
                 
         elif isinstance(private_key, dsa.DSAPrivateKey):
             logger.debug("Processing DSA private key...")
-            details["algorithm"] = "DSA"
+            metadata['algorithm'] = "DSA"
             
             try:
-                details["keySize"] = private_key.key_size
-                logger.debug(f"DSA key size: {details['keySize']} bits")
+                metadata['key_size'] = private_key.key_size
+                logger.debug(f"DSA key size: {metadata['key_size']} bits")
                 
                 # Additional DSA debugging info
                 private_numbers = private_key.private_numbers()
                 public_numbers = private_numbers.public_numbers
                 parameter_numbers = public_numbers.parameter_numbers
                 
-                logger.debug(f"DSA p bit length: {parameter_numbers.p.bit_length()}")
-                logger.debug(f"DSA q bit length: {parameter_numbers.q.bit_length()}")
-                logger.debug(f"DSA g bit length: {parameter_numbers.g.bit_length()}")
-                logger.debug(f"DSA y bit length: {public_numbers.y.bit_length()}")
+                metadata['dsa_p_bits'] = parameter_numbers.p.bit_length()
+                metadata['dsa_q_bits'] = parameter_numbers.q.bit_length()
+                metadata['dsa_g_bits'] = parameter_numbers.g.bit_length()
+                metadata['dsa_y_bits'] = public_numbers.y.bit_length()
+                
+                logger.debug(f"DSA p bit length: {metadata['dsa_p_bits']}")
+                logger.debug(f"DSA q bit length: {metadata['dsa_q_bits']}")
+                logger.debug(f"DSA g bit length: {metadata['dsa_g_bits']}")
+                logger.debug(f"DSA y bit length: {metadata['dsa_y_bits']}")
                 
             except Exception as dsa_error:
                 logger.error(f"Error extracting DSA details: {dsa_error}")
                 
         elif isinstance(private_key, ed25519.Ed25519PrivateKey):
             logger.debug("Processing Ed25519 private key...")
-            details["algorithm"] = "Ed25519"
-            details["keySize"] = 256  # Ed25519 is always 256 bits
-            details["curve"] = "Ed25519"
+            metadata['algorithm'] = "Ed25519"
+            metadata['key_size'] = 256  # Ed25519 is always 256 bits
+            metadata['curve'] = "Ed25519"
             
             logger.debug("Ed25519 key processed (fixed 256-bit size)")
             
         elif isinstance(private_key, ed448.Ed448PrivateKey):
             logger.debug("Processing Ed448 private key...")
-            details["algorithm"] = "Ed448"
-            details["keySize"] = 448  # Ed448 is always 448 bits
-            details["curve"] = "Ed448"
+            metadata['algorithm'] = "Ed448"
+            metadata['key_size'] = 448  # Ed448 is always 448 bits
+            metadata['curve'] = "Ed448"
             
             logger.debug("Ed448 key processed (fixed 448-bit size)")
             
@@ -130,15 +148,15 @@ def extract_private_key_details(private_key) -> Dict[str, Any]:
             # Try to extract basic info even for unknown types
             if hasattr(private_key, 'key_size'):
                 try:
-                    details["keySize"] = private_key.key_size
-                    logger.debug(f"Unknown key type - extracted key size: {details['keySize']}")
+                    metadata['key_size'] = private_key.key_size
+                    logger.debug(f"Unknown key type - extracted key size: {metadata['key_size']}")
                 except Exception as size_error:
                     logger.error(f"Could not extract key size from unknown type: {size_error}")
             
             if hasattr(private_key, 'algorithm'):
                 try:
-                    details["algorithm"] = str(private_key.algorithm)
-                    logger.debug(f"Unknown key type - extracted algorithm: {details['algorithm']}")
+                    metadata['algorithm'] = str(private_key.algorithm)
+                    logger.debug(f"Unknown key type - extracted algorithm: {metadata['algorithm']}")
                 except Exception as alg_error:
                     logger.error(f"Could not extract algorithm from unknown type: {alg_error}")
                     
@@ -150,12 +168,12 @@ def extract_private_key_details(private_key) -> Dict[str, Any]:
         logger.error(f"Full traceback: {traceback.format_exc()}")
         
         # Set error details
-        details["error"] = str(e)
-        details["algorithm"] = f"Error: {type(private_key).__name__}"
+        metadata['error'] = str(e)
+        metadata['algorithm'] = f"Error: {type(private_key).__name__}"
     
-    logger.info(f"Private key extraction complete")
-    logger.debug(f"Final private key details: {details}")
-    return details
+    logger.info(f"Private key metadata extraction complete")
+    logger.debug(f"Final private key metadata: {metadata}")
+    return metadata
 
 def validate_private_key_consistency(private_key) -> Dict[str, Any]:
     """Validate private key internal consistency and log debugging info"""
@@ -183,12 +201,10 @@ def validate_private_key_consistency(private_key) -> Dict[str, Any]:
         if isinstance(private_key, (rsa.RSAPrivateKey, ec.EllipticCurvePrivateKey, dsa.DSAPrivateKey)):
             try:
                 # Try to create a signature (don't actually sign, just check capability)
-                from cryptography.hazmat.primitives import hashes
+                test_data = b"test_signature_capability"
                 
                 if isinstance(private_key, rsa.RSAPrivateKey):
                     # Test RSA signing capability
-                    test_data = b"test_signature_capability"
-                    # Fix: Add the missing algorithm parameter for RSA signing
                     from cryptography.hazmat.primitives.asymmetric import padding
                     signature = private_key.sign(test_data, padding.PSS(
                         mgf=padding.MGF1(hashes.SHA256()),
@@ -199,14 +215,12 @@ def validate_private_key_consistency(private_key) -> Dict[str, Any]:
                     
                 elif isinstance(private_key, ec.EllipticCurvePrivateKey):
                     # Test EC signing capability  
-                    test_data = b"test_signature_capability"
                     signature = private_key.sign(test_data, ec.ECDSA(hashes.SHA256()))
                     validation["canSign"] = True
                     logger.debug(f"EC signing test successful, signature type: {type(signature)}")
                     
                 elif isinstance(private_key, dsa.DSAPrivateKey):
                     # Test DSA signing capability
-                    test_data = b"test_signature_capability"
                     signature = private_key.sign(test_data, hashes.SHA256())
                     validation["canSign"] = True
                     logger.debug(f"DSA signing test successful, signature type: {type(signature)}")

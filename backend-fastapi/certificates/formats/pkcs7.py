@@ -12,7 +12,7 @@ from cryptography import x509
 from cryptography.x509 import oid
 from cryptography.hazmat.primitives import serialization
 
-from ..extractors.certificate import extract_x509_details
+from ..extractors.certificate import extract_certificate_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -217,16 +217,16 @@ def _process_certificate_chain(certificates: List, source_format: str) -> Dict[s
         content_hash = generate_certificate_hash(main_cert)
         logger.debug(f"Main certificate hash: {content_hash[:16]}...")
         
-        # Extract certificate details
-        logger.debug("Extracting main certificate details...")
-        details = extract_x509_details(main_cert)
-        logger.debug(f"Main certificate details extracted, keys: {list(details.keys())}")
+        # Extract certificate metadata using new extractor
+        logger.debug("Extracting main certificate metadata...")
+        metadata = extract_certificate_metadata(main_cert)
+        logger.debug(f"Main certificate metadata extracted, keys: {list(metadata.keys())}")
         
         result = {
             "type": cert_type,
             "isValid": True,
             "content_hash": content_hash,
-            "details": details
+            "details": metadata
         }
         
         # Add additional certificates if any
@@ -250,7 +250,7 @@ def _process_certificate_chain(certificates: List, source_format: str) -> Dict[s
                         logger.debug(f"Error extracting additional cert [{i}] info: {add_cert_info_err}")
                     
                     cert_hash = generate_certificate_hash(cert)
-                    cert_details = extract_x509_details(cert)
+                    cert_metadata = extract_certificate_metadata(cert)
                     cert_type_additional = _determine_certificate_type(cert)
                     
                     logger.debug(f"Additional cert [{i}] hash: {cert_hash[:16]}...")
@@ -262,7 +262,7 @@ def _process_certificate_chain(certificates: List, source_format: str) -> Dict[s
                         "isValid": True,
                         "size": 0,
                         "content_hash": cert_hash,
-                        "details": cert_details
+                        "details": cert_metadata
                     })
                     logger.debug(f"Extracted additional certificate {i} from PKCS7")
                 except Exception as cert_err:
@@ -368,7 +368,6 @@ def _extract_certificates_from_der(der_data: bytes) -> List:
         total = len(certificates)
         logger.info(f"PKCS7 extraction complete: {', '.join(parts)} ({total} total)")
 
-        # logger.info(f"Certificate extraction complete: found {len(certificates)} certificates")
         return certificates
         
     except Exception as e:

@@ -6,8 +6,8 @@ import json
 from typing import Dict, Any, Optional, List
 from cryptography.hazmat.primitives.serialization import pkcs12
 
-from ..extractors.certificate import extract_x509_details
-from ..extractors.private_key import extract_private_key_details
+from ..extractors.certificate import extract_certificate_metadata
+from ..extractors.private_key import extract_private_key_metadata
 from ..utils.hashing import (
     generate_certificate_hash, generate_pkcs12_content_hash, 
     generate_normalized_private_key_hash, generate_file_hash
@@ -74,9 +74,9 @@ def analyze_pkcs12(file_content: bytes, password: Optional[str]) -> Dict[str, An
                     "content_hash": generate_file_hash(file_content),
                     "details": {
                         "algorithm": "PKCS12 (password required)",
-                        "keySize": 0,
+                        "key_size": 0,
                         "curve": "N/A",
-                        "encrypted": True,
+                        "is_encrypted": True,
                         "requiresPassword": True
                     }
                 }
@@ -112,9 +112,9 @@ def analyze_pkcs12(file_content: bytes, password: Optional[str]) -> Dict[str, An
                         "content_hash": generate_file_hash(file_content),
                         "details": {
                             "algorithm": "PKCS12 (incorrect password)",
-                            "keySize": 0,
+                            "key_size": 0,
                             "curve": "N/A",
-                            "encrypted": True,
+                            "is_encrypted": True,
                             "requiresPassword": True
                         }
                     }
@@ -200,18 +200,18 @@ def _process_pkcs12_success(cert, private_key, additional_certs) -> Dict[str, An
         content_hash = generate_pkcs12_content_hash(cert, private_key, additional_certs)
         logger.debug(f"PKCS12 no main certificate, using combined hash: {content_hash[:16]}...")
     
-    # Extract certificate details if available
-    details = None
+    # Extract certificate metadata if available using new extractor
+    metadata = None
     if cert:
-        logger.debug("Extracting main certificate details...")
-        details = extract_x509_details(cert)
-        logger.debug("Certificate details:\n%s", json.dumps(details, indent=2, default=str))
+        logger.debug("Extracting main certificate metadata...")
+        metadata = extract_certificate_metadata(cert)
+        logger.debug("Certificate metadata:\n%s", json.dumps(metadata, indent=2, default=str))
     else:
-        logger.debug("No main certificate to extract details from")
+        logger.debug("No main certificate to extract metadata from")
     
     # Determine main certificate type using standardization
     if use_standardized and get_consistent_types and cert:
-        type_info = get_consistent_types("PKCS12 Certificate", details)
+        type_info = get_consistent_types("PKCS12 Certificate", metadata)
         main_type = type_info["type"]  # Will be "Certificate"
         logger.debug(f"Main certificate standardized type: {main_type}")
     else:
@@ -223,7 +223,7 @@ def _process_pkcs12_success(cert, private_key, additional_certs) -> Dict[str, An
         "type": main_type,  # Now uses standardized type ("Certificate")
         "isValid": True,
         "content_hash": content_hash,
-        "details": details
+        "details": metadata
     }
     
     # Extract additional components for separate storage
@@ -235,14 +235,14 @@ def _process_pkcs12_success(cert, private_key, additional_certs) -> Dict[str, An
         try:
             # Generate normalized hash for the private key (same as standalone private keys)
             key_hash = generate_normalized_private_key_hash(private_key)
-            key_details = extract_private_key_details(private_key)
+            key_metadata = extract_private_key_metadata(private_key, is_encrypted=False)
             
             logger.debug(f"Private key hash: {key_hash[:16]}...")
-            logger.debug(f"Private key details: {key_details}")
+            logger.debug(f"Private key metadata: {key_metadata}")
             
             # Use standardized type if available
             if use_standardized and get_consistent_types:
-                type_info = get_consistent_types("Private Key", key_details)
+                type_info = get_consistent_types("Private Key", key_metadata)
                 item_type = type_info["type"]  # Will be "PrivateKey"
                 logger.debug(f"Private key standardized type: {item_type}")
             else:
@@ -255,7 +255,7 @@ def _process_pkcs12_success(cert, private_key, additional_certs) -> Dict[str, An
                 "isValid": True,
                 "size": 0,  # Size is part of the PKCS12 container
                 "content_hash": key_hash,  # Use consistent hash based on key material
-                "details": key_details
+                "details": key_metadata
             })
             logger.debug(f"Extracted private key from PKCS12 with type: {item_type}")
         except Exception as key_err:
@@ -271,13 +271,13 @@ def _process_pkcs12_success(cert, private_key, additional_certs) -> Dict[str, An
                 try:
                     logger.debug(f"Processing additional certificate [{i}]...")
                     cert_hash = generate_certificate_hash(additional_cert)
-                    cert_details = extract_x509_details(additional_cert)
+                    cert_metadata = extract_certificate_metadata(additional_cert)
                     
                     logger.debug(f"Additional cert [{i}] hash: {cert_hash[:16]}...")
                     
                     # Use standardized type if available
                     if use_standardized and get_consistent_types:
-                        type_info = get_consistent_types("Certificate", cert_details)
+                        type_info = get_consistent_types("Certificate", cert_metadata)
                         item_type = type_info["type"]  # Will be "Certificate", "IssuingCA", "IntermediateCA", or "RootCA"
                         logger.debug(f"Additional cert [{i}] standardized type: {item_type}")
                     else:
@@ -290,7 +290,7 @@ def _process_pkcs12_success(cert, private_key, additional_certs) -> Dict[str, An
                         "isValid": True,
                         "size": 0,  # Size is part of the PKCS12 container
                         "content_hash": cert_hash,
-                        "details": cert_details
+                        "details": cert_metadata
                     })
                     logger.debug(f"Extracted additional certificate {i} from PKCS12 with type: {item_type}")
                 except Exception as cert_err:

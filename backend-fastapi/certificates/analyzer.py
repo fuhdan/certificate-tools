@@ -9,6 +9,9 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization, hashes
+from .extractors.certificate import extract_certificate_metadata
+from .extractors.csr import extract_csr_metadata
+from .extractors.private_key import extract_private_key_metadata
 
 from .storage.session_pki_storage import (
     session_pki_storage, 
@@ -206,14 +209,7 @@ def _process_pkcs7_der(file_content: bytes, filename: str, session_id: str) -> L
                 cert_type = PKIComponentType.CERTIFICATE
             
             # Create metadata
-            cert_metadata = {
-                'subject': cert.subject.rfc4514_string(),
-                'issuer': cert.issuer.rfc4514_string(),
-                'serial_number': str(cert.serial_number),
-                'is_ca': is_ca,
-                'is_self_signed': is_self_signed,
-                'fingerprint_sha256': _get_cert_fingerprint(cert)
-            }
+            cert_metadata = extract_certificate_metadata(cert)
             
             # Store component
             component_id = session_pki_storage.add_component(
@@ -260,14 +256,7 @@ def _process_pem_file(file_content: bytes, filename: str, session_id: str) -> Li
         else:
             cert_type = PKIComponentType.CERTIFICATE
         
-        cert_metadata = {
-            'subject': cert.subject.rfc4514_string(),
-            'issuer': cert.issuer.rfc4514_string(),
-            'serial_number': str(cert.serial_number),
-            'is_ca': is_ca,
-            'is_self_signed': is_self_signed,
-            'fingerprint_sha256': _get_cert_fingerprint(cert)
-        }
+        cert_metadata = extract_certificate_metadata(cert)
         
         component_id = session_pki_storage.add_component(
             session_id, cert_type, cert_pem, filename, cert_metadata
@@ -286,12 +275,7 @@ def _process_pem_file(file_content: bytes, filename: str, session_id: str) -> Li
         for key_pem in key_matches:
             private_key = serialization.load_pem_private_key(key_pem.encode(), password=None)
             
-            key_metadata = {
-                'algorithm': type(private_key).__name__.replace('PrivateKey', ''),
-                'key_size': getattr(private_key, 'key_size', None),
-                'is_encrypted': False,
-                'public_key_fingerprint': _get_public_key_fingerprint(private_key)
-            }
+            key_metadata = extract_private_key_metadata(private_key, is_encrypted=False)
             
             component_id = session_pki_storage.add_component(
                 session_id, PKIComponentType.PRIVATE_KEY, key_pem, filename, key_metadata
@@ -305,13 +289,7 @@ def _process_pem_file(file_content: bytes, filename: str, session_id: str) -> Li
     for csr_pem in csr_matches:
         csr = x509.load_pem_x509_csr(csr_pem.encode())
         
-        csr_metadata = {
-            'subject': csr.subject.rfc4514_string(),
-            'signature_algorithm': csr.signature_algorithm_oid._name,
-            'public_key_algorithm': type(csr.public_key()).__name__.replace('PublicKey', ''),
-            'public_key_size': getattr(csr.public_key(), 'key_size', None),
-            'public_key_fingerprint': _get_public_key_fingerprint_from_csr(csr)
-        }
+        csr_metadata = extract_csr_metadata(csr)
         
         component_id = session_pki_storage.add_component(
             session_id, PKIComponentType.CSR, csr_pem, filename, csr_metadata
@@ -324,10 +302,11 @@ def _process_pem_file(file_content: bytes, filename: str, session_id: str) -> Li
     return component_ids
 
 def _process_der_file(file_content: bytes, filename: str, session_id: str) -> List[str]:
-    """Process DER file (single certificate or key)"""
+    """Process DER file (certificate, private key, or CSR)"""
     logger.debug("Processing DER file")
     
     component_ids = []
+    errors = []
     
     # Try to load as certificate first
     try:
@@ -345,14 +324,7 @@ def _process_der_file(file_content: bytes, filename: str, session_id: str) -> Li
         else:
             cert_type = PKIComponentType.CERTIFICATE
         
-        cert_metadata = {
-            'subject': cert.subject.rfc4514_string(),
-            'issuer': cert.issuer.rfc4514_string(),
-            'serial_number': str(cert.serial_number),
-            'is_ca': is_ca,
-            'is_self_signed': is_self_signed,
-            'fingerprint_sha256': _get_cert_fingerprint(cert)
-        }
+        cert_metadata = extract_certificate_metadata(cert)
         
         component_id = session_pki_storage.add_component(
             session_id, cert_type, cert_pem, filename, cert_metadata
@@ -361,10 +333,29 @@ def _process_der_file(file_content: bytes, filename: str, session_id: str) -> Li
         
         return component_ids
         
-    except Exception:
-        pass
+    except Exception as cert_error:
+        logger.debug(f"DER certificate parsing failed: {cert_error}")
+        errors.append(f"Certificate: {cert_error}")
     
-    # Try to load as private key
+    # Try to load as CSR second
+    try:
+        csr = x509.load_der_x509_csr(file_content)
+        csr_pem = csr.public_bytes(serialization.Encoding.PEM).decode('utf-8')
+        
+        csr_metadata = extract_csr_metadata(csr)
+        
+        component_id = session_pki_storage.add_component(
+            session_id, PKIComponentType.CSR, csr_pem, filename, csr_metadata
+        )
+        component_ids.append(component_id)
+        
+        return component_ids
+        
+    except Exception as csr_error:
+        logger.debug(f"DER CSR parsing failed: {csr_error}")
+        errors.append(f"CSR: {csr_error}")
+    
+    # Try to load as private key third
     try:
         private_key = serialization.load_der_private_key(file_content, password=None)
         key_pem = private_key.private_bytes(
@@ -373,12 +364,7 @@ def _process_der_file(file_content: bytes, filename: str, session_id: str) -> Li
             encryption_algorithm=serialization.NoEncryption()
         ).decode('utf-8')
         
-        key_metadata = {
-            'algorithm': type(private_key).__name__.replace('PrivateKey', ''),
-            'key_size': getattr(private_key, 'key_size', None),
-            'is_encrypted': False,
-            'public_key_fingerprint': _get_public_key_fingerprint(private_key)
-        }
+        key_metadata = extract_private_key_metadata(private_key, is_encrypted=False)
         
         component_id = session_pki_storage.add_component(
             session_id, PKIComponentType.PRIVATE_KEY, key_pem, filename, key_metadata
@@ -387,10 +373,13 @@ def _process_der_file(file_content: bytes, filename: str, session_id: str) -> Li
         
         return component_ids
         
-    except Exception:
-        pass
-    
-    raise ValueError("DER file does not contain a valid certificate or private key")
+    except Exception as key_error:
+        logger.debug(f"DER private key parsing failed: {key_error}")
+        errors.append(f"Private Key: {key_error}")
+
+    # If all parsing attempts failed, provide detailed error
+    error_details = "; ".join(errors)
+    raise ValueError(f"DER file does not contain a valid certificate, CSR, or private key. Errors: {error_details}")
 
 def _process_csr_file(file_content: bytes, filename: str, session_id: str) -> List[str]:
     """Process CSR file"""
@@ -409,13 +398,7 @@ def _process_csr_file(file_content: bytes, filename: str, session_id: str) -> Li
         except Exception as e:
             raise ValueError(f"Failed to load CSR: {e}")
     
-    csr_metadata = {
-        'subject': csr.subject.rfc4514_string(),
-        'signature_algorithm': csr.signature_algorithm_oid._name,
-        'public_key_algorithm': type(csr.public_key()).__name__.replace('PublicKey', ''),
-        'public_key_size': getattr(csr.public_key(), 'key_size', None),
-        'public_key_fingerprint': _get_public_key_fingerprint_from_csr(csr)
-    }
+    csr_metadata = extract_csr_metadata(csr)
     
     component_id = session_pki_storage.add_component(
         session_id, PKIComponentType.CSR, csr_pem, filename, csr_metadata

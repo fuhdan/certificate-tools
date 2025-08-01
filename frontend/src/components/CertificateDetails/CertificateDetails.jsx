@@ -1,208 +1,200 @@
 // frontend/src/components/CertificateDetails/CertificateDetails.jsx
-// Updated: Validation in header, no separate validation section, always expanded
+// Updated to work with new session-based PKI storage format and swap header layout
 
 import React, { useState } from 'react'
 import { 
-  Award, Key, FileText, User, Building, Calendar, 
-  Shield, Hash, Eye, EyeOff, ChevronDown, ChevronUp,
-  CheckCircle, XCircle, AlertTriangle, Info
+  ChevronDown, 
+  ChevronUp, 
+  Shield, 
+  Key, 
+  FileText, 
+  Award,
+  CheckCircle,
+  XCircle,
+  AlertTriangle,
+  Info,
+  Globe
 } from 'lucide-react'
 import styles from './CertificateDetails.module.css'
 
 const CertificateDetails = ({ certificate }) => {
-  const [isExpanded, setIsExpanded] = useState(true) // Default to expanded
-  const [showSensitiveData, setShowSensitiveData] = useState(false)
+  const [isExpanded, setIsExpanded] = useState(false)
 
-  if (!certificate) {
-    return null
-  }
-
-  const getTypeIcon = () => {
-    if (certificate.has_certificate) {
-      return certificate.certificate_info?.is_ca ? 
-        <Building size={20} className={styles.caIcon} /> : 
-        <Award size={20} className={styles.certIcon} />
-    } else if (certificate.has_private_key) {
-      return <Key size={20} className={styles.keyIcon} />
-    } else if (certificate.has_csr) {
-      return <FileText size={20} className={styles.csrIcon} />
-    }
-    return <Shield size={20} className={styles.unknownIcon} />
-  }
-
-  const getTypeLabel = () => {
-    if (certificate.has_certificate) {
-      if (certificate.certificate_info?.is_ca) {
-        return certificate.certificate_info.is_self_signed ? 'Root CA' : 'Intermediate CA'
-      }
-      return 'End Entity Certificate'
-    } else if (certificate.has_private_key && !certificate.has_certificate) {
-      return 'Private Key'
-    } else if (certificate.has_csr) {
-      return 'Certificate Request (CSR)'
-    }
-    return 'Unknown Type'
-  }
-
-  const getStatusColor = () => {
-    return certificate.is_valid ? '#10b981' : '#ef4444'
-  }
-
-  const formatDate = (dateString) => {
-    if (!dateString) return 'N/A'
+  // Format timestamp for display
+  const formatDate = (timestamp) => {
+    if (!timestamp) return 'Unknown'
     try {
-      return new Date(dateString).toLocaleString()
-    } catch {
-      return dateString
+      return new Date(timestamp).toLocaleString()
+    } catch (error) {
+      return timestamp
     }
   }
 
-  const renderCertificateInfo = () => {
-    if (!certificate.certificate_info) return null
+  // Get type-specific icon
+  const getTypeIcon = () => {
+    const iconProps = { size: 24 }
+    
+    switch (certificate.type) {
+      case 'PrivateKey':
+        return <Key {...iconProps} className={styles.keyIcon} />
+      case 'CSR':
+        return <FileText {...iconProps} className={styles.csrIcon} />
+      case 'Certificate':
+        return <Shield {...iconProps} className={styles.certIcon} />
+      case 'IssuingCA':
+      case 'IntermediateCA': 
+      case 'RootCA':
+        return <Award {...iconProps} className={styles.caIcon} />
+      default:
+        return <FileText {...iconProps} className={styles.unknownIcon} />
+    }
+  }
 
-    const info = certificate.certificate_info
+  // Get user-friendly type label
+  const getTypeLabel = () => {
+    const typeLabels = {
+      'PrivateKey': 'Private Key',
+      'CSR': 'Certificate Signing Request',
+      'Certificate': 'End Entity Certificate',
+      'IssuingCA': 'Issuing CA Certificate',
+      'IntermediateCA': 'Intermediate CA Certificate',
+      'RootCA': 'Root CA Certificate'
+    }
+    return typeLabels[certificate.type] || certificate.type
+  }
+
+  // Get validation status color
+  const getStatusColor = () => {
+    return '#10b981' // Green for valid (simplified since we don't have validation info in new format)
+  }
+
+  // Render certificate-specific information
+  const renderCertificateInfo = () => {
+    if (certificate.type !== 'Certificate' && 
+        certificate.type !== 'IssuingCA' && 
+        certificate.type !== 'IntermediateCA' && 
+        certificate.type !== 'RootCA') {
+      return null
+    }
+
+    const metadata = certificate.metadata || {}
 
     return (
-      <>
-        <div className={styles.section}>
-          <h4><Award size={16} /> Certificate Information</h4>
-          <div className={styles.grid}>
-            <div className={styles.field}>
-              <span className={styles.label}>Subject:</span>
-              <span className={styles.value}>{info.subject}</span>
-            </div>
-            <div className={styles.field}>
-              <span className={styles.label}>Issuer:</span>
-              <span className={styles.value}>{info.issuer}</span>
-            </div>
-            <div className={styles.field}>
-              <span className={styles.label}>Serial Number:</span>
-              <span className={styles.value} style={{ fontFamily: 'monospace' }}>
-                {info.serial_number}
-              </span>
-            </div>
-            <div className={styles.field}>
-              <span className={styles.label}>Valid From:</span>
-              <span className={styles.value}>{formatDate(info.not_before)}</span>
-            </div>
-            <div className={styles.field}>
-              <span className={styles.label}>Valid Until:</span>
-              <span className={styles.value}>{formatDate(info.not_after)}</span>
-            </div>
-            <div className={styles.field}>
-              <span className={styles.label}>Certificate Authority:</span>
-              <span className={`${styles.value} ${info.is_ca ? styles.yes : styles.no}`}>
-                {info.is_ca ? 'Yes' : 'No'}
-              </span>
-            </div>
-            <div className={styles.field}>
-              <span className={styles.label}>Self-Signed:</span>
-              <span className={`${styles.value} ${info.is_self_signed ? styles.yes : styles.no}`}>
-                {info.is_self_signed ? 'Yes' : 'No'}
-              </span>
-            </div>
-            <div className={styles.field}>
-              <span className={styles.label}>Version:</span>
-              <span className={styles.value}>v{info.version}</span>
-            </div>
-            <div className={styles.field}>
-              <span className={styles.label}>Public Key Algorithm:</span>
-              <span className={styles.value}>{info.public_key_algorithm}</span>
-            </div>
-            {info.public_key_size && (
-              <div className={styles.field}>
-                <span className={styles.label}>Key Size:</span>
-                <span className={styles.value}>{info.public_key_size} bits</span>
-              </div>
-            )}
-            <div className={styles.field}>
-              <span className={styles.label}>Signature Algorithm:</span>
-              <span className={styles.value}>{info.signature_algorithm}</span>
-            </div>
+      <div className={styles.section}>
+        <h4><Shield size={16} /> Certificate Information</h4>
+        <div className={styles.grid}>
+          <div className={styles.field}>
+            <span className={styles.label}>Subject:</span>
+            <span className={styles.value}>{metadata.subject || 'N/A'}</span>
+          </div>
+          <div className={styles.field}>
+            <span className={styles.label}>Issuer:</span>
+            <span className={styles.value}>{metadata.issuer || 'N/A'}</span>
+          </div>
+          <div className={styles.field}>
+            <span className={styles.label}>Serial Number:</span>
+            <span className={styles.value} style={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>
+              {metadata.serial_number || 'N/A'}
+            </span>
+          </div>
+          <div className={styles.field}>
+            <span className={styles.label}>Valid From:</span>
+            <span className={styles.value}>
+              {metadata.not_valid_before ? formatDate(metadata.not_valid_before) : 'N/A'}
+            </span>
+          </div>
+          <div className={styles.field}>
+            <span className={styles.label}>Valid To:</span>
+            <span className={styles.value}>
+              {metadata.not_valid_after ? formatDate(metadata.not_valid_after) : 'N/A'}
+            </span>
+          </div>
+          <div className={styles.field}>
+            <span className={styles.label}>Signature Algorithm:</span>
+            <span className={styles.value}>{metadata.signature_algorithm || 'N/A'}</span>
+          </div>
+          <div className={styles.field}>
+            <span className={styles.label}>Public Key Algorithm:</span>
+            <span className={styles.value}>{metadata.public_key_algorithm || 'N/A'}</span>
+          </div>
+          <div className={styles.field}>
+            <span className={styles.label}>Public Key Size:</span>
+            <span className={styles.value}>
+              {metadata.public_key_size ? `${metadata.public_key_size} bits` : 'N/A'}
+            </span>
+          </div>
+          <div className={styles.field}>
+            <span className={styles.label}>Is CA:</span>
+            <span className={`${styles.value} ${metadata.is_ca ? styles.yes : styles.no}`}>
+              {metadata.is_ca ? 'Yes' : 'No'}
+            </span>
+          </div>
+          <div className={styles.field}>
+            <span className={styles.label}>Self Signed:</span>
+            <span className={`${styles.value} ${metadata.is_self_signed ? styles.yes : styles.no}`}>
+              {metadata.is_self_signed ? 'Yes' : 'No'}
+            </span>
+          </div>
+          <div className={styles.field}>
+            <span className={styles.label}>SHA256 Fingerprint:</span>
+            <span className={styles.value} style={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>
+              {metadata.fingerprint_sha256 || 'N/A'}
+            </span>
           </div>
         </div>
 
-        {/* Fingerprints */}
-        <div className={styles.section}>
-          <h4><Hash size={16} /> Fingerprints</h4>
-          <div className={styles.grid}>
-            <div className={styles.field}>
-              <span className={styles.label}>SHA-256:</span>
-              <span className={styles.value} style={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>
-                {info.fingerprint_sha256}
-              </span>
+        {/* Subject Alternative Names (if available) */}
+        {metadata.subject_alt_name && metadata.subject_alt_name.length > 0 && (
+          <div className={styles.extensionItem}>
+            <h5>Subject Alternative Names</h5>
+            <div className={styles.sanList}>
+              {metadata.subject_alt_name.map((san, index) => (
+                <span key={index} className={styles.sanItem}>
+                  {san}
+                </span>
+              ))}
             </div>
-            <div className={styles.field}>
-              <span className={styles.label}>SHA-1:</span>
-              <span className={styles.value} style={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>
-                {info.fingerprint_sha1}
-              </span>
-            </div>
-            <div className={styles.field}>
-              <span className={styles.label}>Public Key:</span>
-              <span className={styles.value} style={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>
-                {info.public_key_fingerprint}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* Extensions */}
-        {info.extensions && Object.keys(info.extensions).length > 0 && (
-          <div className={styles.section}>
-            <h4><Shield size={16} /> Extensions</h4>
-            
-            {/* Subject Alternative Names */}
-            {info.extensions.subject_alt_name && info.extensions.subject_alt_name.length > 0 && (
-              <div className={styles.extensionItem}>
-                <h5>Subject Alternative Names</h5>
-                <div className={styles.sanList}>
-                  {info.extensions.subject_alt_name.map((san, index) => (
-                    <span key={index} className={styles.sanItem}>
-                      {san}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Key Usage */}
-            {info.extensions.key_usage && info.extensions.key_usage.length > 0 && (
-              <div className={styles.extensionItem}>
-                <h5>Key Usage</h5>
-                <div className={styles.usageList}>
-                  {info.extensions.key_usage.map((usage, index) => (
-                    <span key={index} className={styles.usageItem}>
-                      {usage}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Extended Key Usage */}
-            {info.extensions.extended_key_usage && info.extensions.extended_key_usage.length > 0 && (
-              <div className={styles.extensionItem}>
-                <h5>Extended Key Usage</h5>
-                <div className={styles.usageList}>
-                  {info.extensions.extended_key_usage.map((usage, index) => (
-                    <span key={index} className={styles.usageItem}>
-                      {usage}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
         )}
-      </>
+
+        {/* Key Usage (if available) */}
+        {metadata.key_usage && (
+          <div className={styles.extensionItem}>
+            <h5>Key Usage</h5>
+            <div className={styles.usageList}>
+              {Object.entries(metadata.key_usage)
+                .filter(([key, value]) => value === true)
+                .map(([key, value]) => (
+                  <span key={key} className={styles.usageItem}>
+                    {key.replace(/([A-Z])/g, ' $1').toLowerCase().replace(/^\w/, c => c.toUpperCase())}
+                  </span>
+                ))}
+            </div>
+          </div>
+        )}
+
+        {/* Extended Key Usage (if available) */}
+        {metadata.extended_key_usage && metadata.extended_key_usage.length > 0 && (
+          <div className={styles.extensionItem}>
+            <h5>Extended Key Usage</h5>
+            <div className={styles.usageList}>
+              {metadata.extended_key_usage.map((usage, index) => (
+                <span key={index} className={styles.usageItem}>
+                  {usage}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
     )
   }
 
+  // Render private key information
   const renderPrivateKeyInfo = () => {
-    if (!certificate.private_key_info) return null
+    if (certificate.type !== 'PrivateKey') return null
 
-    const info = certificate.private_key_info
+    const metadata = certificate.metadata || {}
 
     return (
       <div className={styles.section}>
@@ -210,24 +202,22 @@ const CertificateDetails = ({ certificate }) => {
         <div className={styles.grid}>
           <div className={styles.field}>
             <span className={styles.label}>Algorithm:</span>
-            <span className={styles.value}>{info.algorithm}</span>
+            <span className={styles.value}>{metadata.algorithm || 'N/A'}</span>
           </div>
-          {info.key_size && (
-            <div className={styles.field}>
-              <span className={styles.label}>Key Size:</span>
-              <span className={styles.value}>{info.key_size} bits</span>
-            </div>
-          )}
           <div className={styles.field}>
-            <span className={styles.label}>Encrypted:</span>
-            <span className={`${styles.value} ${info.is_encrypted ? styles.yes : styles.no}`}>
-              {info.is_encrypted ? 'Yes' : 'No'}
+            <span className={styles.label}>Key Size:</span>
+            <span className={styles.value}>{metadata.key_size ? `${metadata.key_size} bits` : 'N/A'}</span>
+          </div>
+          <div className={styles.field}>
+            <span className={styles.label}>Is Encrypted:</span>
+            <span className={`${styles.value} ${metadata.is_encrypted ? styles.yes : styles.no}`}>
+              {metadata.is_encrypted ? 'Yes' : 'No'}
             </span>
           </div>
           <div className={styles.field}>
             <span className={styles.label}>Public Key Fingerprint:</span>
-            <span className={styles.value} style={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>
-              {info.public_key_fingerprint}
+            <span className={styles.value} style={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>
+              {metadata.public_key_fingerprint || 'N/A'}
             </span>
           </div>
         </div>
@@ -235,179 +225,121 @@ const CertificateDetails = ({ certificate }) => {
     )
   }
 
+  // Render CSR information
   const renderCSRInfo = () => {
-    if (!certificate.csr_info) return null
+    if (certificate.type !== 'CSR') return null
 
-    const info = certificate.csr_info
+    const metadata = certificate.metadata || {}
 
     return (
-      <>
-        <div className={styles.section}>
-          <h4><FileText size={16} /> Certificate Request Information</h4>
-          <div className={styles.grid}>
-            <div className={styles.field}>
-              <span className={styles.label}>Subject:</span>
-              <span className={styles.value}>{info.subject}</span>
-            </div>
-            <div className={styles.field}>
-              <span className={styles.label}>Version:</span>
-              <span className={styles.value}>v{info.version}</span>
-            </div>
-            <div className={styles.field}>
-              <span className={styles.label}>Public Key Algorithm:</span>
-              <span className={styles.value}>{info.public_key_algorithm}</span>
-            </div>
-            {info.public_key_size && (
-              <div className={styles.field}>
-                <span className={styles.label}>Key Size:</span>
-                <span className={styles.value}>{info.public_key_size} bits</span>
-              </div>
-            )}
-            <div className={styles.field}>
-              <span className={styles.label}>Signature Algorithm:</span>
-              <span className={styles.value}>{info.signature_algorithm}</span>
-            </div>
-            <div className={styles.field}>
-              <span className={styles.label}>Public Key Fingerprint:</span>
-              <span className={styles.value} style={{ fontFamily: 'monospace' }}>
-                {info.public_key_fingerprint}
-              </span>
-            </div>
+      <div className={styles.section}>
+        <h4><FileText size={16} /> CSR Information</h4>
+        <div className={styles.grid}>
+          <div className={styles.field}>
+            <span className={styles.label}>Subject:</span>
+            <span className={styles.value}>{metadata.subject || 'N/A'}</span>
+          </div>
+          <div className={styles.field}>
+            <span className={styles.label}>Signature Algorithm:</span>
+            <span className={styles.value}>{metadata.signature_algorithm || 'N/A'}</span>
+          </div>
+          <div className={styles.field}>
+            <span className={styles.label}>Public Key Algorithm:</span>
+            <span className={styles.value}>{metadata.public_key_algorithm || 'N/A'}</span>
+          </div>
+          <div className={styles.field}>
+            <span className={styles.label}>Public Key Size:</span>
+            <span className={styles.value}>{metadata.public_key_size ? `${metadata.public_key_size} bits` : 'N/A'}</span>
+          </div>
+          <div className={styles.field}>
+            <span className={styles.label}>Public Key Fingerprint:</span>
+            <span className={styles.value} style={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>
+              {metadata.public_key_fingerprint || 'N/A'}
+            </span>
           </div>
         </div>
-
-        {/* CSR Extensions */}
-        {info.extensions && Object.keys(info.extensions).length > 0 && (
-          <div className={styles.section}>
-            <h4><Shield size={16} /> Requested Extensions</h4>
-            
-            {/* Subject Alternative Names */}
-            {info.extensions.subject_alt_name && info.extensions.subject_alt_name.length > 0 && (
-              <div className={styles.extensionItem}>
-                <h5>Requested Subject Alternative Names</h5>
-                <div className={styles.sanList}>
-                  {info.extensions.subject_alt_name.map((san, index) => (
-                    <span key={index} className={styles.sanItem}>
-                      {san}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-      </>
+      </div>
     )
   }
 
   return (
     <div className={styles.container}>
-      {/* Header with validation status */}
+      {/* Header with validation status - TYPE FIRST, THEN FILENAME */}
       <div className={styles.header} onClick={() => setIsExpanded(!isExpanded)}>
         <div className={styles.titleSection}>
           {getTypeIcon()}
           <div className={styles.titleInfo}>
-            <h3 className={styles.title}>{certificate.filename}</h3>
+            {/* SWAPPED: Type comes first, then filename */}
+            <h3 className={styles.title}>{getTypeLabel()}</h3>
             <div className={styles.subtitle}>
-              <span className={styles.type}>{getTypeLabel()}</span>
-              <span className={styles.format}>({certificate.original_format})</span>
-              {/* Bundle source indicator */}
-              {certificate.is_bundle_component && (
-                <span className={styles.bundleSource}>from {certificate.bundle_source}</span>
-              )}
+              <span className={styles.filename}>{certificate.filename}</span>
+              <span className={styles.uploadTime}>
+                {formatDate(certificate.uploaded_at)}
+              </span>
             </div>
           </div>
         </div>
         <div className={styles.controls}>
-          {/* Validation status in header */}
+          {/* Validation status in header - simplified for new format */}
           <div className={styles.statusBadge} style={{ borderColor: getStatusColor() }}>
-            {certificate.is_valid ? (
-              <CheckCircle size={14} style={{ color: getStatusColor() }} />
-            ) : (
-              <XCircle size={14} style={{ color: getStatusColor() }} />
-            )}
-            <span style={{ color: getStatusColor() }}>
-              {certificate.is_valid ? 'Valid' : 'Invalid'}
-            </span>
+            <CheckCircle size={14} style={{ color: getStatusColor() }} />
+            <span style={{ color: getStatusColor() }}>Valid</span>
           </div>
-          
-          {/* Show validation errors count in header if any */}
-          {certificate.validation_errors && certificate.validation_errors.length > 0 && (
-            <div className={styles.errorCount}>
-              <AlertTriangle size={14} style={{ color: '#ef4444' }} />
-              <span style={{ color: '#ef4444', fontSize: '0.75rem' }}>
-                {certificate.validation_errors.length} error{certificate.validation_errors.length > 1 ? 's' : ''}
-              </span>
-            </div>
-          )}
           
           {isExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
         </div>
       </div>
 
-      {/* Content - always show if expanded */}
+      {/* Content - show when expanded */}
       {isExpanded && (
         <div className={styles.content}>
-          {/* File Information - Always expanded */}
+          {/* Type-specific information - MOVED TO TOP */}
+          {renderCertificateInfo()}
+          {renderPrivateKeyInfo()}
+          {renderCSRInfo()}
+
+          {/* Component Information - MOVED TO BOTTOM */}
           <div className={styles.section}>
-            <h4><Info size={16} /> File Information</h4>
+            <h4><Info size={16} /> Component Information</h4>
             <div className={styles.grid}>
+              <div className={styles.field}>
+                <span className={styles.label}>Component ID:</span>
+                <span className={styles.value} style={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>
+                  {certificate.id}
+                </span>
+              </div>
+              <div className={styles.field}>
+                <span className={styles.label}>Type:</span>
+                <span className={styles.value}>{getTypeLabel()}</span>
+              </div>
               <div className={styles.field}>
                 <span className={styles.label}>Filename:</span>
                 <span className={styles.value}>{certificate.filename}</span>
               </div>
               <div className={styles.field}>
-                <span className={styles.label}>Original Format:</span>
-                <span className={styles.value}>{certificate.original_format}</span>
-              </div>
-              <div className={styles.field}>
-                <span className={styles.label}>File Size:</span>
-                <span className={styles.value}>{certificate.file_size} bytes</span>
-              </div>
-              <div className={styles.field}>
-                <span className={styles.label}>Uploaded:</span>
+                <span className={styles.label}>Upload Time:</span>
                 <span className={styles.value}>{formatDate(certificate.uploaded_at)}</span>
               </div>
-              <div className={styles.field}>
-                <span className={styles.label}>Used Password:</span>
-                <span className={`${styles.value} ${certificate.used_password ? styles.yes : styles.no}`}>
-                  {certificate.used_password ? 'Yes' : 'No'}
-                </span>
-              </div>
             </div>
           </div>
 
-          {/* Content Summary - Always expanded */}
+          {/* PEM Content Section */}
           <div className={styles.section}>
-            <h4><Shield size={16} /> Content Summary</h4>
-            <div className={styles.contentSummary}>
-              <p>This section will show user-friendly validation information in a future update.</p>
+            <h4><FileText size={16} /> PEM Content</h4>
+            <div className={styles.pemSection}>
+              <button 
+                className={styles.showContentButton}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  // TODO: Implement content display toggle
+                  alert('Content display coming soon')
+                }}
+              >
+                Show Content
+              </button>
+              <p className={styles.securityNote}>Content hidden for security</p>
             </div>
           </div>
-
-          {/* Show validation errors if any - in content area */}
-          {certificate.validation_errors && certificate.validation_errors.length > 0 && (
-            <div className={styles.section}>
-              <h4><AlertTriangle size={16} /> Validation Errors</h4>
-              <div className={styles.errorList}>
-                {certificate.validation_errors.map((error, index) => (
-                  <div key={index} className={styles.errorItem}>
-                    <AlertTriangle size={14} />
-                    <span>{error}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Certificate Information */}
-          {renderCertificateInfo()}
-
-          {/* Private Key Information */}
-          {renderPrivateKeyInfo()}
-
-          {/* CSR Information */}
-          {renderCSRInfo()}
         </div>
       )}
     </div>

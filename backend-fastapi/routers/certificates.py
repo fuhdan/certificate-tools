@@ -18,18 +18,18 @@ router = APIRouter()
 
 @router.post("/analyze-certificate", tags=["certificates"])
 async def analyze_certificate(
-    certificate: UploadFile = File(...),
+    file: UploadFile = File(...),
     password: str = Form(None),
     session_id: str = Depends(get_session_id)
 ):
     """Analyze uploaded certificate and store components in session"""
     
-    filename = certificate.filename or "unknown_file"
+    filename = file.filename or "unknown_file"
     logger.info(f"[{session_id}] Analyzing certificate: {filename}")
     
     try:
         # Read file content
-        file_content = await certificate.read()
+        file_content = await file.read()
         
         if len(file_content) == 0:
             raise HTTPException(status_code=400, detail="Empty file uploaded")
@@ -203,13 +203,13 @@ def clear_all_components(
 async def replace_component(
     component_id: str,
     current_user: Annotated[User, Depends(get_current_active_user)],
-    certificate: UploadFile = File(...),
+    file: UploadFile = File(...),
     password: str = Form(None),
     session_id: str = Depends(get_session_id)
 ):
     """Replace an existing PKI component with a new one"""
     
-    filename = certificate.filename or "unknown_file"
+    filename = file.filename or "unknown_file"
     logger.info(f"[{session_id}] User '{current_user.username}' replacing component: {component_id}")
     
     try:
@@ -222,7 +222,7 @@ async def replace_component(
         old_type = old_component.type
         
         # Read new file content
-        file_content = await certificate.read()
+        file_content = await file.read()
         
         if len(file_content) == 0:
             raise HTTPException(status_code=400, detail="Empty file uploaded")

@@ -446,7 +446,8 @@ const CertificateDetails = ({ certificate }) => {
           </div>
           <div className={styles.field}>
             <span className={styles.label}>Public Key Size:</span>
-            <span className={styles.value}>{metadata.public_key_size ? `${metadata.public_key_size} bits` : 'N/A'}</span>
+            <span className={styles.value}>{metadata.public_key_size ? 
+              `${metadata.public_key_size} bits` : 'N/A'}</span>
           </div>
           <div className={styles.field} style={{ gridColumn: '1 / -1' }}>
             <span className={styles.label}>Public Key Fingerprint:</span>
@@ -465,6 +466,70 @@ const CertificateDetails = ({ certificate }) => {
             </span>
           </div>
         </div>
+
+        {/* CSR Extensions */}
+        {/* Subject Alternative Names - FOR CSRs */}
+        {metadata.subject_alt_name && metadata.subject_alt_name.length > 0 && (
+          <div className={styles.extensionItem}>
+            <h5>Subject Alternative Names</h5>
+            <div className={styles.sanList}>
+              {metadata.subject_alt_name.map((san, index) => (
+                <span key={index} className={styles.sanItem}>
+                  {san}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Key Usage for CSRs (if available) */}
+        {metadata.key_usage && Object.keys(metadata.key_usage).length > 0 && (
+          <div className={styles.extensionItem}>
+            <h5>Key Usage</h5>
+            <div className={styles.usageList}>
+              {Object.entries(metadata.key_usage)
+                .filter(([key, value]) => value === true)
+                .map(([key, value]) => (
+                  <span key={key} className={styles.usageItem}>
+                    {key.replace(/([A-Z])/g, ' $1').toLowerCase().replace(/^\w/, c => c.toUpperCase()).replace(/_/g, ' ')}
+                  </span>
+                ))}
+            </div>
+          </div>
+        )}
+
+        {/* Extended Key Usage for CSRs (if available) */}
+        {metadata.extended_key_usage && metadata.extended_key_usage.length > 0 && (
+          <div className={styles.extensionItem}>
+            <h5>Extended Key Usage</h5>
+            <div className={styles.usageList}>
+              {metadata.extended_key_usage.map((usage, index) => (
+                <span key={index} className={styles.usageItem}>
+                  {usage}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Basic Constraints for CSRs (if available) */}
+        {metadata.basic_constraints && Object.keys(metadata.basic_constraints).length > 0 && (
+          <div className={styles.extensionItem}>
+            <h5>Basic Constraints</h5>
+            <div className={styles.constraintsList}>
+              {metadata.basic_constraints.is_ca !== undefined && (
+                <span className={styles.constraintItem}>
+                  CA: {metadata.basic_constraints.is_ca ? 'Yes' : 'No'}
+                </span>
+              )}
+              {metadata.basic_constraints.path_length !== undefined && metadata.basic_constraints.path_length !== null && (
+                <span className={styles.constraintItem}>
+                  Path Length: {metadata.basic_constraints.path_length}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     )
   }

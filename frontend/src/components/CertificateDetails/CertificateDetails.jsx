@@ -1,5 +1,5 @@
 // frontend/src/components/CertificateDetails/CertificateDetails.jsx
-// Updated to work with new session-based PKI storage format and swap header layout
+// Updated to display missing metadata: days until expiry, expired status
 
 import React, { useState } from 'react'
 import { 
@@ -13,12 +13,16 @@ import {
   XCircle,
   AlertTriangle,
   Info,
-  Globe
+  Globe,
+  Clock,
+  AlertCircle,
+  Eye
 } from 'lucide-react'
 import styles from './CertificateDetails.module.css'
 
 const CertificateDetails = ({ certificate }) => {
-  const [isExpanded, setIsExpanded] = useState(false)
+  const [isExpanded, setIsExpanded] = useState(true) // DEFAULT: Expanded
+  const [showPemContent, setShowPemContent] = useState(false) // NEW: PEM content toggle
 
   // Format timestamp for display
   const formatDate = (timestamp) => {
@@ -27,6 +31,54 @@ const CertificateDetails = ({ certificate }) => {
       return new Date(timestamp).toLocaleString()
     } catch (error) {
       return timestamp
+    }
+  }
+
+  // Format validity status with original validation icons (not eye)
+  const formatValidityStatus = (metadata) => {
+    if (!metadata.days_until_expiry && metadata.days_until_expiry !== 0) {
+      return { text: 'Unknown', color: '#6b7280', icon: Info }
+    }
+
+    const days = metadata.days_until_expiry
+    const isExpired = metadata.is_expired
+
+    if (isExpired) {
+      return { 
+        text: 'Expired', 
+        color: '#ef4444', 
+        icon: XCircle 
+      }
+    }
+
+    if (days <= 0) {
+      return { 
+        text: 'Expires today', 
+        color: '#ef4444', 
+        icon: AlertCircle 
+      }
+    }
+
+    if (days <= 30) {
+      return { 
+        text: 'Expires soon', 
+        color: '#f59e0b', 
+        icon: AlertTriangle 
+      }
+    }
+
+    if (days <= 90) {
+      return { 
+        text: 'Valid', 
+        color: '#3b82f6', 
+        icon: CheckCircle 
+      }
+    }
+
+    return { 
+      text: 'Valid', 
+      color: '#10b981', 
+      icon: CheckCircle 
     }
   }
 
@@ -63,9 +115,42 @@ const CertificateDetails = ({ certificate }) => {
     return typeLabels[certificate.type] || certificate.type
   }
 
-  // Get validation status color
+  // Get validation status color - now uses validity status for certificates
   const getStatusColor = () => {
-    return '#10b981' // Green for valid (simplified since we don't have validation info in new format)
+    if (certificate.type === 'Certificate' || 
+        certificate.type === 'RootCA' || 
+        certificate.type === 'IntermediateCA' || 
+        certificate.type === 'IssuingCA') {
+      const metadata = certificate.metadata || {}
+      const validityStatus = formatValidityStatus(metadata)
+      return validityStatus.color
+    }
+    return '#10b981' // Green for valid (simplified for non-certificates)
+  }
+
+  // Get status icon and text for header
+  const getHeaderStatus = () => {
+    if (certificate.type === 'Certificate' || 
+        certificate.type === 'RootCA' || 
+        certificate.type === 'IntermediateCA' || 
+        certificate.type === 'IssuingCA') {
+      const metadata = certificate.metadata || {}
+      const validityStatus = formatValidityStatus(metadata)
+      const StatusIcon = validityStatus.icon
+      
+      return {
+        icon: <StatusIcon size={14} style={{ color: validityStatus.color }} />,
+        text: validityStatus.text,
+        color: validityStatus.color
+      }
+    }
+    
+    // Default for non-certificates
+    return {
+      icon: <CheckCircle size={14} style={{ color: '#10b981' }} />,
+      text: 'Valid',
+      color: '#10b981'
+    }
   }
 
   // Render certificate-specific information
@@ -77,7 +162,9 @@ const CertificateDetails = ({ certificate }) => {
       return null
     }
 
+    // Use direct metadata access (backend provides flattened metadata)
     const metadata = certificate.metadata || {}
+    const validityStatus = formatValidityStatus(metadata)
 
     return (
       <div className={styles.section}>
@@ -109,6 +196,38 @@ const CertificateDetails = ({ certificate }) => {
               {metadata.not_valid_after ? formatDate(metadata.not_valid_after) : 'N/A'}
             </span>
           </div>
+          
+          {/* FIXED: Validity Status - Remove eye icon from detailed section */}
+          <div className={styles.field}>
+            <span className={styles.label}>Validity Status:</span>
+            <span className={styles.value} style={{ 
+              color: validityStatus.color, 
+              fontWeight: '600',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem'
+            }}>
+              <validityStatus.icon size={16} />
+              {validityStatus.text}
+            </span>
+          </div>
+
+          {/* NEW: Days Until Expiry (separate field for clarity) */}
+          {metadata.days_until_expiry !== undefined && (
+            <div className={styles.field}>
+              <span className={styles.label}>Days Until Expiry:</span>
+              <span className={styles.value} style={{ 
+                color: validityStatus.color, 
+                fontWeight: '600' 
+              }}>
+                {metadata.is_expired ? 
+                  `Expired ${Math.abs(metadata.days_until_expiry)} days ago` : 
+                  `${metadata.days_until_expiry} days`
+                }
+              </span>
+            </div>
+          )}
+
           <div className={styles.field}>
             <span className={styles.label}>Signature Algorithm:</span>
             <span className={styles.value}>{metadata.signature_algorithm || 'N/A'}</span>
@@ -135,16 +254,26 @@ const CertificateDetails = ({ certificate }) => {
               {metadata.is_self_signed ? 'Yes' : 'No'}
             </span>
           </div>
-          <div className={styles.field}>
+          <div className={styles.field} style={{ gridColumn: '1 / -1' }}>
             <span className={styles.label}>SHA256 Fingerprint:</span>
-            <span className={styles.value} style={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>
+            <span className={styles.value} style={{ 
+              fontFamily: 'monospace', 
+              fontSize: '0.8rem',
+              wordBreak: 'keep-all',
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              width: '100%',
+              display: 'block',
+              marginTop: '0.25rem'
+            }}>
               {metadata.fingerprint_sha256 || 'N/A'}
             </span>
           </div>
         </div>
 
-        {/* Subject Alternative Names (if available) */}
-        {metadata.subject_alt_name && metadata.subject_alt_name.length > 0 && (
+        {/* Subject Alternative Names - ONLY FOR END-ENTITY CERTIFICATES */}
+        {certificate.type === 'Certificate' && metadata.subject_alt_name && metadata.subject_alt_name.length > 0 && (
           <div className={styles.extensionItem}>
             <h5>Subject Alternative Names</h5>
             <div className={styles.sanList}>
@@ -157,8 +286,60 @@ const CertificateDetails = ({ certificate }) => {
           </div>
         )}
 
-        {/* Key Usage (if available) */}
-        {metadata.key_usage && (
+        {/* DEBUG: Show SAN status for end-entity certificates only */}
+        {certificate.type === 'Certificate' && (!metadata.subject_alt_name || metadata.subject_alt_name.length === 0) && (
+          <div className={styles.extensionItem}>
+            <h5>Subject Alternative Names</h5>
+            <div className={styles.debugInfo}>
+              <p style={{ color: '#ef4444', fontStyle: 'italic' }}>
+                ⚠️ NO SAN DATA - End-entity certificates should have SANs
+              </p>
+              <details style={{ fontSize: '0.8rem', color: '#6b7280' }}>
+                <summary>Certificate Debug Info</summary>
+                <pre>{JSON.stringify({
+                  certificate_type: certificate.type,
+                  subject_cn: metadata.subject_common_name,
+                  san_field: metadata.subject_alt_name,
+                  is_ca: metadata.is_ca,
+                  fingerprint: metadata.fingerprint_sha256?.substring(0, 16) + '...'
+                }, null, 2)}</pre>
+              </details>
+            </div>
+          </div>
+        )}
+
+        {/* CRITICAL BUG INDICATOR: CA certificates should NEVER have SANs */}
+        {(certificate.type === 'RootCA' || certificate.type === 'IntermediateCA' || certificate.type === 'IssuingCA') && 
+         metadata.subject_alt_name && metadata.subject_alt_name.length > 0 && (
+          <div className={styles.extensionItem}>
+            <h5>🚨 CRITICAL BUG: Subject Alternative Names Found on CA Certificate</h5>
+            <div style={{ 
+              color: '#dc2626', 
+              fontWeight: 'bold', 
+              padding: '1rem', 
+              background: '#fef2f2', 
+              border: '2px solid #fecaca', 
+              borderRadius: '8px',
+              marginBottom: '1rem'
+            }}>
+              <p>🚨 METADATA BUG DETECTED:</p>
+              <p>CA certificates should NEVER have Subject Alternative Names.</p>
+              <p>This indicates the backend is assigning the wrong certificate's metadata.</p>
+              <details style={{ marginTop: '0.5rem' }}>
+                <summary>Bug Details</summary>
+                <pre>{JSON.stringify({
+                  certificate_type: certificate.type,
+                  subject_cn: metadata.subject_common_name,
+                  incorrect_sans: metadata.subject_alt_name,
+                  fingerprint: metadata.fingerprint_sha256
+                }, null, 2)}</pre>
+              </details>
+            </div>
+          </div>
+        )}
+
+        {/* Key Usage (if available) - FIXED: Only show TRUE values */}
+        {metadata.key_usage && Object.keys(metadata.key_usage).length > 0 && (
           <div className={styles.extensionItem}>
             <h5>Key Usage</h5>
             <div className={styles.usageList}>
@@ -166,10 +347,16 @@ const CertificateDetails = ({ certificate }) => {
                 .filter(([key, value]) => value === true)
                 .map(([key, value]) => (
                   <span key={key} className={styles.usageItem}>
-                    {key.replace(/([A-Z])/g, ' $1').toLowerCase().replace(/^\w/, c => c.toUpperCase())}
+                    {key.replace(/([A-Z])/g, ' $1').toLowerCase().replace(/^\w/, c => c.toUpperCase()).replace(/_/g, ' ')}
                   </span>
                 ))}
             </div>
+            
+            {/* DEBUG: Show all key usage for debugging */}
+            <details style={{ fontSize: '0.8rem', color: '#6b7280', marginTop: '0.5rem' }}>
+              <summary>Debug: All Key Usage Values</summary>
+              <pre>{JSON.stringify(metadata.key_usage, null, 2)}</pre>
+            </details>
           </div>
         )}
 
@@ -214,9 +401,19 @@ const CertificateDetails = ({ certificate }) => {
               {metadata.is_encrypted ? 'Yes' : 'No'}
             </span>
           </div>
-          <div className={styles.field}>
+          <div className={styles.field} style={{ gridColumn: '1 / -1' }}>
             <span className={styles.label}>Public Key Fingerprint:</span>
-            <span className={styles.value} style={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>
+            <span className={styles.value} style={{ 
+              fontFamily: 'monospace', 
+              fontSize: '0.8rem',
+              wordBreak: 'keep-all',
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              width: '100%',
+              display: 'block',
+              marginTop: '0.25rem'
+            }}>
               {metadata.public_key_fingerprint || 'N/A'}
             </span>
           </div>
@@ -251,9 +448,19 @@ const CertificateDetails = ({ certificate }) => {
             <span className={styles.label}>Public Key Size:</span>
             <span className={styles.value}>{metadata.public_key_size ? `${metadata.public_key_size} bits` : 'N/A'}</span>
           </div>
-          <div className={styles.field}>
+          <div className={styles.field} style={{ gridColumn: '1 / -1' }}>
             <span className={styles.label}>Public Key Fingerprint:</span>
-            <span className={styles.value} style={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>
+            <span className={styles.value} style={{ 
+              fontFamily: 'monospace', 
+              fontSize: '0.8rem',
+              wordBreak: 'keep-all',
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              width: '100%',
+              display: 'block',
+              marginTop: '0.25rem'
+            }}>
               {metadata.public_key_fingerprint || 'N/A'}
             </span>
           </div>
@@ -280,10 +487,18 @@ const CertificateDetails = ({ certificate }) => {
           </div>
         </div>
         <div className={styles.controls}>
-          {/* Validation status in header - simplified for new format */}
+          {/* Validation status in header - with eye icon for more details */}
           <div className={styles.statusBadge} style={{ borderColor: getStatusColor() }}>
-            <CheckCircle size={14} style={{ color: getStatusColor() }} />
-            <span style={{ color: getStatusColor() }}>Valid</span>
+            {(() => {
+              const status = getHeaderStatus()
+              return (
+                <>
+                  {status.icon}
+                  <span style={{ color: status.color }}>{status.text}</span>
+                  <Eye size={12} style={{ color: '#6b7280', marginLeft: '0.25rem' }} title="More details available" />
+                </>
+              )
+            })()}
           </div>
           
           {isExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
@@ -331,13 +546,21 @@ const CertificateDetails = ({ certificate }) => {
                 className={styles.showContentButton}
                 onClick={(e) => {
                   e.stopPropagation()
-                  // TODO: Implement content display toggle
-                  alert('Content display coming soon')
+                  setShowPemContent(!showPemContent)
                 }}
               >
-                Show Content
+                {showPemContent ? 'Hide Content' : 'Show Content'}
               </button>
-              <p className={styles.securityNote}>Content hidden for security</p>
+              
+              {showPemContent ? (
+                <div className={styles.pemContent}>
+                  <pre className={styles.pemText}>
+                    {certificate.content || 'No PEM content available'}
+                  </pre>
+                </div>
+              ) : (
+                <p className={styles.securityNote}>Content hidden for security</p>
+              )}
             </div>
           </div>
         </div>

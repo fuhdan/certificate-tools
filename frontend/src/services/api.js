@@ -64,7 +64,7 @@ api.interceptors.response.use(
 function mapPKIComponentToCertificate(component) {
   const metadata = component.metadata || {}
   
-  // Base certificate object
+  // Base certificate object - FIXED: Pass metadata directly through
   const certificate = {
     id: component.id,
     filename: component.filename,
@@ -77,6 +77,9 @@ function mapPKIComponentToCertificate(component) {
     used_password: metadata.used_password,
     is_valid: true, // TODO: Get from validation
     validation_errors: [],
+    
+    // CRITICAL FIX: Pass ALL metadata directly through
+    metadata: metadata,
     
     // Component type flags
     has_certificate: false,

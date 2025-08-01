@@ -199,53 +199,80 @@ class SessionPKIStorage:
         return False
     
     def identify_certificate_chain_roles(self, certificates: List[Dict[str, Any]]) -> Dict[str, PKIComponentType]:
-        """Analyze certificate chain to identify roles (Issuing CA vs Intermediate CA)"""
+        """Analyze certificate chain to identify roles - FIXED LOGIC"""
         cert_roles = {}
-        
-        # Find the end-entity certificate (non-CA certificate)
+
+        logger.debug(f"=== PKI CHAIN ROLE IDENTIFICATION ===")
+        logger.debug(f"Analyzing {len(certificates)} certificates")
+
+        # Debug: Log all certificates first
+        for i, cert in enumerate(certificates):
+            logger.debug(f"  Cert [{i}]: Subject={cert['subject']}")
+            logger.debug(f"           Issuer={cert['issuer']}")
+            logger.debug(f"           Is CA={cert.get('is_ca', False)}")
+            logger.debug(f"           Self-signed={cert.get('is_self_signed', False)}")
+
+        # Step 1: Find the end-entity certificate (NON-CA certificate)
         end_entity = None
         for cert in certificates:
             if not cert.get('is_ca', False):
                 end_entity = cert
+                logger.info(f"FOUND END-ENTITY: {cert['subject']}")
                 break
-        
+            
         if not end_entity:
-            logger.warning("No end-entity certificate found in chain")
-            # All are CAs, use self-signed status to determine roles
+            logger.warning("No end-entity certificate found in chain - all certificates are CAs")
+            # All are CAs, classify by self-signed status
             for cert in certificates:
                 if cert.get('is_self_signed', False):
                     cert_roles[cert['subject']] = PKIComponentType.ROOT_CA
+                    logger.info(f"CLASSIFIED ROOT CA: {cert['subject']}")
                 else:
                     cert_roles[cert['subject']] = PKIComponentType.INTERMEDIATE_CA
+                    logger.info(f"CLASSIFIED INTERMEDIATE CA: {cert['subject']}")
             return cert_roles
-        
-        # Find the issuing CA (certificate that signed the end-entity)
-        issuing_ca_subject = end_entity.get('issuer')
+
+        # Step 2: Classify the end-entity certificate
         cert_roles[end_entity['subject']] = PKIComponentType.CERTIFICATE
-        
+        logger.info(f"CLASSIFIED END-ENTITY: {end_entity['subject']}")
+
+        # Step 3: Find the issuing CA (CA that directly signed the end-entity)
+        issuing_ca_subject = end_entity.get('issuer')
+        logger.debug(f"Looking for issuing CA with subject: {issuing_ca_subject}")
+
         for cert in certificates:
             if not cert.get('is_ca', False):
-                continue
-                
+                continue  # Skip non-CA certificates
+
             if cert['subject'] == issuing_ca_subject:
                 # This CA signed the end-entity certificate
                 cert_roles[cert['subject']] = PKIComponentType.ISSUING_CA
+                logger.info(f"CLASSIFIED ISSUING CA: {cert['subject']}")
             elif cert.get('is_self_signed', False):
                 # Self-signed CA is root CA
                 cert_roles[cert['subject']] = PKIComponentType.ROOT_CA
+                logger.info(f"CLASSIFIED ROOT CA: {cert['subject']}")
             else:
                 # Other CAs are intermediate CAs
                 cert_roles[cert['subject']] = PKIComponentType.INTERMEDIATE_CA
-        
-        logger.info(f"Certificate chain roles identified: {cert_roles}")
+                logger.info(f"CLASSIFIED INTERMEDIATE CA: {cert['subject']}")
+
+        logger.info(f"PKI Chain roles identified: {cert_roles}")
         return cert_roles
 
 # Global instance
 session_pki_storage = SessionPKIStorage()
 
 def process_pkcs12_bundle(session_id: str, filename: str, cert, private_key, additional_certs) -> List[str]:
-    """Process PKCS12 bundle and store components separately"""
+    """Process PKCS12 bundle and store components separately - FIXED METADATA EXTRACTION"""
     component_ids = []
+    
+    logger.debug(f"=== PKCS12 BUNDLE PROCESSING ===")
+    logger.debug(f"Session: {session_id}")
+    logger.debug(f"Filename: {filename}")
+    logger.debug(f"Main cert: {'YES' if cert else 'NO'}")
+    logger.debug(f"Private key: {'YES' if private_key else 'NO'}")
+    logger.debug(f"Additional certs: {len(additional_certs) if additional_certs else 0}")
     
     # Extract certificate metadata for chain analysis
     all_certs = []
@@ -256,14 +283,16 @@ def process_pkcs12_bundle(session_id: str, filename: str, cert, private_key, add
             'is_ca': _is_ca_certificate(cert),
             'is_self_signed': cert.subject == cert.issuer
         })
+        logger.debug(f"Main cert: {cert.subject.rfc4514_string()} (CA: {_is_ca_certificate(cert)})")
     
-    for add_cert in (additional_certs or []):
+    for i, add_cert in enumerate(additional_certs or []):
         all_certs.append({
             'subject': add_cert.subject.rfc4514_string(),
             'issuer': add_cert.issuer.rfc4514_string(),
             'is_ca': _is_ca_certificate(add_cert), 
             'is_self_signed': add_cert.subject == add_cert.issuer
         })
+        logger.debug(f"Additional cert [{i}]: {add_cert.subject.rfc4514_string()} (CA: {_is_ca_certificate(add_cert)})")
     
     # Analyze certificate chain roles
     cert_roles = session_pki_storage.identify_certificate_chain_roles(all_certs)
@@ -283,6 +312,7 @@ def process_pkcs12_bundle(session_id: str, filename: str, cert, private_key, add
             session_id, PKIComponentType.PRIVATE_KEY, key_pem, filename, key_metadata
         )
         component_ids.append(component_id)
+        logger.info(f"Stored private key: {component_id}")
     
     # Store main certificate if present  
     if cert:
@@ -291,26 +321,30 @@ def process_pkcs12_bundle(session_id: str, filename: str, cert, private_key, add
         cert_subject = cert.subject.rfc4514_string()
         cert_type = cert_roles.get(cert_subject, PKIComponentType.CERTIFICATE)
         
+        # CORRECT: Extract metadata from the main certificate
         cert_metadata = extract_certificate_metadata(cert)
         
         component_id = session_pki_storage.add_component(
             session_id, cert_type, cert_pem, filename, cert_metadata
         )
         component_ids.append(component_id)
+        logger.info(f"Stored main certificate: {cert_subject} as {cert_type.type_name}")
     
-    # Store additional certificates
-    for add_cert in (additional_certs or []):
+    # Store additional certificates - CRITICAL FIX
+    for i, add_cert in enumerate(additional_certs or []):
         from cryptography.hazmat.primitives import serialization
         cert_pem = add_cert.public_bytes(serialization.Encoding.PEM).decode('utf-8')
         cert_subject = add_cert.subject.rfc4514_string()
         cert_type = cert_roles.get(cert_subject, PKIComponentType.INTERMEDIATE_CA)
         
-        cert_metadata = extract_certificate_metadata(cert)
+        # CRITICAL FIX: Extract metadata from the CORRECT certificate (add_cert, not cert)
+        cert_metadata = extract_certificate_metadata(add_cert)
         
         component_id = session_pki_storage.add_component(
             session_id, cert_type, cert_pem, filename, cert_metadata
         )
         component_ids.append(component_id)
+        logger.info(f"Stored additional certificate [{i}]: {cert_subject} as {cert_type.type_name}")
     
     logger.info(f"Processed PKCS12 bundle {filename}: {len(component_ids)} components stored")
     return component_ids

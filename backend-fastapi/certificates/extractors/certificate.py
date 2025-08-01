@@ -1,3 +1,6 @@
+# backend-fastapi/certificates/extractors/certificate.py
+# COMPLETE FILE - Fixed key usage extraction error that prevents SAN extraction
+
 import datetime
 import logging
 from typing import Dict, Any, cast
@@ -7,7 +10,6 @@ from cryptography.hazmat.primitives.asymmetric import rsa, ec
 from cryptography.hazmat.primitives import hashes
 
 logger = logging.getLogger(__name__)
-
 logger.debug("extractors/certificate.py initialized")
 
 def extract_public_key_details(public_key) -> Dict[str, Any]:
@@ -173,73 +175,118 @@ def extract_certificate_metadata(cert: x509.Certificate) -> Dict[str, Any]:
             'signature_algorithm_oid': sig_alg_oid
         })
         
-        # Extensions (comprehensive extraction)
+        # Certificate extensions (detailed) - FIXED ORDERING
         logger.debug("Extracting certificate extensions...")
-        extension_count = len(cert.extensions)
-        logger.debug(f"Found {extension_count} extensions")
+        ext_count = len(cert.extensions)
+        logger.debug(f"Found {ext_count} extensions")
         
+        # Process extensions individually with proper error handling
         for i, ext in enumerate(cert.extensions):
-            ext_oid = ext.oid.dotted_string
-            ext_critical = ext.critical
-            logger.debug(f"  Extension [{i}]: OID {ext_oid}, Critical: {ext_critical}")
+            logger.debug(f"  Extension [{i}]: OID {ext.oid.dotted_string}, Critical: {ext.critical}")
             
-            if isinstance(ext.value, x509.SubjectAlternativeName):
-                logger.debug("    Processing Subject Alternative Name extension")
-                san_list = []
-                for j, name in enumerate(ext.value):
-                    if isinstance(name, x509.DNSName):
-                        san_entry = f"DNS:{name.value}"
-                        logger.debug(f"      SAN [{j}]: DNS = {name.value}")
-                    elif isinstance(name, x509.IPAddress):
-                        san_entry = f"IP:{str(name.value)}"
-                        logger.debug(f"      SAN [{j}]: IP = {str(name.value)}")
-                    elif isinstance(name, x509.RFC822Name):
-                        san_entry = f"Email:{name.value}"
-                        logger.debug(f"      SAN [{j}]: Email = {name.value}")
-                    elif isinstance(name, x509.UniformResourceIdentifier):
-                        san_entry = f"URI:{name.value}"
-                        logger.debug(f"      SAN [{j}]: URI = {name.value}")
-                    else:
-                        san_entry = f"Other:{str(name)}"
-                        logger.debug(f"      SAN [{j}]: Other = {str(name)}")
-                    san_list.append(san_entry)
-                metadata['subject_alt_name'] = san_list
-                logger.debug(f"    Total SAN entries: {len(san_list)}")
-                
-            elif isinstance(ext.value, x509.BasicConstraints):
-                logger.debug("    Processing Basic Constraints extension")
-                is_ca = ext.value.ca
-                path_length = ext.value.path_length
-                logger.debug(f"      CA: {is_ca}")
-                logger.debug(f"      Path length: {path_length}")
-                metadata['basic_constraints'] = {
-                    'is_ca': is_ca,
-                    'path_length': path_length
-                }
-                
-            elif isinstance(ext.value, x509.KeyUsage):
-                logger.debug("    Processing Key Usage extension")
-                key_usage = {
-                    'digital_signature': ext.value.digital_signature,
-                    'key_encipherment': ext.value.key_encipherment,
-                    'key_agreement': ext.value.key_agreement,
-                    'key_cert_sign': ext.value.key_cert_sign,
-                    'crl_sign': ext.value.crl_sign
-                }
-                
-                # Add additional key usage flags safely
-                try:
-                    key_usage['content_commitment'] = ext.value.content_commitment
-                    key_usage['data_encipherment'] = ext.value.data_encipherment
-                    key_usage['encipher_only'] = ext.value.encipher_only
-                    key_usage['decipher_only'] = ext.value.decipher_only
-                except AttributeError:
-                    # Some flags may not be available in all versions
-                    pass
+            try:
+                # Subject Alternative Name - HIGHEST PRIORITY
+                if isinstance(ext.value, x509.SubjectAlternativeName):
+                    logger.debug("    Processing Subject Alternative Name extension")
+                    san_list = []
+                    san_count = len(ext.value)
+                    logger.debug(f"      Found {san_count} SAN entries")
                     
-                logger.debug(f"      Key usage flags: {key_usage}")
-                metadata['key_usage'] = key_usage
-
+                    for j, name in enumerate(ext.value):
+                        if isinstance(name, x509.DNSName):
+                            san_entry = f"DNS:{name.value}"
+                            logger.debug(f"        SAN [{j}]: {san_entry}")
+                            san_list.append(san_entry)
+                        elif isinstance(name, x509.IPAddress):
+                            san_entry = f"IP:{str(name.value)}"
+                            logger.debug(f"        SAN [{j}]: {san_entry}")
+                            san_list.append(san_entry)
+                        elif isinstance(name, x509.RFC822Name):
+                            san_entry = f"Email:{name.value}"
+                            logger.debug(f"        SAN [{j}]: {san_entry}")
+                            san_list.append(san_entry)
+                        elif isinstance(name, x509.UniformResourceIdentifier):
+                            san_entry = f"URI:{name.value}"
+                            logger.debug(f"        SAN [{j}]: {san_entry}")
+                            san_list.append(san_entry)
+                        else:
+                            san_entry = f"Other:{str(name)}"
+                            logger.debug(f"        SAN [{j}]: {san_entry}")
+                            san_list.append(san_entry)
+                    
+                    metadata['subject_alt_name'] = san_list
+                    logger.debug(f"      Subject Alternative Names processed: {san_list}")
+                    
+                # Basic Constraints
+                elif isinstance(ext.value, x509.BasicConstraints):
+                    logger.debug("    Processing Basic Constraints extension")
+                    is_ca = ext.value.ca
+                    path_length = ext.value.path_length
+                    logger.debug(f"      CA: {is_ca}")
+                    logger.debug(f"      Path length: {path_length}")
+                    metadata['basic_constraints'] = {
+                        'is_ca': is_ca,
+                        'path_length': path_length
+                    }
+                    
+                # Key Usage - FIXED ERROR HANDLING
+                elif isinstance(ext.value, x509.KeyUsage):
+                    logger.debug("    Processing Key Usage extension")
+                    
+                    # Safe key usage extraction with proper conditionals
+                    key_usage = {
+                        'digital_signature': ext.value.digital_signature,
+                        'content_commitment': ext.value.content_commitment,
+                        'key_encipherment': ext.value.key_encipherment,
+                        'data_encipherment': ext.value.data_encipherment,
+                        'key_agreement': ext.value.key_agreement,
+                        'key_cert_sign': ext.value.key_cert_sign,
+                        'crl_sign': ext.value.crl_sign,
+                    }
+                    
+                    # CRITICAL FIX: Only access encipher_only/decipher_only if key_agreement is true
+                    if ext.value.key_agreement:
+                        try:
+                            key_usage['encipher_only'] = ext.value.encipher_only
+                            key_usage['decipher_only'] = ext.value.decipher_only
+                        except Exception as encipher_error:
+                            logger.warning(f"      Could not extract encipher flags: {encipher_error}")
+                            key_usage['encipher_only'] = False
+                            key_usage['decipher_only'] = False
+                    else:
+                        key_usage['encipher_only'] = False
+                        key_usage['decipher_only'] = False
+                        
+                    logger.debug(f"      Key usage flags: {key_usage}")
+                    metadata['key_usage'] = key_usage
+                    
+                # Authority Key Identifier
+                elif isinstance(ext.value, x509.AuthorityKeyIdentifier):
+                    logger.debug("    Processing Authority Key Identifier extension")
+                    try:
+                        auth_key_id = ext.value.key_identifier.hex().upper() if ext.value.key_identifier else None
+                        metadata['authority_key_identifier'] = auth_key_id
+                        logger.debug(f"      Authority Key ID: {auth_key_id}")
+                    except Exception as aki_error:
+                        logger.error(f"      Error processing Authority Key Identifier: {aki_error}")
+                        
+                # Subject Key Identifier
+                elif isinstance(ext.value, x509.SubjectKeyIdentifier):
+                    logger.debug("    Processing Subject Key Identifier extension")
+                    try:
+                        subj_key_id = ext.value.digest.hex().upper()
+                        metadata['subject_key_identifier'] = subj_key_id
+                        logger.debug(f"      Subject Key ID: {subj_key_id}")
+                    except Exception as ski_error:
+                        logger.error(f"      Error processing Subject Key Identifier: {ski_error}")
+                        
+                else:
+                    logger.debug(f"    Skipping unsupported extension: {ext.oid.dotted_string}")
+                    
+            except Exception as ext_error:
+                logger.error(f"    Error processing extension {ext.oid.dotted_string}: {ext_error}")
+                continue
+        
         # Extended Key Usage (separate try block as it's optional)
         try:
             logger.debug("Checking for Extended Key Usage extension...")
@@ -270,63 +317,24 @@ def extract_certificate_metadata(cert: x509.Certificate) -> Dict[str, Any]:
                     logger.debug(f"    EKU [{j}]: OCSP Signing")
                 else:
                     usage_name = usage_oid.dotted_string
-                    logger.debug(f"    EKU [{j}]: Unknown OID {usage_oid.dotted_string}")
+                    logger.debug(f"    EKU [{j}]: Unknown ({usage_name})")
                 
                 eku_usages.append(usage_name)
                 j += 1
             
             metadata['extended_key_usage'] = eku_usages
-            logger.debug(f"Extended Key Usage processed: {eku_usages}")
+            logger.debug(f"Extended Key Usage: {eku_usages}")
             
         except x509.ExtensionNotFound:
             logger.debug("No Extended Key Usage extension found")
         except Exception as eku_error:
             logger.error(f"Error processing Extended Key Usage: {eku_error}")
-        
-        # Authority Key Identifier
-        try:
-            logger.debug("Checking for Authority Key Identifier extension...")
-            aki_ext = cert.extensions.get_extension_for_oid(ExtensionOID.AUTHORITY_KEY_IDENTIFIER)
-            aki_value = cast(x509.AuthorityKeyIdentifier, aki_ext.value)
-            
-            aki_data = {}
-            if aki_value.key_identifier:
-                aki_data['key_identifier'] = aki_value.key_identifier.hex()
-                logger.debug(f"    AKI Key Identifier: {aki_data['key_identifier']}")
-            if aki_value.authority_cert_issuer:
-                aki_data['authority_cert_issuer'] = str(aki_value.authority_cert_issuer)
-                logger.debug(f"    AKI Authority Cert Issuer: {aki_data['authority_cert_issuer']}")
-            if aki_value.authority_cert_serial_number:
-                aki_data['authority_cert_serial_number'] = str(aki_value.authority_cert_serial_number)
-                logger.debug(f"    AKI Authority Cert Serial: {aki_data['authority_cert_serial_number']}")
-            
-            metadata['authority_key_identifier'] = aki_data
-            logger.debug(f"Authority Key Identifier processed")
-            
-        except x509.ExtensionNotFound:
-            logger.debug("No Authority Key Identifier extension found")
-        except Exception as aki_error:
-            logger.error(f"Error processing Authority Key Identifier: {aki_error}")
-        
-        # Subject Key Identifier
-        try:
-            logger.debug("Checking for Subject Key Identifier extension...")
-            ski_ext = cert.extensions.get_extension_for_oid(ExtensionOID.SUBJECT_KEY_IDENTIFIER)
-            ski_value = cast(x509.SubjectKeyIdentifier, ski_ext.value)
-            
-            metadata['subject_key_identifier'] = ski_value.digest.hex()
-            logger.debug(f"Subject Key Identifier: {metadata['subject_key_identifier']}")
-            
-        except x509.ExtensionNotFound:
-            logger.debug("No Subject Key Identifier extension found")
-        except Exception as ski_error:
-            logger.error(f"Error processing Subject Key Identifier: {ski_error}")
-        
-        logger.debug(f"Total extensions processed")
-        
+    
     except Exception as e:
         logger.error(f"Error extracting certificate details: {e}")
         logger.error(f"Certificate object: {cert}")
+        
+        # Import traceback for full error details
         import traceback
         logger.error(f"Full traceback: {traceback.format_exc()}")
     
@@ -336,23 +344,22 @@ def extract_certificate_metadata(cert: x509.Certificate) -> Dict[str, Any]:
 
 def _is_ca_certificate(cert: x509.Certificate) -> bool:
     """Check if certificate is a CA certificate"""
-    logger.debug("=== CA CERTIFICATE CHECK ===")
+    logger.debug(f"=== CA CERTIFICATE CHECK ===")
     
     try:
-        basic_constraints_ext = cert.extensions.get_extension_for_oid(
-            ExtensionOID.BASIC_CONSTRAINTS
-        )
+        # Check Basic Constraints extension
+        basic_constraints_ext = cert.extensions.get_extension_for_oid(ExtensionOID.BASIC_CONSTRAINTS)
         basic_constraints = cast(x509.BasicConstraints, basic_constraints_ext.value)
         is_ca = basic_constraints.ca
         logger.debug(f"Basic Constraints found - CA: {is_ca}")
         return is_ca
     except x509.ExtensionNotFound:
-        logger.debug("No Basic Constraints extension found - assuming end-entity certificate")
+        logger.debug("No Basic Constraints extension found - assuming not CA")
         return False
     except Exception as e:
         logger.error(f"Error checking CA status: {e}")
         return False
 
 def is_ca_certificate(cert: x509.Certificate) -> bool:
-    """Check if certificate is a CA certificate (public interface)"""
+    """Check if certificate is a CA certificate (public interface for imports)"""
     return _is_ca_certificate(cert)

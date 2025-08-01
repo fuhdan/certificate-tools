@@ -323,3 +323,81 @@
     max-width: 100%;
   }
 }
+
+.pemContent {
+  margin-top: 1rem;
+  max-height: 400px;
+  overflow-y: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.pemText {
+  margin: 0;
+  padding: 1rem;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: #374151;
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: #f8fafc;
+  border: none;
+  overflow: visible;
+}
+
+.showContentButton {
+  background: #3b82f6;
+  color: white;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.showContentButton:hover {
+  background: #2563eb;
+}
+
+.showContentButton:active {
+  background: #1d4ed8;
+}
+
+.securityNote {
+  margin: 0.5rem 0 0 0;
+  color: #6b7280;
+  font-style: italic;
+  font-size: 0.875rem;
+}
+
+.debugInfo {
+  padding: 0.75rem;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  margin-top: 0.5rem;
+}
+
+.debugInfo details {
+  margin-top: 0.5rem;
+}
+
+.debugInfo summary {
+  cursor: pointer;
+  color: #6b7280;
+  font-weight: 500;
+}
+
+.debugInfo pre {
+  margin: 0.5rem 0 0 0;
+  padding: 0.5rem;
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  overflow-x: auto;
+}

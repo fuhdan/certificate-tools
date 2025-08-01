@@ -425,9 +425,9 @@ const CertificateDetails = ({ certificate }) => {
   // Render CSR information
   const renderCSRInfo = () => {
     if (certificate.type !== 'CSR') return null
-
+    
     const metadata = certificate.metadata || {}
-
+    
     return (
       <div className={styles.section}>
         <h4><FileText size={16} /> CSR Information</h4>
@@ -466,7 +466,7 @@ const CertificateDetails = ({ certificate }) => {
             </span>
           </div>
         </div>
-
+          
         {/* CSR Extensions */}
         {/* Subject Alternative Names - FOR CSRs */}
         {metadata.subject_alt_name && metadata.subject_alt_name.length > 0 && (
@@ -481,7 +481,7 @@ const CertificateDetails = ({ certificate }) => {
             </div>
           </div>
         )}
-
+  
         {/* Key Usage for CSRs (if available) */}
         {metadata.key_usage && Object.keys(metadata.key_usage).length > 0 && (
           <div className={styles.extensionItem}>
@@ -497,7 +497,7 @@ const CertificateDetails = ({ certificate }) => {
             </div>
           </div>
         )}
-
+  
         {/* Extended Key Usage for CSRs (if available) */}
         {metadata.extended_key_usage && metadata.extended_key_usage.length > 0 && (
           <div className={styles.extensionItem}>
@@ -511,7 +511,7 @@ const CertificateDetails = ({ certificate }) => {
             </div>
           </div>
         )}
-
+  
         {/* Basic Constraints for CSRs (if available) */}
         {metadata.basic_constraints && Object.keys(metadata.basic_constraints).length > 0 && (
           <div className={styles.extensionItem}>

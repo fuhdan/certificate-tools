@@ -134,12 +134,11 @@ def get_certificate_component(
 @router.delete("/certificates/{component_id}", tags=["certificates"])
 def delete_certificate_component(
     component_id: str,
-    current_user: Annotated[User, Depends(get_current_active_user)],
     session_id: str = Depends(get_session_id)
 ):
     """Delete specific PKI component"""
     
-    logger.info(f"[{session_id}] User '{current_user.username}' deleting component: {component_id}")
+    logger.info(f"[{session_id}] deleting component: {component_id}")
     
     try:
         session = session_pki_storage.get_or_create_session(session_id)
@@ -153,7 +152,7 @@ def delete_certificate_component(
         success = session.remove_component(component_id)
         
         if success:
-            logger.info(f"[{session_id}] Successfully deleted {component_type} component for user {current_user.username}")
+            logger.info(f"[{session_id}] Successfully deleted {component_type} component: {component_id}")
             return {
                 "success": True,
                 "message": f"{component_type} component deleted successfully",
@@ -170,18 +169,17 @@ def delete_certificate_component(
 
 @router.post("/certificates/clear", tags=["certificates"])
 def clear_all_components(
-    current_user: Annotated[User, Depends(get_current_active_user)],
     session_id: str = Depends(get_session_id)
 ):
     """Clear all PKI components from session"""
     
-    logger.info(f"[{session_id}] User '{current_user.username}' clearing all components")
+    logger.info(f"[{session_id}] clearing all components")
     
     try:
         success = session_pki_storage.clear_session(session_id)
         
         if success:
-            logger.info(f"[{session_id}] Successfully cleared all components for user {current_user.username}")
+            logger.info(f"[{session_id}] Successfully cleared all components from session")
             return {
                 "success": True,
                 "message": "All PKI components cleared successfully",
@@ -202,7 +200,6 @@ def clear_all_components(
 @router.post("/certificates/replace/{component_id}", tags=["certificates"])
 async def replace_component(
     component_id: str,
-    current_user: Annotated[User, Depends(get_current_active_user)],
     file: UploadFile = File(...),
     password: str = Form(None),
     session_id: str = Depends(get_session_id)
@@ -210,7 +207,7 @@ async def replace_component(
     """Replace an existing PKI component with a new one"""
     
     filename = file.filename or "unknown_file"
-    logger.info(f"[{session_id}] User '{current_user.username}' replacing component: {component_id}")
+    logger.info(f"[{session_id}] replacing component: {component_id}")
     
     try:
         session = session_pki_storage.get_or_create_session(session_id)
@@ -284,12 +281,11 @@ async def replace_component(
 
 @router.get("/certificates/session-summary", tags=["certificates"])
 def get_session_summary(
-    current_user: Annotated[User, Depends(get_current_active_user)],
     session_id: str = Depends(get_session_id)
 ):
     """Get PKI session summary"""
     
-    logger.info(f"[{session_id}] User '{current_user.username}' requesting session summary")
+    logger.info(f"[{session_id}] requesting session summary")
     
     try:
         session = session_pki_storage.get_or_create_session(session_id)
@@ -327,7 +323,7 @@ def get_session_summary(
             "timestamp": datetime.datetime.now().isoformat()
         }
         
-        logger.debug(f"[{session_id}] Session summary generated for user {current_user.username}")
+        logger.debug(f"[{session_id}] Session summary generated successfully: {summary}")
         return summary
         
     except Exception as e:

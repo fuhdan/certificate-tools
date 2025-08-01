@@ -254,6 +254,12 @@ export const certificateAPI = {
 
       return response.data
     } catch (error) {
+      // Check if this is a password requirement, not an actual error
+      if (error.response?.status === 400 && error.response?.data?.requiresPassword) {
+        // Return the password requirement response instead of throwing an error
+        return error.response.data
+      }
+      
       console.error('Error uploading certificate:', error)
       throw new Error(error.response?.data?.message || 'Upload failed')
     }

@@ -38,8 +38,8 @@ def get_file_format(filename: str) -> str:
         'jks': 'JKS',
         'key': 'Private Key',
         'csr': 'CSR',
-        'p8': 'PKCS8',
-        'pk8': 'PKCS8'
+        'p8': 'DER',
+        'pk8': 'DER'
     }
     detected_format = format_map.get(extension, extension.upper())
     logger.debug(f"File format detection: {filename} -> {detected_format}")
@@ -89,7 +89,7 @@ def analyze_uploaded_certificate(file_content: bytes, filename: str, password: O
             analysis_result["message"] = f"PEM file processed: {len(component_ids)} components extracted"
             
         elif file_format == 'DER':
-            component_ids = _process_der_file(file_content, filename, session_id)
+            component_ids = _process_der_file(file_content, filename, session_id, password)  # FIXED: Added password parameter
             analysis_result["message"] = f"DER file processed: {len(component_ids)} components extracted"
             
         elif file_format == 'CSR':
@@ -301,7 +301,7 @@ def _process_pem_file(file_content: bytes, filename: str, session_id: str) -> Li
     
     return component_ids
 
-def _process_der_file(file_content: bytes, filename: str, session_id: str) -> List[str]:
+def _process_der_file(file_content: bytes, filename: str, session_id: str, password: Optional[str] = None) -> List[str]:
     """Process DER file (certificate, private key, or CSR)"""
     logger.debug("Processing DER file")
     
@@ -355,16 +355,37 @@ def _process_der_file(file_content: bytes, filename: str, session_id: str) -> Li
         logger.debug(f"DER CSR parsing failed: {csr_error}")
         errors.append(f"CSR: {csr_error}")
     
-    # Try to load as private key third
+    # Try to load as private key third - FIXED: Now uses password parameter
     try:
-        private_key = serialization.load_der_private_key(file_content, password=None)
+        # First try without password for unencrypted keys
+        try:
+            private_key = serialization.load_der_private_key(file_content, password=None)
+            logger.debug("Successfully loaded unencrypted DER private key")
+        except Exception as unencrypted_error:
+            # Check if it's an encryption-related error
+            error_str = str(unencrypted_error).lower()
+            if any(keyword in error_str for keyword in ['encrypted', 'password', 'decrypt', 'bad decrypt']):
+                if password is None:
+                    logger.debug("Encrypted DER private key detected but no password provided")
+                    raise ValueError("Password was not given but private key is encrypted")
+                else:
+                    logger.debug(f"Attempting to decrypt DER private key with provided password")
+                    # Try with provided password
+                    password_bytes = password.encode('utf-8') if isinstance(password, str) else password
+                    private_key = serialization.load_der_private_key(file_content, password=password_bytes)
+                    logger.debug("Successfully decrypted DER private key with password")
+            else:
+                # Not encryption-related, re-raise the original error
+                raise unencrypted_error
+        
+        # Convert to PEM for storage
         key_pem = private_key.private_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PrivateFormat.PKCS8,
             encryption_algorithm=serialization.NoEncryption()
         ).decode('utf-8')
         
-        key_metadata = extract_private_key_metadata(private_key, is_encrypted=False)
+        key_metadata = extract_private_key_metadata(private_key, is_encrypted=(password is not None))
         
         component_id = session_pki_storage.add_component(
             session_id, PKIComponentType.PRIVATE_KEY, key_pem, filename, key_metadata

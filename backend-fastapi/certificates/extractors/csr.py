@@ -1,3 +1,6 @@
+# backend-fastapi/certificates/extractors/csr.py
+# FIXED: Updated to use consistent sha256_fingerprint naming and proper error handling
+
 import logging
 from typing import Dict, Any, cast
 from cryptography import x509
@@ -15,21 +18,21 @@ def extract_csr_metadata(csr: x509.CertificateSigningRequest) -> Dict[str, Any]:
     logger.info(f"=== CSR METADATA EXTRACTION ===")
     logger.debug(f"CSR object type: {type(csr)}")
     
-    # Calculate public key fingerprint
+    # FIXED: Calculate public key fingerprint using DER encoding for consistency
     public_key = csr.public_key()
-    public_bytes = public_key.public_bytes(
-        encoding=serialization.Encoding.PEM,
+    public_key_der = public_key.public_bytes(
+        encoding=serialization.Encoding.DER,  # FIXED: Use DER instead of PEM
         format=serialization.PublicFormat.SubjectPublicKeyInfo
     )
-    public_key_fingerprint = hashlib.sha256(public_bytes).hexdigest().upper()
+    sha256_fingerprint = hashlib.sha256(public_key_der).hexdigest().upper()
     
-    # Initialize flattened metadata with basic info
+    # FIXED: Initialize flattened metadata with consistent field name
     metadata = {
         'subject': csr.subject.rfc4514_string(),
         'signature_algorithm': csr.signature_algorithm_oid._name,
         'public_key_algorithm': type(csr.public_key()).__name__.replace('PublicKey', ''),
         'public_key_size': getattr(csr.public_key(), 'key_size', None),
-        'public_key_fingerprint': public_key_fingerprint,
+        'sha256_fingerprint': sha256_fingerprint,  # FIXED: Consistent naming
         
         # Initialize all extension fields as empty
         'subject_alt_name': [],
@@ -126,8 +129,10 @@ def extract_csr_metadata(csr: x509.CertificateSigningRequest) -> Dict[str, Any]:
                 
         except x509.ExtensionNotFound:
             logger.debug("No Subject Alternative Name extension found in CSR")
+            metadata['subject_alt_name'] = []  # FIXED: Ensure empty list instead of missing field
         except Exception as san_error:
             logger.error(f"Error processing SAN extension in CSR: {san_error}")
+            metadata['subject_alt_name'] = []  # FIXED: Ensure empty list on error
 
         # Process Basic Constraints extension (if present in CSR)
         try:
@@ -144,10 +149,12 @@ def extract_csr_metadata(csr: x509.CertificateSigningRequest) -> Dict[str, Any]:
             }
         except x509.ExtensionNotFound:
             logger.debug("No Basic Constraints extension found in CSR")
+            metadata['basic_constraints'] = {}  # FIXED: Ensure empty dict
         except Exception as bc_error:
             logger.error(f"Error processing Basic Constraints in CSR: {bc_error}")
+            metadata['basic_constraints'] = {}  # FIXED: Ensure empty dict on error
 
-        # Process Key Usage extension (if present in CSR)
+        # FIXED: Process Key Usage extension with proper error handling
         try:
             logger.debug("Checking for Key Usage extension in CSR...")
             ku_ext = csr.extensions.get_extension_for_oid(ExtensionOID.KEY_USAGE)
@@ -158,26 +165,23 @@ def extract_csr_metadata(csr: x509.CertificateSigningRequest) -> Dict[str, Any]:
                 'key_encipherment': ku_value.key_encipherment,
                 'key_agreement': ku_value.key_agreement,
                 'key_cert_sign': ku_value.key_cert_sign,
-                'crl_sign': ku_value.crl_sign
+                'crl_sign': ku_value.crl_sign,
+                'content_commitment': ku_value.content_commitment,
+                'data_encipherment': ku_value.data_encipherment,
+                # FIXED: Only access encipher_only/decipher_only if key_agreement is True
+                'encipher_only': ku_value.encipher_only if ku_value.key_agreement else False,
+                'decipher_only': ku_value.decipher_only if ku_value.key_agreement else False,
             }
-            
-            # Add additional key usage flags safely
-            try:
-                key_usage['content_commitment'] = ku_value.content_commitment
-                key_usage['data_encipherment'] = ku_value.data_encipherment
-                key_usage['encipher_only'] = ku_value.encipher_only
-                key_usage['decipher_only'] = ku_value.decipher_only
-            except AttributeError:
-                # Some flags may not be available in all versions
-                pass
                 
             logger.debug(f"Found Key Usage - flags: {key_usage}")
             metadata['key_usage'] = key_usage
             
         except x509.ExtensionNotFound:
             logger.debug("No Key Usage extension found in CSR")
+            metadata['key_usage'] = {}  # FIXED: Ensure empty dict
         except Exception as ku_error:
             logger.error(f"Error processing Key Usage in CSR: {ku_error}")
+            metadata['key_usage'] = {}  # FIXED: Ensure empty dict on error
 
         # Process Extended Key Usage extension (if present in CSR)
         try:
@@ -214,8 +218,10 @@ def extract_csr_metadata(csr: x509.CertificateSigningRequest) -> Dict[str, Any]:
                 
         except x509.ExtensionNotFound:
             logger.debug("No Extended Key Usage extension found in CSR")
+            metadata['extended_key_usage'] = []  # FIXED: Ensure empty list
         except Exception as eku_error:
             logger.error(f"Error processing Extended Key Usage in CSR: {eku_error}")
+            metadata['extended_key_usage'] = []  # FIXED: Ensure empty list on error
 
         # Check for other extensions
         logger.debug("Checking for additional CSR extensions...")

@@ -1,8 +1,8 @@
 // frontend/src/contexts/CertificateContext.jsx
-// Fixed to properly sort PKI components by their order field
+// FIXED: Use certificateAPI instead of direct api calls
 
 import React, { createContext, useContext, useState, useCallback } from 'react'
-import api from '../services/api'
+import { certificateAPI } from '../services/api'
 
 const CertificateContext = createContext(null)
 
@@ -30,10 +30,11 @@ export const CertificateProvider = ({ children }) => {
       setIsLoading(true)
       setError(null)
       
-      const response = await api.get('/certificates')
-      if (response.data.success) {
+      // FIXED: Use certificateAPI.getCertificates() instead of direct api call
+      const result = await certificateAPI.getCertificates()
+      if (result.success) {
         // Sort PKI components by their order field (backend provides the correct order)
-        const sortedComponents = (response.data.components || []).sort((a, b) => {
+        const sortedComponents = (result.certificates || []).sort((a, b) => {
           // Primary sort by order (PKI hierarchy)
           if (a.order !== b.order) {
             return a.order - b.order
@@ -79,7 +80,8 @@ export const CertificateProvider = ({ children }) => {
   const deleteComponent = useCallback(async (componentId) => {
     try {
       setComponents(prev => prev.filter(comp => comp.id !== componentId))
-      await api.delete(`/certificates/${componentId}`)
+      // FIXED: Use certificateAPI.deleteCertificate() instead of direct api call
+      await certificateAPI.deleteCertificate(componentId)
     } catch (error) {
       console.error('Error deleting component:', error)
       setError('Failed to delete component')
@@ -99,8 +101,8 @@ export const CertificateProvider = ({ children }) => {
       
       setComponents([])
       
-      // Clear all components
-      await api.post('/certificates/clear')
+      // FIXED: Use certificateAPI.clearSession() instead of direct api call
+      await certificateAPI.clearSession()
       
     } catch (error) {
       console.error('Error clearing all files:', error)
@@ -110,17 +112,14 @@ export const CertificateProvider = ({ children }) => {
   }, [refreshFiles])
 
   const analyzeCertificate = useCallback(async (file, password = null) => {
-    const formData = new FormData()
-    formData.append('certificate', file)
-    if (password) {
-      formData.append('password', password)
+    // FIXED: Use certificateAPI.uploadCertificate() instead of direct api call
+    try {
+      const result = await certificateAPI.uploadCertificate(file, password)
+      return result
+    } catch (error) {
+      console.error('Error analyzing certificate:', error)
+      throw error
     }
-    
-    const response = await api.post('/analyze-certificate', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' }
-    })
-    
-    return response.data
   }, [])
 
   const updatePasswordState = useCallback((updates) => {

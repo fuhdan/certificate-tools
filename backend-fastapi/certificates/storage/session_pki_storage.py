@@ -1,5 +1,5 @@
 # backend-fastapi/certificates/storage/session_pki_storage.py
-# New session-based PKI component storage
+# COMPLETE FIX: Replace the current file entirely with this version
 
 import logging
 import uuid
@@ -160,11 +160,11 @@ class SessionPKIStorage:
         if component_type not in [PKIComponentType.CSR, PKIComponentType.PRIVATE_KEY]:
             return None
         
-        # Get the fingerprint from metadata
+        # FIXED: Get the fingerprint from metadata using consistent field name
         if component_type == PKIComponentType.CSR:
-            new_fingerprint = metadata.get('public_key_fingerprint')
+            new_fingerprint = metadata.get('sha256_fingerprint')  # FIXED: Consistent naming
         elif component_type == PKIComponentType.PRIVATE_KEY:
-            new_fingerprint = metadata.get('public_key_fingerprint')
+            new_fingerprint = metadata.get('sha256_fingerprint')  # FIXED: Consistent naming
         else:
             return None
         
@@ -174,7 +174,7 @@ class SessionPKIStorage:
         # Search for existing component with same type and fingerprint
         for component in session.components.values():
             if component.type == component_type:
-                existing_fingerprint = component.metadata.get('public_key_fingerprint')
+                existing_fingerprint = component.metadata.get('sha256_fingerprint')  # FIXED: Consistent naming
                 if existing_fingerprint == new_fingerprint:
                     logger.debug(f"Duplicate {component_type.type_name} detected: {new_fingerprint[:16]}...")
                     return component.id
@@ -366,11 +366,11 @@ def _get_cert_fingerprint(cert) -> str:
     return cert.fingerprint(hashes.SHA256()).hex().upper()
 
 def _get_public_key_fingerprint(private_key) -> str:
-    """Get public key fingerprint from private key"""
+    """Get public key fingerprint from private key - FIXED: Use DER encoding"""
     from cryptography.hazmat.primitives import hashes, serialization
     public_key = private_key.public_key()
-    public_bytes = public_key.public_bytes(
-        encoding=serialization.Encoding.PEM,
+    public_key_der = public_key.public_bytes(
+        encoding=serialization.Encoding.DER,  # FIXED: Use DER for consistency
         format=serialization.PublicFormat.SubjectPublicKeyInfo
     )
-    return hashlib.sha256(public_bytes).hexdigest().upper()
+    return hashlib.sha256(public_key_der).hexdigest().upper()

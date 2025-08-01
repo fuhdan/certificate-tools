@@ -1,5 +1,5 @@
 // frontend/src/services/api.js
-// Fixed API file with proper exports and data mapping
+// FIXED: Updated to use sha256_fingerprint and correct endpoints
 
 import axios from 'axios'
 import { sessionManager } from './sessionManager'
@@ -49,7 +49,6 @@ api.interceptors.response.use(
 
     // Handle session-related errors
     if (error.response?.status === 400 && error.response?.data?.detail?.includes('session')) {
-      // Regenerate session ID for session errors
       sessionManager.generateNewSession()
     }
 
@@ -59,12 +58,12 @@ api.interceptors.response.use(
 
 /**
  * Map backend PKI component to frontend certificate object
- * Updated to handle new flattened metadata from extractors
+ * FIXED: Use sha256_fingerprint instead of public_key_fingerprint
  */
 function mapPKIComponentToCertificate(component) {
   const metadata = component.metadata || {}
   
-  // Base certificate object - FIXED: Pass metadata directly through
+  // Base certificate object
   const certificate = {
     id: component.id,
     filename: component.filename,
@@ -75,10 +74,8 @@ function mapPKIComponentToCertificate(component) {
     original_format: metadata.original_format,
     file_size: metadata.file_size,
     used_password: metadata.used_password,
-    is_valid: true, // TODO: Get from validation
+    is_valid: true,
     validation_errors: [],
-    
-    // CRITICAL FIX: Pass ALL metadata directly through
     metadata: metadata,
     
     // Component type flags
@@ -93,7 +90,6 @@ function mapPKIComponentToCertificate(component) {
     
     certificate.has_certificate = true
     certificate.certificate_info = {
-      // Basic certificate info (backward compatibility)
       subject: metadata.subject,
       issuer: metadata.issuer,
       serial_number: metadata.serial_number,
@@ -101,7 +97,7 @@ function mapPKIComponentToCertificate(component) {
       is_self_signed: metadata.is_self_signed,
       fingerprint_sha256: metadata.fingerprint_sha256,
       
-      // Detailed subject fields (NEW)
+      // Detailed subject fields
       subject_common_name: metadata.subject_common_name,
       subject_organization: metadata.subject_organization,
       subject_organizational_unit: metadata.subject_organizational_unit,
@@ -110,7 +106,7 @@ function mapPKIComponentToCertificate(component) {
       subject_locality: metadata.subject_locality,
       subject_email: metadata.subject_email,
       
-      // Detailed issuer fields (NEW)
+      // Detailed issuer fields
       issuer_common_name: metadata.issuer_common_name,
       issuer_organization: metadata.issuer_organization,
       issuer_organizational_unit: metadata.issuer_organizational_unit,
@@ -119,13 +115,13 @@ function mapPKIComponentToCertificate(component) {
       issuer_locality: metadata.issuer_locality,
       issuer_email: metadata.issuer_email,
       
-      // Validity information (NEW)
+      // Validity information
       not_valid_before: metadata.not_valid_before,
       not_valid_after: metadata.not_valid_after,
       is_expired: metadata.is_expired,
       days_until_expiry: metadata.days_until_expiry,
       
-      // Signature and public key info (NEW)
+      // Signature and public key info
       signature_algorithm: metadata.signature_algorithm,
       signature_algorithm_oid: metadata.signature_algorithm_oid,
       public_key_algorithm: metadata.public_key_algorithm,
@@ -133,7 +129,7 @@ function mapPKIComponentToCertificate(component) {
       public_key_exponent: metadata.public_key_exponent,
       public_key_curve: metadata.public_key_curve,
       
-      // Extensions (NEW flattened format)
+      // Extensions
       subject_alt_name: metadata.subject_alt_name || [],
       key_usage: metadata.key_usage || {},
       extended_key_usage: metadata.extended_key_usage || [],
@@ -143,17 +139,17 @@ function mapPKIComponentToCertificate(component) {
     }
   }
 
-  // Map private key data if it's a private key component
+  // Map private key data
   if (component.type === 'PrivateKey') {
     certificate.has_private_key = true
     certificate.private_key_info = {
-      // Basic private key info (backward compatibility)
       algorithm: metadata.algorithm,
       key_size: metadata.key_size,
       is_encrypted: metadata.is_encrypted,
-      public_key_fingerprint: metadata.public_key_fingerprint,
+      // FIXED: Use sha256_fingerprint instead of public_key_fingerprint
+      public_key_fingerprint: metadata.sha256_fingerprint,
       
-      // Algorithm-specific fields (NEW)
+      // Algorithm-specific fields
       rsa_exponent: metadata.rsa_exponent,
       rsa_modulus_bits: metadata.rsa_modulus_bits,
       ec_curve: metadata.ec_curve,
@@ -165,22 +161,22 @@ function mapPKIComponentToCertificate(component) {
       dsa_q_bits: metadata.dsa_q_bits,
       dsa_g_bits: metadata.dsa_g_bits,
       dsa_y_bits: metadata.dsa_y_bits,
-      curve: metadata.curve // For Ed25519/Ed448
+      curve: metadata.curve
     }
   }
 
-  // Map CSR data if it's a CSR component
+  // Map CSR data
   if (component.type === 'CSR') {
     certificate.has_csr = true
     certificate.csr_info = {
-      // Basic CSR info (backward compatibility)
       subject: metadata.subject,
       signature_algorithm: metadata.signature_algorithm,
       public_key_algorithm: metadata.public_key_algorithm,
       public_key_size: metadata.public_key_size,
-      public_key_fingerprint: metadata.public_key_fingerprint,
+      // FIXED: Use sha256_fingerprint instead of public_key_fingerprint
+      public_key_fingerprint: metadata.sha256_fingerprint,
       
-      // Detailed subject fields (NEW)
+      // Detailed subject fields
       subject_common_name: metadata.subject_common_name,
       subject_organization: metadata.subject_organization,
       subject_organizational_unit: metadata.subject_organizational_unit,
@@ -189,16 +185,16 @@ function mapPKIComponentToCertificate(component) {
       subject_locality: metadata.subject_locality,
       subject_email: metadata.subject_email,
       
-      // Signature info (NEW)
+      // Signature info
       signature_algorithm_oid: metadata.signature_algorithm_oid,
       
-      // Public key details (NEW)
+      // Public key details
       public_key_algorithm_detailed: metadata.public_key_algorithm_detailed,
       public_key_size_detailed: metadata.public_key_size_detailed,
       public_key_exponent: metadata.public_key_exponent,
       public_key_curve: metadata.public_key_curve,
       
-      // Extensions (NEW flattened format)
+      // Extensions
       subject_alt_name: metadata.subject_alt_name || [],
       key_usage: metadata.key_usage || {},
       extended_key_usage: metadata.extended_key_usage || [],
@@ -211,21 +207,26 @@ function mapPKIComponentToCertificate(component) {
 
 // Certificate API methods
 export const certificateAPI = {
-  // Get all certificates for current session
   async getCertificates() {
     try {
-      const sessionId = sessionManager.getSessionId()
-      const response = await api.get(`/session/${sessionId}/components`)
+      const response = await api.get('/certificates')
       
-      // Map each component to frontend certificate format
-      const certificates = response.data.map(component => 
-        mapPKIComponentToCertificate(component)
-      )
-      
-      return {
-        success: true,
-        certificates: certificates,
-        total: certificates.length
+      if (response.data.success && response.data.components) {
+        const certificates = response.data.components.map(component => 
+          mapPKIComponentToCertificate(component)
+        )
+        
+        return {
+          success: true,
+          certificates: certificates,
+          total: certificates.length
+        }
+      } else {
+        return {
+          success: true,
+          certificates: [],
+          total: 0
+        }
       }
     } catch (error) {
       console.error('Error fetching certificates:', error)
@@ -233,12 +234,10 @@ export const certificateAPI = {
     }
   },
 
-  // Upload and analyze certificate
   async uploadCertificate(file, password = null) {
     try {
       const formData = new FormData()
       formData.append('file', file)
-      formData.append('session_id', sessionManager.getSessionId())
       if (password) {
         formData.append('password', password)
       }
@@ -249,7 +248,6 @@ export const certificateAPI = {
         }
       })
 
-      // Refresh certificates after upload
       if (response.data.success) {
         return await this.getCertificates()
       }
@@ -261,11 +259,9 @@ export const certificateAPI = {
     }
   },
 
-  // Delete certificate
   async deleteCertificate(certificateId) {
     try {
-      const sessionId = sessionManager.getSessionId()
-      await api.delete(`/session/${sessionId}/components/${certificateId}`)
+      await api.delete(`/certificates/${certificateId}`)
       return { success: true }
     } catch (error) {
       console.error('Error deleting certificate:', error)
@@ -273,11 +269,9 @@ export const certificateAPI = {
     }
   },
 
-  // Clear session
   async clearSession() {
     try {
-      const sessionId = sessionManager.getSessionId()
-      await api.delete(`/session/${sessionId}`)
+      await api.post('/certificates/clear')
       return { success: true }
     } catch (error) {
       console.error('Error clearing session:', error)
@@ -285,11 +279,9 @@ export const certificateAPI = {
     }
   },
 
-  // Get validation results
   async getValidationResults() {
     try {
-      const sessionId = sessionManager.getSessionId()
-      const response = await api.get(`/session/${sessionId}/validation`)
+      const response = await api.get('/validate')
       return response.data
     } catch (error) {
       console.error('Error fetching validation results:', error)
@@ -302,8 +294,7 @@ export const certificateAPI = {
 export const pkiAPI = {
   async getPKIBundle() {
     try {
-      const sessionId = sessionManager.getSessionId()
-      const response = await api.get(`/pki-bundle?session_id=${sessionId}`)
+      const response = await api.get('/pki-bundle')
       return response.data
     } catch (error) {
       console.error('Error fetching PKI bundle:', error)
@@ -313,9 +304,8 @@ export const pkiAPI = {
 
   async downloadPKIBundle(format = 'json', password) {
     try {
-      const sessionId = sessionManager.getSessionId()
       const config = {
-        params: { session_id: sessionId, format },
+        params: { format },
         responseType: format === 'json' ? 'json' : 'blob'
       }
       
@@ -335,7 +325,7 @@ export const pkiAPI = {
 // Authentication API methods
 export const authAPI = {
   async login(credentials) {
-    const response = await api.post('/auth/token', credentials, {
+    const response = await api.post('/token', credentials, {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
     })
     return response.data
@@ -365,8 +355,5 @@ export const healthAPI = {
   }
 }
 
-// Export the mapping function
 export { mapPKIComponentToCertificate }
-
-// Default export for backward compatibility
 export default api

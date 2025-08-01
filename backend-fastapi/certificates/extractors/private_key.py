@@ -1,3 +1,6 @@
+# backend-fastapi/certificates/extractors/private_key.py
+# FIXED: Updated to use consistent sha256_fingerprint naming and DER encoding
+
 import logging
 from typing import Dict, Any
 from cryptography.hazmat.primitives.asymmetric import rsa, ec, dsa, ed25519, ed448
@@ -14,20 +17,20 @@ def extract_private_key_metadata(private_key, is_encrypted: bool = False) -> Dic
     logger.debug(f"Private key object type: {type(private_key)}")
     logger.debug(f"Private key class name: {type(private_key).__name__}")
     
-    # Calculate public key fingerprint
+    # FIXED: Calculate public key fingerprint using DER encoding for consistency
     public_key = private_key.public_key()
-    public_bytes = public_key.public_bytes(
-        encoding=serialization.Encoding.PEM,
+    public_key_der = public_key.public_bytes(
+        encoding=serialization.Encoding.DER,  # FIXED: Use DER instead of PEM
         format=serialization.PublicFormat.SubjectPublicKeyInfo
     )
-    public_key_fingerprint = hashlib.sha256(public_bytes).hexdigest().upper()
+    sha256_fingerprint = hashlib.sha256(public_key_der).hexdigest().upper()
     
-    # Initialize flattened metadata with basic info
+    # FIXED: Initialize flattened metadata with consistent field name
     metadata = {
         'algorithm': type(private_key).__name__.replace('PrivateKey', ''),
         'key_size': getattr(private_key, 'key_size', None),
         'is_encrypted': is_encrypted,
-        'public_key_fingerprint': public_key_fingerprint
+        'sha256_fingerprint': sha256_fingerprint  # FIXED: Consistent naming
     }
     
     try:

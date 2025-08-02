@@ -222,25 +222,24 @@ class SessionPKIStorage:
                              metadata: Dict[str, Any]) -> Optional[str]:
         """Find duplicate component in session based on type and fingerprint"""
         
-        # FIXED: Expand duplicate detection to include Root CA certificates
+        # FIXED: Expand duplicate detection to include all single-instance component types
         # Only allow ONE instance of these component types per session
         unique_component_types = [
-            PKIComponentType.CSR, 
-            PKIComponentType.PRIVATE_KEY, 
-            PKIComponentType.ROOT_CA  # ✅ ADDED: Root CA replacement support
+            PKIComponentType.CSR,            # ✅ Only one CSR per session (any CSR replaces existing)
+            PKIComponentType.PRIVATE_KEY,    # ✅ Only one Private Key per session
+            PKIComponentType.CERTIFICATE,    # ✅ Only one end-entity Certificate per session
+            PKIComponentType.ISSUING_CA,     # ✅ Only one Issuing CA per session (one cert = one issuer)
+            PKIComponentType.ROOT_CA         # ✅ Only one Root CA per session
         ]
         
         if component_type not in unique_component_types:
             return None
         
         # Get the fingerprint from metadata using consistent field name
-        if component_type == PKIComponentType.CSR:
+        if component_type in [PKIComponentType.CSR, PKIComponentType.PRIVATE_KEY]:
             new_fingerprint = metadata.get('sha256_fingerprint')
-        elif component_type == PKIComponentType.PRIVATE_KEY:
-            new_fingerprint = metadata.get('sha256_fingerprint')
-        elif component_type == PKIComponentType.ROOT_CA:
-            # ✅ ADDED: Root CA fingerprint detection
-            new_fingerprint = metadata.get('fingerprint_sha256')  # Root CAs use 'fingerprint_sha256'
+        elif component_type in [PKIComponentType.ROOT_CA, PKIComponentType.CERTIFICATE, PKIComponentType.ISSUING_CA]:
+            new_fingerprint = metadata.get('fingerprint_sha256')
         else:
             return None
         
@@ -248,31 +247,18 @@ class SessionPKIStorage:
             logger.warning(f"No fingerprint found for {component_type.type_name} duplicate detection")
             return None
         
-        # For Root CA, we replace ANY existing Root CA regardless of fingerprint
-        # because there should only be ONE Root CA per PKI session
-        if component_type == PKIComponentType.ROOT_CA:
-            logger.debug(f"Checking for existing Root CA to replace...")
-            for component in session.components.values():
-                if component.type == PKIComponentType.ROOT_CA:
-                    existing_fingerprint = component.metadata.get('fingerprint_sha256')
-                    logger.info(f"Found existing Root CA (fingerprint: {existing_fingerprint[:16] if existing_fingerprint else 'NONE'}...)")
-                    logger.info(f"Replacing with new Root CA (fingerprint: {new_fingerprint[:16]}...)")
-                    return component.id
-            return None
-        
-        # For other component types, match by exact fingerprint
+        # For all single-instance component types: replace ANY existing component of the same type
+        # Each PKI session should have exactly ONE of each of these components
+        logger.debug(f"Checking for existing {component_type.type_name} to replace...")
         for component in session.components.values():
             if component.type == component_type:
-                if component_type == PKIComponentType.CSR:
-                    existing_fingerprint = component.metadata.get('sha256_fingerprint')
-                elif component_type == PKIComponentType.PRIVATE_KEY:
+                if component_type in [PKIComponentType.CSR, PKIComponentType.PRIVATE_KEY]:
                     existing_fingerprint = component.metadata.get('sha256_fingerprint')
                 else:
-                    continue
-                    
-                if existing_fingerprint == new_fingerprint:
-                    logger.debug(f"Duplicate {component_type.type_name} detected: {new_fingerprint[:16]}...")
-                    return component.id
+                    existing_fingerprint = component.metadata.get('fingerprint_sha256')
+                logger.info(f"Found existing {component_type.type_name} (fingerprint: {existing_fingerprint[:16] if existing_fingerprint else 'NONE'}...)")
+                logger.info(f"Replacing with new {component_type.type_name} (fingerprint: {new_fingerprint[:16] if new_fingerprint else 'NONE'}...)")
+                return component.id
         
         return None
     

@@ -665,8 +665,6 @@ class TestDownloads:
 
     def test_apache_zip_full_content_and_structure(self, test_session_id, sample_certificate, sample_private_key, sample_ca_certificate):
         """📦 Apache ZIP contains expected files with correct structure"""
-        import pyzipper  # ensure pyzipper is imported
-        import tempfile
 
         # Upload certificate and private key
         uploaded = upload_certificate_bundle(
@@ -730,8 +728,6 @@ class TestDownloads:
 
     def test_apache_zip_minimal_content_and_structure(self, test_session_id, sample_certificate, sample_private_key):
         """📦 Apache ZIP contains expected files with correct structure"""
-        import pyzipper  # ensure pyzipper is imported
-        import tempfile
 
         # Upload certificate and private key
         uploaded = upload_certificate_bundle(
@@ -793,8 +789,6 @@ class TestDownloads:
 
     def test_iis_zip_full_content_and_structure(self, test_session_id, sample_certificate, sample_private_key, sample_ca_certificate):
         """📦 IIS ZIP contains expected files with correct structure"""
-        import pyzipper  # ensure pyzipper is imported for AES-encrypted ZIP support
-        import tempfile
 
         # Upload certificate and private key
         uploaded = upload_certificate_bundle(
@@ -865,8 +859,6 @@ class TestDownloads:
 
     def test_iis_zip_minimal_content_and_structure(self, test_session_id, sample_certificate, sample_private_key):
         """📦 IIS ZIP contains expected files with correct structure"""
-        import pyzipper  # ensure pyzipper is imported for AES-encrypted ZIP support
-        import tempfile
 
         # Upload certificate and private key
         uploaded = upload_certificate_bundle(
@@ -1136,8 +1128,6 @@ class TestDownloads:
 
     def test_upload_download_apache_full_workflow(self, test_session_id, sample_certificate, sample_private_key, sample_ca_certificate):
         """🔄 Complete workflow: Upload certificates → Download Apache bundle → Verify"""
-        import tempfile
-        import pyzipper
 
         # Step 1: Upload complete certificate bundle using helper
         uploaded = upload_certificate_bundle(
@@ -1183,8 +1173,6 @@ class TestDownloads:
 
     def test_upload_download_iis_full_workflow(self, test_session_id, sample_certificate, sample_private_key, sample_ca_certificate):
         """🔄 Complete workflow: Upload certificates → Download IIS bundle → Verify"""
-        import tempfile
-        import pyzipper
 
         # Step 1: Upload complete certificate bundle using helper
         uploaded = upload_certificate_bundle(

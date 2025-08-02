@@ -372,7 +372,7 @@ class SecureZipCreator:
         self, 
         certificate: Union[str, bytes], 
         private_key: Union[str, bytes], 
-        ca_bundle: Union[str, bytes],
+        ca_bundle: Optional[Union[str, bytes]], # FIXED: Made optional
         apache_guide: str,
         nginx_guide: str,
         password: Optional[str] = None
@@ -383,7 +383,7 @@ class SecureZipCreator:
         Args:
             certificate: Certificate file content (PEM string or bytes)
             private_key: Private key file content (PEM string or bytes)  
-            ca_bundle: CA bundle file content (PEM string or bytes)
+            ca_bundle: CA bundle file content (PEM string or bytes) - can be None
             apache_guide: Apache installation guide text
             nginx_guide: Nginx installation guide text
             password: Optional password
@@ -396,8 +396,14 @@ class SecureZipCreator:
             certificate = certificate.decode('utf-8')
         if isinstance(private_key, bytes):
             private_key = private_key.decode('utf-8')
-        if isinstance(ca_bundle, bytes):
-            ca_bundle = ca_bundle.decode('utf-8')
+        
+        # FIXED: Handle None ca_bundle
+        if ca_bundle is not None:
+            if isinstance(ca_bundle, bytes):
+                ca_bundle = ca_bundle.decode('utf-8')
+        else:
+            # Create a placeholder message when no CA bundle is available
+            ca_bundle = "# No CA certificates found in this bundle\n# This certificate may be self-signed or the CA certificates were not uploaded\n"
             
         files = {
             'certificate.crt': certificate,

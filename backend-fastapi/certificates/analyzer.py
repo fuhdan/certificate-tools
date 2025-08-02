@@ -1,5 +1,5 @@
 # backend-fastapi/certificates/analyzer.py
-# Updated analyzer to use session-based PKI storage
+# Enhanced analyzer with smart chain management and comprehensive format support
 
 import hashlib
 import logging
@@ -47,7 +47,7 @@ def get_file_format(filename: str) -> str:
 
 def analyze_uploaded_certificate(file_content: bytes, filename: str, password: Optional[str] = None, session_id: Optional[str] = None) -> Dict[str, Any]:
     """
-    Main certificate analysis function - processes file and stores components in session
+    Main certificate analysis function with enhanced chain management
     Returns: analysis results with component IDs
     """
     logger.debug(f"=== SESSION-BASED PKI ANALYSIS START ===")
@@ -75,7 +75,7 @@ def analyze_uploaded_certificate(file_content: bytes, filename: str, password: O
     }
     
     try:
-        # Process based on file format
+        # Process based on file format with enhanced chain management
         if file_format == 'PKCS12':
             component_ids = _process_pkcs12_file(file_content, filename, password, session_id)
             analysis_result["message"] = f"PKCS12 bundle processed: {len(component_ids)} components extracted"
@@ -89,7 +89,7 @@ def analyze_uploaded_certificate(file_content: bytes, filename: str, password: O
             analysis_result["message"] = f"PEM file processed: {len(component_ids)} components extracted"
             
         elif file_format == 'DER':
-            component_ids = _process_der_file(file_content, filename, session_id, password)  # FIXED: Added password parameter
+            component_ids = _process_der_file(file_content, filename, session_id, password)
             analysis_result["message"] = f"DER file processed: {len(component_ids)} components extracted"
             
         elif file_format == 'CSR':
@@ -114,7 +114,7 @@ def analyze_uploaded_certificate(file_content: bytes, filename: str, password: O
     return analysis_result
 
 def _process_pkcs12_file(file_content: bytes, filename: str, password: Optional[str], session_id: str) -> List[str]:
-    """Process PKCS12 file and store components"""
+    """Process PKCS12 file with enhanced chain management"""
     logger.debug("Processing PKCS12 file")
     
     from cryptography.hazmat.primitives.serialization import pkcs12
@@ -137,14 +137,14 @@ def _process_pkcs12_file(file_content: bytes, filename: str, password: Optional[
         except Exception as e:
             raise ValueError(f"Failed to decrypt PKCS12 file: {e}")
     
-    # Use the new session-based processing
+    # Use enhanced session-based processing with chain management
     component_ids = process_pkcs12_bundle(session_id, filename, cert, private_key, additional_certs)
     
     logger.info(f"PKCS12 processing complete: {len(component_ids)} components stored")
     return component_ids
 
 def _process_pkcs7_file(file_content: bytes, filename: str, password: Optional[str], session_id: str) -> List[str]:
-    """Process PKCS7 file and store components"""
+    """Process PKCS7 file with enhanced chain management"""
     logger.debug("Processing PKCS7 file")
     
     # Try PEM format first
@@ -153,8 +153,8 @@ def _process_pkcs7_file(file_content: bytes, filename: str, password: Optional[s
         if '-----BEGIN PKCS7-----' in content_str:
             return _process_pkcs7_pem(content_str, filename, session_id)
         elif '-----BEGIN CERTIFICATE-----' in content_str:
-            # Multiple certificates in PEM format
-            return _process_pem_file(file_content, filename, session_id)
+            # Multiple certificates in PEM format - treat as chain
+            return _process_pem_certificate_chain(file_content, filename, session_id)
     except UnicodeDecodeError:
         pass
     
@@ -182,49 +182,115 @@ def _process_pkcs7_pem(content_str: str, filename: str, session_id: str) -> List
     return _process_pkcs7_der(pkcs7_der, filename, session_id)
 
 def _process_pkcs7_der(file_content: bytes, filename: str, session_id: str) -> List[str]:
-    """Process DER PKCS7 content"""
+    """Process DER PKCS7 content with chain management"""
     from cryptography.hazmat.primitives.serialization import pkcs7
     
     try:
         # Load PKCS7 structure
-        pkcs7_data = pkcs7.load_der_pkcs7_certificates(file_content)
-        logger.debug(f"PKCS7 loaded: {len(pkcs7_data)} certificates")
+        pkcs7_certs = pkcs7.load_der_pkcs7_certificates(file_content)
+        logger.debug(f"PKCS7 loaded: {len(pkcs7_certs)} certificates")
         
-        component_ids = []
+        if not pkcs7_certs:
+            raise ValueError("No certificates found in PKCS7 file")
         
-        # Process each certificate
-        for i, cert in enumerate(pkcs7_data):
-            cert_pem = cert.public_bytes(serialization.Encoding.PEM).decode('utf-8')
-            
-            # Determine certificate type based on CA status
-            is_ca = _is_ca_certificate(cert)
-            is_self_signed = cert.subject == cert.issuer
-            
-            if is_ca:
-                if is_self_signed:
-                    cert_type = PKIComponentType.ROOT_CA
-                else:
-                    cert_type = PKIComponentType.INTERMEDIATE_CA
-            else:
-                cert_type = PKIComponentType.CERTIFICATE
-            
-            # Create metadata
+        # Prepare components data for chain processing
+        components_data = []
+        
+        # Extract certificate metadata for chain analysis
+        all_certs = []
+        for cert in pkcs7_certs:
+            all_certs.append({
+                'subject': cert.subject.rfc4514_string(),
+                'issuer': cert.issuer.rfc4514_string(),
+                'is_ca': _is_ca_certificate(cert),
+                'is_self_signed': cert.subject == cert.issuer,
+                'cert_obj': cert
+            })
+        
+        # Determine PKI roles for all certificates
+        cert_roles = _determine_pki_roles(all_certs)
+        
+        # Create components data with proper roles
+        for cert in pkcs7_certs:
             cert_metadata = extract_certificate_metadata(cert)
+            cert_pem = cert.public_bytes(serialization.Encoding.PEM).decode('utf-8')
+            cert_subject = cert.subject.rfc4514_string()
+            cert_type = cert_roles.get(cert_subject, PKIComponentType.INTERMEDIATE_CA)
             
-            # Store component
-            component_id = session_pki_storage.add_component(
-                session_id, cert_type, cert_pem, filename, cert_metadata
-            )
-            component_ids.append(component_id)
+            components_data.append({
+                'type': cert_type,
+                'content': cert_pem,
+                'metadata': cert_metadata
+            })
         
-        # If we have multiple CA certificates, identify the issuing CA
-        if len([c for c in pkcs7_data if _is_ca_certificate(c)]) > 1:
-            component_ids = _identify_issuing_ca_in_chain(session_id, component_ids)
+        # Process as a chain to handle duplicates and conflicts
+        component_ids = session_pki_storage.process_chain_upload(session_id, filename, components_data)
+        
+        # Log issuing CA identification
+        issuing_ca = None
+        for cert_info in all_certs:
+            cert_subject = cert_info['subject']
+            if cert_roles.get(cert_subject) == PKIComponentType.ISSUING_CA:
+                issuing_ca = cert_subject
+                break
+        
+        if issuing_ca:
+            logger.debug("Identifying issuing CA in certificate chain")
+            logger.info(f"Identified issuing CA: {issuing_ca}")
         
         return component_ids
         
     except Exception as e:
         raise ValueError(f"Failed to process PKCS7 file: {e}")
+
+def _process_pem_certificate_chain(file_content: bytes, filename: str, session_id: str) -> List[str]:
+    """Process multiple certificates in PEM format as a chain"""
+    logger.debug("Processing PEM certificate chain")
+    
+    try:
+        content_str = file_content.decode('utf-8')
+    except UnicodeDecodeError:
+        raise ValueError("File is not valid PEM format")
+    
+    # Extract all certificates
+    cert_pattern = r'-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----'
+    cert_matches = re.findall(cert_pattern, content_str, re.DOTALL)
+    
+    if not cert_matches:
+        raise ValueError("No certificates found in PEM file")
+    
+    # Parse certificates and prepare for chain processing
+    certificates = []
+    components_data = []
+    
+    for cert_pem in cert_matches:
+        cert = x509.load_pem_x509_certificate(cert_pem.encode())
+        certificates.append({
+            'subject': cert.subject.rfc4514_string(),
+            'issuer': cert.issuer.rfc4514_string(),
+            'is_ca': _is_ca_certificate(cert),
+            'is_self_signed': cert.subject == cert.issuer,
+            'cert_obj': cert
+        })
+    
+    # Determine PKI roles
+    cert_roles = _determine_pki_roles(certificates)
+    
+    # Create components data
+    for i, cert_pem in enumerate(cert_matches):
+        cert = x509.load_pem_x509_certificate(cert_pem.encode())
+        cert_metadata = extract_certificate_metadata(cert)
+        cert_subject = cert.subject.rfc4514_string()
+        cert_type = cert_roles.get(cert_subject, PKIComponentType.INTERMEDIATE_CA)
+        
+        components_data.append({
+            'type': cert_type,
+            'content': cert_pem,
+            'metadata': cert_metadata
+        })
+    
+    # Process as a chain
+    return session_pki_storage.process_chain_upload(session_id, filename, components_data)
 
 def _process_pem_file(file_content: bytes, filename: str, session_id: str) -> List[str]:
     """Process PEM file (could contain multiple certificates, keys, CSRs)"""
@@ -237,10 +303,15 @@ def _process_pem_file(file_content: bytes, filename: str, session_id: str) -> Li
     
     component_ids = []
     
-    # Look for certificates
+    # Check if this is a multi-certificate chain
     cert_pattern = r'-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----'
     cert_matches = re.findall(cert_pattern, content_str, re.DOTALL)
     
+    if len(cert_matches) > 1:
+        # Multiple certificates - process as chain
+        return _process_pem_certificate_chain(file_content, filename, session_id)
+    
+    # Single certificate processing
     for cert_pem in cert_matches:
         cert = x509.load_pem_x509_certificate(cert_pem.encode())
         
@@ -355,7 +426,7 @@ def _process_der_file(file_content: bytes, filename: str, session_id: str, passw
         logger.debug(f"DER CSR parsing failed: {csr_error}")
         errors.append(f"CSR: {csr_error}")
     
-    # Try to load as private key third - FIXED: Now uses password parameter
+    # Try to load as private key third
     try:
         # First try without password for unencrypted keys
         try:
@@ -427,42 +498,54 @@ def _process_csr_file(file_content: bytes, filename: str, session_id: str) -> Li
     
     return [component_id]
 
-def _identify_issuing_ca_in_chain(session_id: str, component_ids: List[str]) -> List[str]:
-    """Identify and update the issuing CA in a certificate chain"""
-    logger.debug("Identifying issuing CA in certificate chain")
+def _determine_pki_roles(certificates: List[Dict[str, Any]]) -> Dict[str, PKIComponentType]:
+    """Determine PKI roles for certificates in a chain"""
+    cert_roles = {}
     
-    # Get session components
-    session = session_pki_storage.get_or_create_session(session_id)
-    
-    # Find end-entity certificate
-    end_entity_cert = None
-    for comp_id in component_ids:
-        component = session.components.get(comp_id)
-        if component and component.type == PKIComponentType.CERTIFICATE:
-            end_entity_cert = component
+    # Find end-entity certificate (non-CA)
+    end_entity = None
+    for cert in certificates:
+        if not cert.get('is_ca', False):
+            end_entity = cert
             break
     
-    if not end_entity_cert:
-        logger.debug("No end-entity certificate found, cannot identify issuing CA")
-        return component_ids
+    if not end_entity:
+        # No end-entity found, classify all as CAs based on hierarchy
+        for cert in certificates:
+            if cert.get('is_self_signed', False):
+                cert_roles[cert['subject']] = PKIComponentType.ROOT_CA
+            else:
+                cert_roles[cert['subject']] = PKIComponentType.INTERMEDIATE_CA
+        return cert_roles
     
-    # Find the CA that issued the end-entity certificate
-    end_entity_issuer = end_entity_cert.metadata.get('issuer')
+    # Classify end-entity certificate
+    cert_roles[end_entity['subject']] = PKIComponentType.CERTIFICATE
+    logger.info(f"FOUND END-ENTITY: {end_entity['subject']}")
+    logger.info(f"CLASSIFIED END-ENTITY: {end_entity['subject']}")
     
-    for comp_id in component_ids:
-        component = session.components.get(comp_id)
-        if (component and 
-            component.type == PKIComponentType.INTERMEDIATE_CA and
-            component.metadata.get('subject') == end_entity_issuer):
-            
-            # This is the issuing CA - update its type
-            component.type = PKIComponentType.ISSUING_CA
-            component.order = PKIComponentType.ISSUING_CA.order
-            
-            logger.info(f"Identified issuing CA: {component.metadata.get('subject')}")
-            break
+    # Find issuing CA (directly signed the end-entity)
+    issuing_ca_subject = end_entity.get('issuer')
+    logger.debug(f"Looking for issuing CA with subject: {issuing_ca_subject}")
     
-    return component_ids
+    for cert in certificates:
+        if not cert.get('is_ca', False):
+            continue  # Skip non-CA certificates
+        
+        if cert['subject'] == issuing_ca_subject:
+            # This CA signed the end-entity certificate
+            cert_roles[cert['subject']] = PKIComponentType.ISSUING_CA
+            logger.info(f"CLASSIFIED ISSUING CA: {cert['subject']}")
+        elif cert.get('is_self_signed', False):
+            # Self-signed CA is root CA
+            cert_roles[cert['subject']] = PKIComponentType.ROOT_CA
+            logger.info(f"CLASSIFIED ROOT CA: {cert['subject']}")
+        else:
+            # Other CAs are intermediate CAs
+            cert_roles[cert['subject']] = PKIComponentType.INTERMEDIATE_CA
+            logger.info(f"CLASSIFIED INTERMEDIATE CA: {cert['subject']}")
+    
+    logger.info(f"PKI Chain roles identified: {cert_roles}")
+    return cert_roles
 
 # Helper functions
 def _is_ca_certificate(cert) -> bool:

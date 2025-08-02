@@ -126,10 +126,10 @@ const FloatingPanel = ({ isAuthenticated }) => {
     try {
       const sessionId = sessionManager.getSessionId()
       
-      console.log('Making API call to:', `/api/downloads/apache/${sessionId}`)
+      console.log('Making API call to:', `/downloads/apache/${sessionId}`)
       
       // Make API call to download Apache bundle - compensate for proxy stripping /api
-      const response = await api.post(`/api/downloads/apache/${sessionId}`, {}, {
+      const response = await api.post(`/downloads/apache/${sessionId}`, {}, {
         responseType: 'blob', // Important for binary data
         timeout: 30000 // 30 second timeout for large files
       })

@@ -85,7 +85,7 @@ def list_certificates(session_id, token):
         "Authorization": f"Bearer {token}",
         "X-Session-ID": session_id
     }
-    response = requests.get(f"{API_BASE_URL}/api/certificates", headers=headers)
+    response = requests.get(f"{API_BASE_URL}/certificates", headers=headers)
     return response.status_code, response.json()
 
 
@@ -251,11 +251,6 @@ class TestHealthChecks:
         assert data["status"] == "online"
         assert "endpoints" in data
 
-    def test_dedicated_api_health_check_endpoint_works(self):
-        """✅ Verify dedicated API health check endpoint works"""
-        response = requests.get(f"{API_BASE_URL}/api/health")
-        assert response.status_code == 200
-
 
 # ========================================
 # AUTHENTICATION TESTS
@@ -286,13 +281,13 @@ class TestAuthentication:
 
     def test_protected_endpoints_require_authentication_token(self):
         """🔐 Protected endpoints require authentication token"""
-        response = requests.get(f"{API_BASE_URL}/api/certificates")
+        response = requests.get(f"{API_BASE_URL}/certificates")
         assert response.status_code == 401
 
     def test_valid_jwt_token_not_grants_access_to_protected_endpoints(self, auth_token):
         """🔐 Valid JWT token grants access to protected endpoints"""
         headers = {"Authorization": f"Bearer {auth_token}"}
-        response = requests.get(f"{API_BASE_URL}/api/certificates", headers=headers)
+        response = requests.get(f"{API_BASE_URL}/certificates", headers=headers)
         assert response.status_code == 400
 
 
@@ -392,7 +387,7 @@ class TestCertificateManagement:
     def test_empty_sessions_return_zero_certificates(self, auth_headers):
         """🔍 Empty sessions should return 0 certificates"""
         response = requests.get(
-            f"{API_BASE_URL}/api/certificates",
+            f"{API_BASE_URL}/certificates",
             headers=auth_headers
         )
 
@@ -413,7 +408,7 @@ class TestCertificateManagement:
         )
         assert upload_response.status_code in [200, 201]
         list_response = requests.get(
-            f"{API_BASE_URL}/api/certificates",
+            f"{API_BASE_URL}/certificates",
             headers=auth_headers
         )
         assert list_response.status_code == 200
@@ -493,7 +488,7 @@ class TestDownloads:
         """💾 Apache download with no certificates returns 404"""
         session_id = auth_headers["X-Session-ID"]
         response = requests.post(
-            f"{API_BASE_URL}/api/downloads/apache/{session_id}",
+            f"{API_BASE_URL}/downloads/apache/{session_id}",
             headers=auth_headers
         )
 
@@ -505,7 +500,7 @@ class TestDownloads:
         """💾 IIS download with no certificates returns 404"""
         session_id = auth_headers["X-Session-ID"]
         response = requests.post(
-            f"{API_BASE_URL}/api/downloads/iis/{session_id}",
+            f"{API_BASE_URL}/downloads/iis/{session_id}",
             headers=auth_headers
         )
 
@@ -523,7 +518,7 @@ class TestDownloads:
         # Use different session ID in URL
         different_session_id = str(uuid.uuid4())
         response = requests.post(
-            f"{API_BASE_URL}/api/downloads/apache/{different_session_id}",
+            f"{API_BASE_URL}/downloads/apache/{different_session_id}",
             headers=headers
         )
 
@@ -541,7 +536,7 @@ class TestDownloads:
         # Use different session ID in URL
         different_session_id = str(uuid.uuid4())
         response = requests.post(
-            f"{API_BASE_URL}/api/downloads/iis/{different_session_id}",
+            f"{API_BASE_URL}/downloads/iis/{different_session_id}",
             headers=headers
         )
 
@@ -563,7 +558,7 @@ class TestDownloads:
 
         # Download Apache bundle
         response = requests.post(
-            f"{API_BASE_URL}/api/downloads/apache/{session_id}",
+            f"{API_BASE_URL}/downloads/apache/{session_id}",
             headers=auth_headers
         )
 
@@ -596,7 +591,7 @@ class TestDownloads:
         
         # Download IIS bundle
         response = requests.post(
-            f"{API_BASE_URL}/api/downloads/iis/{session_id}",
+            f"{API_BASE_URL}/downloads/iis/{session_id}",
             headers=auth_headers
         )
         
@@ -635,7 +630,7 @@ class TestDownloads:
             pytest.skip("Could not upload certificate bundle - server issue")
 
         # Download bundle
-        response = requests.post(f"{API_BASE_URL}/api/downloads/apache/{session_id}", headers=auth_headers)
+        response = requests.post(f"{API_BASE_URL}/downloads/apache/{session_id}", headers=auth_headers)
 
         if response.status_code != 200:
             pytest.skip("Download failed - likely missing requirements")
@@ -687,7 +682,7 @@ class TestDownloads:
             pytest.skip("Could not upload certificate bundle - server issue")
 
         # Download bundle
-        response = requests.post(f"{API_BASE_URL}/api/downloads/apache/{session_id}", headers=auth_headers)
+        response = requests.post(f"{API_BASE_URL}/downloads/apache/{session_id}", headers=auth_headers)
 
         if response.status_code != 200:
             pytest.skip("Download failed - likely missing requirements")
@@ -738,7 +733,7 @@ class TestDownloads:
             pytest.skip("Could not upload certificate bundle - server issue")
 
         # Download bundle
-        response = requests.post(f"{API_BASE_URL}/api/downloads/iis/{session_id}", headers=auth_headers)
+        response = requests.post(f"{API_BASE_URL}/downloads/iis/{session_id}", headers=auth_headers)
 
         if response.status_code != 200:
             pytest.skip("Download failed - likely missing requirements")
@@ -799,7 +794,7 @@ class TestDownloads:
             pytest.skip("Could not upload certificate bundle - server issue")
 
         # Download bundle
-        response = requests.post(f"{API_BASE_URL}/api/downloads/iis/{session_id}", headers=auth_headers)
+        response = requests.post(f"{API_BASE_URL}/downloads/iis/{session_id}", headers=auth_headers)
 
         if response.status_code != 200:
             pytest.skip("Download failed - IIS may require CA certificate")
@@ -851,11 +846,11 @@ class TestDownloads:
     def test_download_endpoints_require_authentication(self, test_session_id):
         """🔒 Download endpoints require authentication"""
         # Test Apache endpoint without auth
-        response = requests.post(f"{API_BASE_URL}/api/downloads/apache/{test_session_id}")
+        response = requests.post(f"{API_BASE_URL}/downloads/apache/{test_session_id}")
         assert response.status_code == 400
         
         # Test IIS endpoint without auth
-        response = requests.post(f"{API_BASE_URL}/api/downloads/iis/{test_session_id}")
+        response = requests.post(f"{API_BASE_URL}/downloads/iis/{test_session_id}")
         assert response.status_code == 400
 
     def test_download_endpoints_with_invalid_session_uuid(self, auth_token):
@@ -867,14 +862,14 @@ class TestDownloads:
         for invalid_id in invalid_session_ids:
             # Test Apache endpoint
             response = requests.post(
-                f"{API_BASE_URL}/api/downloads/apache/{invalid_id}",
+                f"{API_BASE_URL}/downloads/apache/{invalid_id}",
                 headers={**headers, "X-Session-ID": invalid_id}
             )
             assert response.status_code == 400, f"Apache endpoint should reject {invalid_id}"
             
             # Test IIS endpoint  
             response = requests.post(
-                f"{API_BASE_URL}/api/downloads/iis/{invalid_id}",
+                f"{API_BASE_URL}/downloads/iis/{invalid_id}",
                 headers={**headers, "X-Session-ID": invalid_id}
             )
             assert response.status_code == 400, f"IIS endpoint should reject {invalid_id}"
@@ -891,7 +886,7 @@ class TestDownloads:
             pytest.skip("Could not upload certificate - server issue")
         
         # Try to download bundle
-        response = requests.post(f"{API_BASE_URL}/api/downloads/apache/{session_id}", headers=auth_headers)
+        response = requests.post(f"{API_BASE_URL}/downloads/apache/{session_id}", headers=auth_headers)
         
         assert response.status_code in [400, 404, 500]  # Should fail gracefully
 
@@ -907,7 +902,7 @@ class TestDownloads:
             pytest.skip("Could not upload certificate - server issue")
         
         # Try to download bundle
-        response = requests.post(f"{API_BASE_URL}/api/downloads/iis/{session_id}", headers=auth_headers)
+        response = requests.post(f"{API_BASE_URL}/downloads/iis/{session_id}", headers=auth_headers)
         
         assert response.status_code in [400, 404, 500]  # Should fail gracefully
 
@@ -926,7 +921,7 @@ class TestDownloads:
             
             # Download bundle
             response = requests.post(
-                f"{API_BASE_URL}/api/downloads/{bundle_type}/{session_id}",
+                f"{API_BASE_URL}/downloads/{bundle_type}/{session_id}",
                 headers=headers
             )
             return response.status_code, len(response.content), response.headers.get("X-Zip-Password", "")
@@ -970,7 +965,7 @@ class TestDownloads:
             pytest.skip("Could not upload certificate bundle - server issue")
         
         # Test Apache download headers
-        response = requests.post(f"{API_BASE_URL}/api/downloads/apache/{session_id}", headers=auth_headers)
+        response = requests.post(f"{API_BASE_URL}/downloads/apache/{session_id}", headers=auth_headers)
         
         if response.status_code == 200:
             # Verify required headers
@@ -989,7 +984,7 @@ class TestDownloads:
         new_headers = {**auth_headers, "X-Session-ID": new_session_id}
         self.upload_certificate_bundle(new_headers, sample_certificate, sample_private_key)
         
-        response = requests.post(f"{API_BASE_URL}/api/downloads/iis/{new_session_id}", headers=new_headers)
+        response = requests.post(f"{API_BASE_URL}/downloads/iis/{new_session_id}", headers=new_headers)
         
         if response.status_code == 200:
             # Verify required headers for IIS
@@ -1030,12 +1025,12 @@ class TestDownloads:
             pytest.skip("Could not upload sufficient certificates for test")
         
         # Step 2: Verify certificates are listed
-        list_response = requests.get(f"{API_BASE_URL}/api/certificates", headers=headers)
+        list_response = requests.get(f"{API_BASE_URL}/certificates", headers=headers)
         assert list_response.status_code == 200
         assert list_response.json()["count"] >= 2
         
         # Step 3: Download Apache bundle
-        download_response = requests.post(f"{API_BASE_URL}/api/downloads/apache/{session_id}", headers=headers)
+        download_response = requests.post(f"{API_BASE_URL}/downloads/apache/{session_id}", headers=headers)
         
         if download_response.status_code != 200:
             pytest.skip("Download failed - likely server configuration issue")
@@ -1081,7 +1076,7 @@ class TestDownloads:
             pytest.skip("Could not upload sufficient certificates for test")
         
         # Step 2: Download IIS bundle
-        download_response = requests.post(f"{API_BASE_URL}/api/downloads/iis/{session_id}", headers=headers)
+        download_response = requests.post(f"{API_BASE_URL}/downloads/iis/{session_id}", headers=headers)
         
         if download_response.status_code != 200:
             pytest.skip("Download failed - likely server configuration issue")
@@ -1142,10 +1137,10 @@ class TestSessionIsolation:
         )
         assert response1.status_code in [200, 201]
 
-        list1 = requests.get(f"{API_BASE_URL}/api/certificates", headers=headers1)
+        list1 = requests.get(f"{API_BASE_URL}/certificates", headers=headers1)
         assert list1.json()["count"] >= 1
 
-        list2 = requests.get(f"{API_BASE_URL}/api/certificates", headers=headers2)
+        list2 = requests.get(f"{API_BASE_URL}/certificates", headers=headers2)
         assert list2.json()["count"] == 0
 
     def test_invalid_session_id_results_in_400_error(self, auth_token, sample_certificate, invalid_session_id):
@@ -1185,7 +1180,7 @@ class TestIntegration:
         cert_response = requests.post(f"{API_BASE_URL}/analyze-certificate", files=cert_files, headers=headers)
         assert cert_response.status_code in [200, 201]
 
-        list_response = requests.get(f"{API_BASE_URL}/api/certificates", headers=headers)
+        list_response = requests.get(f"{API_BASE_URL}/certificates", headers=headers)
         assert list_response.status_code == 200
         assert list_response.json()["count"] >= 1
 
@@ -1323,12 +1318,12 @@ class TestSecurity:
         invalid_token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.invalid.signature"
         headers = {"Authorization": f"Bearer {invalid_token}"}
 
-        response = requests.get(f"{API_BASE_URL}/api/certificates", headers=headers)
+        response = requests.get(f"{API_BASE_URL}/certificates", headers=headers)
         assert response.status_code == 401
 
     def test_protected_endpoint_without_authorization_rejected_with_401(self):
         """🚫 Accessing protected endpoint without 'Authorization' is rejected (401)"""
-        response = requests.get(f"{API_BASE_URL}/api/certificates")
+        response = requests.get(f"{API_BASE_URL}/certificates")
         assert response.status_code == 401
 
 

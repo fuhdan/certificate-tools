@@ -37,12 +37,3 @@ def health_check():
         timestamp=datetime.datetime.now().isoformat(),
         uptime=get_uptime()
     )
-
-@router.get("/api/health", response_model=HealthResponse, tags=["health"])
-def api_health_check():
-    """Health check endpoint for API specifically"""
-    return HealthResponse(
-        status="online",
-        timestamp=datetime.datetime.now().isoformat(),
-        uptime=get_uptime()
-    )

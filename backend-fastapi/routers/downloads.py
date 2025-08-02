@@ -12,7 +12,7 @@ from services.secure_zip_creator import secure_zip_creator, SecureZipCreatorErro
 from services.instruction_generator import InstructionGenerator
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/downloads", tags=["downloads"])
+router = APIRouter(prefix="/downloads", tags=["downloads"])
 
 @router.post("/apache/{session_id}")
 async def download_apache_bundle(

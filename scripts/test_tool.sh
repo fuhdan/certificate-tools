@@ -158,7 +158,7 @@ generate_session_id() {
 
 # Get authentication token
 get_auth_token() {
-    local response=$(curl -s -X POST "$API_BASE_URL/api/token" \
+    local response=$(curl -s -X POST "$API_BASE_URL/token" \
         -H "Content-Type: application/x-www-form-urlencoded" \
         -d "username=$API_USERNAME&password=$API_PASSWORD" \
         --connect-timeout 10 2>/dev/null)
@@ -179,7 +179,7 @@ except:
 test_api_health() {
     echo -e "${YELLOW}Testing API health...${NC}"
     
-    local response=$(curl -s -X GET "$API_BASE_URL/api/health" -w "%{http_code}" --connect-timeout 10 2>/dev/null)
+    local response=$(curl -s -X GET "$API_BASE_URL/health" -w "%{http_code}" --connect-timeout 10 2>/dev/null)
     local http_code="${response: -3}"
     local response_body="${response%???}"
     
@@ -220,7 +220,7 @@ upload_file() {
     fi
 
     # Prepare curl command: add session header only if session_id is non-empty
-    local curl_cmd=(curl -s -X POST "$API_BASE_URL/api/analyze-certificate" \
+    local curl_cmd=(curl -s -X POST "$API_BASE_URL/analyze-certificate" \
         -H "Authorization: Bearer $token" \
         -F "certificate=@$file" \
         -F "password=$PASSWORD" \
@@ -264,7 +264,7 @@ get_session_certificates() {
     local session_id="$1"  # can be empty string ""
     local token="$2"
 
-    local curl_cmd=(curl -s -X GET "$API_BASE_URL/api/certificates" \
+    local curl_cmd=(curl -s -X GET "$API_BASE_URL/certificates" \
         -H "Authorization: Bearer $token" \
         -w "%{http_code}" \
         --connect-timeout 15)
@@ -326,7 +326,7 @@ test_default_session_isolation() {
 
     # Upload to default session (upload without X-Session-ID header)
     echo "  Uploading to default session (no session ID header)..."
-    local response=$(curl -s -X POST "$API_BASE_URL/api/analyze-certificate" \
+    local response=$(curl -s -X POST "$API_BASE_URL/analyze-certificate" \
         -H "Authorization: Bearer $token" \
         -F "certificate=@$default_file" \
         -F "password=$PASSWORD" \
@@ -355,7 +355,7 @@ test_default_session_isolation() {
     fi
 
     # Retrieve certificates from default session (no session header)
-    local default_certs_response=$(curl -s -X GET "$API_BASE_URL/api/certificates" \
+    local default_certs_response=$(curl -s -X GET "$API_BASE_URL/certificates" \
         -H "Authorization: Bearer $token" \
         -w "%{http_code}" \
         --connect-timeout 15 2>/dev/null)
@@ -567,7 +567,7 @@ test_invalid_session_id() {
         if [ -z "$invalid_session" ]; then
             echo "    Testing empty session ID..."
             # Test upload without X-Session-ID header
-            local response=$(curl -s -X POST "$API_BASE_URL/api/analyze-certificate" \
+            local response=$(curl -s -X POST "$API_BASE_URL/analyze-certificate" \
                 -H "Authorization: Bearer $token" \
                 -F "certificate=@$test_file" \
                 -F "password=$PASSWORD" \
@@ -575,7 +575,7 @@ test_invalid_session_id() {
                 --connect-timeout 10 2>/dev/null)
         else
             echo "    Testing invalid session ID: '$invalid_session'"
-            local response=$(curl -s -X POST "$API_BASE_URL/api/analyze-certificate" \
+            local response=$(curl -s -X POST "$API_BASE_URL/analyze-certificate" \
                 -H "Authorization: Bearer $token" \
                 -H "X-Session-ID: $invalid_session" \
                 -F "certificate=@$test_file" \
@@ -629,13 +629,13 @@ test_invalid_session_id() {
     for invalid_session in "${retrieval_tests[@]}"; do
         if [ -z "$invalid_session" ]; then
             echo "    Testing certificate retrieval without session ID..."
-            local response=$(curl -s -X GET "$API_BASE_URL/api/certificates" \
+            local response=$(curl -s -X GET "$API_BASE_URL/certificates" \
                 -H "Authorization: Bearer $token" \
                 -w "%{http_code}" \
                 --connect-timeout 10 2>/dev/null)
         else
             echo "    Testing certificate retrieval with invalid session: '$invalid_session'"
-            local response=$(curl -s -X GET "$API_BASE_URL/api/certificates" \
+            local response=$(curl -s -X GET "$API_BASE_URL/certificates" \
                 -H "Authorization: Bearer $token" \
                 -H "X-Session-ID: $invalid_session" \
                 -w "%{http_code}" \
@@ -800,7 +800,7 @@ test_single_certificate() {
     echo "    Testing $cert_type: $filename"
     
     # Upload to APPLICATION
-    local response=$(curl -s -X POST "$API_BASE_URL/api/analyze-certificate" \
+    local response=$(curl -s -X POST "$API_BASE_URL/analyze-certificate" \
         -H "Authorization: Bearer $token" \
         -H "X-Session-ID: $session_id" \
         -F "certificate=@$cert_file" \
@@ -971,10 +971,10 @@ generate_summary() {
     # API Information
     echo -e "${YELLOW}🌐 API INFORMATION${NC}"
     echo -e "   Base URL: ${BLUE}$API_BASE_URL${NC}"
-    echo -e "   Health Endpoint: /api/health"
-    echo -e "   Auth Endpoint: /api/token"
-    echo -e "   Upload Endpoint: /api/analyze-certificate"
-    echo -e "   Certificates Endpoint: /api/certificates"
+    echo -e "   Health Endpoint: /health"
+    echo -e "   Auth Endpoint: /token"
+    echo -e "   Upload Endpoint: /analyze-certificate"
+    echo -e "   Certificates Endpoint: /certificates"
     echo ""
     
     # Certificate Files Found (using filter)

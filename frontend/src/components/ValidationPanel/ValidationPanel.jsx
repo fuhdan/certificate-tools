@@ -29,7 +29,7 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
     setError(null)
     
     try {
-      const response = await fetch('/api/validation/results', {
+      const response = await fetch('/validation/results', {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',

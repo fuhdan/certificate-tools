@@ -67,8 +67,8 @@ def read_root():
         "endpoints": {
             "health": "/health",
             "login": "/token",
-            "certificates": "/api/certificates",
-            "downloads": "/api/downloads",
+            "certificates": "/certificates",
+            "downloads": "/downloads",
             "docs": "/docs"
         }
     }

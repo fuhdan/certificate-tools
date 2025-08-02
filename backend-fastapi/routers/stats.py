@@ -32,7 +32,7 @@ def get_uptime():
         # Fallback to local start time
         return int(time.time() - _local_start_time)
 
-@router.get("/api/stats", tags=["statistics"])
+@router.get("/stats", tags=["statistics"])
 def get_system_stats(
     current_user: Annotated[User, Depends(get_current_active_user)],
     session_id: str = Depends(get_session_id)

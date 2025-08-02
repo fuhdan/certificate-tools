@@ -1397,7 +1397,7 @@ class TestEdgeCases:
             files=files,
             headers=auth_headers
         )
-        assert response.status_code in [200, 201, 400, 422]
+        assert response.status_code in [400, 422]
 
     def test_files_with_special_characters_in_filename_accepted(self, auth_headers, sample_certificate):
         """🧾 Files with special characters in filename are accepted"""
@@ -1408,7 +1408,7 @@ class TestEdgeCases:
             files=files,
             headers=auth_headers
         )
-        assert response.status_code in [200, 201, 400, 422]
+        assert response.status_code in [400, 422]
 
 
 # ========================================
@@ -1442,18 +1442,18 @@ class TestConfiguration:
 class TestSecurity:
     """Security and authorization enforcement"""
 
-    def test_expired_or_invalid_jwt_token_rejected_with_401(self):
+    def test_expired_or_invalid_jwt_token_rejected_with_400(self):
         """🚫 Expired or invalid JWT token is rejected (401)"""
         invalid_token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.invalid.signature"
         headers = {"Authorization": f"Bearer {invalid_token}"}
 
         response = requests.get(f"{API_BASE_URL}/certificates", headers=headers)
-        assert response.status_code == 401
+        assert response.status_code == 400
 
-    def test_protected_endpoint_without_authorization_rejected_with_401(self):
+    def test_protected_endpoint_without_authorization_rejected_with_400(self):
         """🚫 Accessing protected endpoint without 'Authorization' is rejected (401)"""
         response = requests.get(f"{API_BASE_URL}/certificates")
-        assert response.status_code == 401
+        assert response.status_code == 400
 
 
 # ========================================

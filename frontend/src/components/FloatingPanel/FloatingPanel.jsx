@@ -89,25 +89,36 @@ const FloatingPanel = ({ isAuthenticated }) => {
       return
     }
   
-    const certificates_analysis = certificates.map(cert => cert.analysis).filter(Boolean)
-  
-    // Use only standardized certificate types - no legacy support
-    const hasEndEntityCert = certificates_analysis.some(a => {
-      const type = a?.type
+    // 🔍 DEBUG: Log the certificates array structure
+    console.log("📦 Full certificates array:", certificates)
+    
+    // 🔍 DEBUG: Print each type, with index and fallback info
+    console.log("🧪 Certificate types detected:")
+    certificates.forEach((cert, index) => {
+      if (cert) {
+        console.log(`  [${index}] Type:`, cert.type, "| Raw cert:", cert)
+      } else {
+        console.log(`  [${index}] ❌ Invalid or empty certificate`)
+      }
+    })
+
+    // Use cert.type directly - no need for analysis mapping
+    const hasEndEntityCert = certificates.some(cert => {
+      const type = cert?.type
       return type === 'Certificate' // Standardized end-entity certificate type only
     })
   
     const hasPrivateKey = certificates.some(cert => 
-      cert.analysis?.type === 'PrivateKey' // Standardized private key type only
+      cert.type === 'PrivateKey' // Use cert.type directly
     )
   
-    const hasCACertificates = certificates_analysis.some(a => {
-      const type = a?.type
+    const hasCACertificates = certificates.some(cert => {
+      const type = cert?.type
       return type === 'IssuingCA' || type === 'IntermediateCA' // Standardized CA types only
     })
   
-    const hasRootCA = certificates_analysis.some(a => {
-      const type = a?.type
+    const hasRootCA = certificates.some(cert => {
+      const type = cert?.type
       return type === 'RootCA' // Standardized root CA type only
     })
   

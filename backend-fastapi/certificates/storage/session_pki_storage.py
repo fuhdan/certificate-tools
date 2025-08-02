@@ -4,7 +4,7 @@
 import uuid
 import logging
 from datetime import datetime
-from typing import Dict, Any, List, Optional, Set, Tuple
+from typing import Dict, Any, List, Optional, Set
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -221,7 +221,7 @@ class SessionPKIStorage:
     def _find_duplicate_component(self, session: PKISession, component_type: PKIComponentType, 
                              metadata: Dict[str, Any]) -> Optional[str]:
         """Find duplicate component in session based on type and fingerprint"""
-        
+
         # FIXED: Expand duplicate detection to include all single-instance component types
         # Only allow ONE instance of these component types per session
         unique_component_types = [
@@ -231,10 +231,10 @@ class SessionPKIStorage:
             PKIComponentType.ISSUING_CA,     # ✅ Only one Issuing CA per session (one cert = one issuer)
             PKIComponentType.ROOT_CA         # ✅ Only one Root CA per session
         ]
-        
+
         if component_type not in unique_component_types:
             return None
-        
+
         # Get the fingerprint from metadata using consistent field name
         if component_type in [PKIComponentType.CSR, PKIComponentType.PRIVATE_KEY]:
             new_fingerprint = metadata.get('sha256_fingerprint')
@@ -242,11 +242,11 @@ class SessionPKIStorage:
             new_fingerprint = metadata.get('fingerprint_sha256')
         else:
             return None
-        
+
         if not new_fingerprint:
             logger.warning(f"No fingerprint found for {component_type.type_name} duplicate detection")
             return None
-        
+
         # For all single-instance component types: replace ANY existing component of the same type
         # Each PKI session should have exactly ONE of each of these components
         logger.debug(f"Checking for existing {component_type.type_name} to replace...")
@@ -259,7 +259,7 @@ class SessionPKIStorage:
                 logger.info(f"Found existing {component_type.type_name} (fingerprint: {existing_fingerprint[:16] if existing_fingerprint else 'NONE'}...)")
                 logger.info(f"Replacing with new {component_type.type_name} (fingerprint: {new_fingerprint[:16] if new_fingerprint else 'NONE'}...)")
                 return component.id
-        
+
         return None
     
     def _find_chain_conflict(self, session: PKISession, component_type: PKIComponentType,

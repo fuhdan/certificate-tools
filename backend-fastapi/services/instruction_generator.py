@@ -61,18 +61,29 @@ class InstructionGenerator:
     def _prepare_template_variables(self, cert_data: Dict[str, Any], 
                                    zip_password: Optional[str] = None, 
                                    bundle_password: Optional[str] = None) -> Dict[str, str]:
-        """Prepare variables for template replacement"""
+        """Prepare variables for template replacement - FIXED to handle flat certificate data"""
         
-        # Extract certificate information
-        common_name = cert_data.get('subject', {}).get('commonName', 'example.com')
+        # FIXED: Handle both nested and flat certificate data structures
+        # Extract certificate information - support both formats
+        if isinstance(cert_data.get('subject'), dict):
+            # Nested format: {'subject': {'commonName': 'example.com'}}
+            common_name = cert_data.get('subject', {}).get('commonName', 'example.com')
+        else:
+            # Flat format: {'subject_common_name': 'example.com'}
+            common_name = cert_data.get('subject_common_name', 'example.com')
         
-        # Get SAN domains
+        # Get SAN domains - handle both formats
         san_list = []
-        extensions = cert_data.get('extensions', {})
-        if 'subjectAltName' in extensions:
-            san_data = extensions['subjectAltName']
+        if 'extensions' in cert_data and 'subjectAltName' in cert_data['extensions']:
+            # Nested format
+            san_data = cert_data['extensions']['subjectAltName']
             if isinstance(san_data, dict) and 'dnsNames' in san_data:
                 san_list = san_data['dnsNames']
+        elif 'subject_alt_name' in cert_data:
+            # Flat format: ['DNS:web.example.com', 'IP:192.168.1.100']
+            subject_alt_names = cert_data['subject_alt_name']
+            if isinstance(subject_alt_names, list):
+                san_list = [san.replace('DNS:', '') for san in subject_alt_names if san.startswith('DNS:')]
         
         san_domains = ', '.join(san_list) if san_list else common_name
         
@@ -82,18 +93,29 @@ class InstructionGenerator:
         # Filesystem-safe domain name
         safe_domain_name = domain_name.replace('.', '_').replace('*', 'wildcard')
         
-        # Certificate dates
-        valid_from = cert_data.get('validFrom', 'N/A')
-        valid_to = cert_data.get('validTo', 'N/A')
+        # Certificate dates - handle both formats
+        valid_from = cert_data.get('validFrom') or cert_data.get('not_valid_before', 'N/A')
+        valid_to = cert_data.get('validTo') or cert_data.get('not_valid_after') or cert_data.get('expiry_date', 'N/A')
         
-        # Key information
-        key_info = cert_data.get('publicKey', {})
-        key_algorithm = key_info.get('algorithm', 'RSA')
-        key_size = str(key_info.get('keySize', 2048))
+        # Key information - handle both formats
+        if 'publicKey' in cert_data:
+            # Nested format
+            key_info = cert_data.get('publicKey', {})
+            key_algorithm = key_info.get('algorithm', 'RSA')
+            key_size = str(key_info.get('keySize', 2048))
+        else:
+            # Flat format
+            key_algorithm = cert_data.get('public_key_algorithm', 'RSA')
+            key_size = str(cert_data.get('public_key_size', 2048))
         
-        # Issuer
-        issuer_info = cert_data.get('issuer', {})
-        issuer_name = issuer_info.get('commonName', 'Unknown CA')
+        # Issuer - handle both formats
+        if isinstance(cert_data.get('issuer'), dict):
+            # Nested format
+            issuer_info = cert_data.get('issuer', {})
+            issuer_name = issuer_info.get('commonName', 'Unknown CA')
+        else:
+            # Flat format
+            issuer_name = cert_data.get('issuer_common_name', 'Unknown CA')
         
         # Prepare file names based on template structure from documents
         certificate_filename = f"{safe_domain_name}.crt"

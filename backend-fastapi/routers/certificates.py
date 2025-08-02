@@ -32,10 +32,10 @@ async def analyze_certificate(
         file_content = await file.read()
         
         if len(file_content) == 0:
-            raise HTTPException(status_code=400, detail="Empty file uploaded")
+            raise HTTPException(status_code=422, detail="Empty file uploaded")
         
         if len(file_content) > 10 * 1024 * 1024:  # 10MB limit
-            raise HTTPException(status_code=400, detail="File too large (max 10MB)")
+            raise HTTPException(status_code=422, detail="File too large (max 10MB)")
         
         # Get current state before upload for comparison
         pre_upload_summary = session_pki_storage.get_chain_summary(session_id)
@@ -87,7 +87,9 @@ async def analyze_certificate(
             status_code=201,
             content=response_data
         )
-        
+    except HTTPException:
+        # FIXED: Let HTTPException pass through unchanged
+        raise
     except ValueError as ve:
         error_message = str(ve)
         if "password required" in error_message.lower() or "password" in error_message.lower():

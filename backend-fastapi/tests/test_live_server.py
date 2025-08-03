@@ -1008,8 +1008,6 @@ class TestDownloads:
 
     def test_concurrent_downloads_different_sessions(self, sample_certificate, sample_private_key):
         """🔄 Concurrent downloads from different sessions work independently"""
-        import concurrent.futures
-        import uuid
 
         def download_bundle(session_id, bundle_type):
             headers = {

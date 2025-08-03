@@ -376,10 +376,16 @@ const FloatingPanel = ({ isAuthenticated }) => {
               <ConnectionStatus />
               <SystemMessages />
               <button
-                className={`${styles.pkiBundleButton} ${!isAuthenticated ? styles.disabled : ''}`}
+                className={`${styles.pkiBundleButton} ${!isAuthenticated || !hasAnyFiles ? styles.disabled : ''}`}
                 onClick={handleShowPKIBundle}
-                title={isAuthenticated ? "View PKI Bundle JSON" : "Login required to view PKI Bundle"}
-                disabled={!isAuthenticated}
+                title={
+                  !isAuthenticated 
+                    ? "Login required to view PKI Bundle" 
+                    : !hasAnyFiles 
+                      ? "Upload files to view PKI Bundle"
+                      : "View PKI Bundle JSON"
+                }
+                disabled={!isAuthenticated || !hasAnyFiles}
               >
                 <Package size={16} />
                 View PKI Bundle

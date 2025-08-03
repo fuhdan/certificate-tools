@@ -168,11 +168,15 @@ async def download_iis_bundle(
         except ValueError as e:
             raise HTTPException(status_code=404, detail=f"Certificate data incomplete: {e}")
         
-        # Create PKCS#12 bundle first
+        # FIXED: Generate P12 password
+        p12_password = secure_zip_creator.generate_secure_password()
+        
+        # Create PKCS#12 bundle with password
         p12_bundle = _create_pkcs12_bundle(
             certificate_data['certificate'],
             certificate_data['private_key'],
-            certificate_data['ca_bundle']
+            certificate_data['ca_bundle'],
+            p12_password=p12_password
         )
         
         # Generate installation guide
@@ -182,14 +186,18 @@ async def download_iis_bundle(
             certificate_data=certificate_data
         )
         
-        # Create certificate info text
-        cert_info = _create_certificate_info_text(certificate_data)
+        # Generate ZIP password
+        zip_password = secure_zip_creator.generate_secure_password()
+        
+        # Create certificate info text with both passwords
+        cert_info = _create_certificate_info_text(certificate_data, zip_password, p12_password)
         
         # Create password-protected ZIP bundle using secure_zip_creator
-        zip_data, password = secure_zip_creator.create_iis_bundle(
+        zip_data, _ = secure_zip_creator.create_iis_bundle(
             p12_bundle=p12_bundle,
             iis_guide=iis_guide,
-            cert_info=cert_info
+            cert_info=cert_info,
+            password=zip_password
         )
         
         logger.info(f"IIS bundle created successfully for session: {session_id}")
@@ -199,7 +207,8 @@ async def download_iis_bundle(
             media_type="application/zip",
             headers={
                 "Content-Disposition": f"attachment; filename=iis-bundle-{session_id}.zip",
-                "X-Zip-Password": password,
+                "X-Zip-Password": zip_password,
+                "X-P12-Password": p12_password,
                 "Content-Length": str(len(zip_data))
             }
         )
@@ -378,7 +387,7 @@ def _extract_domain_name_from_metadata(cert_metadata):
     
     return "example.com"  # Default fallback
 
-def _create_pkcs12_bundle(certificate_pem: str, private_key_pem: str, ca_bundle_pem: Optional[str] = None) -> bytes:
+def _create_pkcs12_bundle(certificate_pem: str, private_key_pem: str, ca_bundle_pem: Optional[str] = None, p12_password: Optional[str] = None) -> bytes:
     """Create PKCS#12 bundle from PEM content"""
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.serialization import pkcs12
@@ -410,18 +419,24 @@ def _create_pkcs12_bundle(certificate_pem: str, private_key_pem: str, ca_bundle_
             except Exception as e:
                 logger.warning(f"Failed to load CA certificate: {e}")
     
+    # FIXED: Use password if provided, otherwise no encryption
+    if p12_password:
+        encryption_algorithm = serialization.BestAvailableEncryption(p12_password.encode('utf-8'))
+    else:
+        encryption_algorithm = serialization.NoEncryption()
+    
     # Create PKCS#12 bundle
     p12_data = pkcs12.serialize_key_and_certificates(
         name=b"certificate",
         key=private_key,
         cert=cert,
         cas=additional_certs if additional_certs else None,
-        encryption_algorithm=serialization.NoEncryption()
+        encryption_algorithm=encryption_algorithm
     )
     
     return p12_data
 
-def _create_certificate_info_text(certificate_data: Dict[str, Any]) -> str:
+def _create_certificate_info_text(certificate_data: Dict[str, Any], zip_password: str, p12_password: str) -> str:
     """Create certificate information text"""
     info_lines = [
         "CERTIFICATE INFORMATION",
@@ -442,9 +457,13 @@ def _create_certificate_info_text(certificate_data: Dict[str, Any]) -> str:
     
     info_lines.extend([
         "",
+        "PASSWORDS:",
+        f"ZIP Password: {zip_password}",
+        f"P12 Password: {p12_password}",
+        "",
         "INSTALLATION:",
-        "1. Extract the PKCS#12 file from this ZIP",
-        "2. Import the PKCS#12 file into IIS",
+        "1. Extract the PKCS#12 file from this ZIP using the ZIP password",
+        "2. Import the PKCS#12 file into IIS using the P12 password",
         "3. Follow the IIS installation guide included",
         "",
         "For detailed instructions, see IIS_INSTALLATION_GUIDE.txt",

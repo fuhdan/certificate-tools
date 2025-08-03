@@ -32,6 +32,7 @@ const FloatingPanel = ({ isAuthenticated }) => {
   // NEW: Download-related state
   const [showPasswordModal, setShowPasswordModal] = useState(false)
   const [zipPassword, setZipPassword] = useState('')
+  const [p12Password, setP12Password] = useState('')
   const [isDownloading, setIsDownloading] = useState(false)
   const [downloadError, setDownloadError] = useState(null)
   const [showSuccessNotification, setShowSuccessNotification] = useState(false)
@@ -188,15 +189,79 @@ const FloatingPanel = ({ isAuthenticated }) => {
     }
   }
 
+  // NEW: Windows IIS download handler
+  const handleWindowsIISDownload = async () => {
+    if (!hasRequiredForWindows || isDownloading) return
+
+    setIsDownloading(true)
+    setDownloadError(null)
+
+    try {
+      const sessionId = sessionManager.getSessionId()
+      
+      console.log('Making API call to:', `/downloads/iis/${sessionId}`)
+      
+      // Make API call to download IIS bundle
+      const response = await api.post(`/downloads/iis/${sessionId}`, {}, {
+        responseType: 'blob', // Important for binary data
+        timeout: 30000 // 30 second timeout for large files
+      })
+
+      // Extract both passwords from response headers
+      const zipPassword = response.headers['x-zip-password']
+      const p12Password = response.headers['x-p12-password']
+      
+      if (!zipPassword || !p12Password) {
+        throw new Error('Required passwords not found in response headers')
+      }
+
+      // Create blob URL and trigger download
+      const blob = new Blob([response.data], { type: 'application/zip' })
+      const url = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `iis-bundle-${sessionId.substring(0, 8)}.zip`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      window.URL.revokeObjectURL(url)
+
+      // Show dual password modal
+      setZipPassword(zipPassword)
+      setP12Password(p12Password)
+      setShowPasswordModal(true)
+
+      // Show success notification
+      setSuccessMessage('Windows IIS certificate bundle downloaded successfully!')
+      setShowSuccessNotification(true)
+
+    } catch (error) {
+      console.error('Windows IIS download failed:', error)
+      
+      if (error.response?.status === 404) {
+        setDownloadError('No certificates found. Please upload required certificates first.')
+      } else if (error.response?.status === 400) {
+        setDownloadError('Invalid session or missing required certificate chain.')
+      } else if (error.code === 'ECONNABORTED') {
+        setDownloadError('Download timeout. Please try again.')
+      } else {
+        setDownloadError('Download failed. Please try again.')
+      }
+    } finally {
+      setIsDownloading(false)
+    }
+  }
+
   const handlePasswordModalClose = () => {
     setShowPasswordModal(false)
-    // Security: Clear password from memory
+    // Security: Clear passwords from memory
     setZipPassword('')
+    setP12Password('')
   }
 
   const handlePasswordCopyComplete = () => {
     // Show brief notification when password is copied
-    setSuccessMessage('ZIP password copied to clipboard!')
+    setSuccessMessage('Password copied to clipboard!')
     setShowSuccessNotification(true)
   }
 
@@ -427,12 +492,19 @@ const FloatingPanel = ({ isAuthenticated }) => {
                 {isDownloading ? 'Downloading...' : 'Linux (Apache)'}
               </button>
               <button
-                className={`${styles.downloadButton} ${!hasRequiredForWindows ? styles.disabled : ''}`}
-                disabled={!hasRequiredForWindows}
-                title={hasRequiredForWindows ? "Download PKCS#12 bundle for Windows IIS" : "Full certificate chain required"}
+                className={`${styles.downloadButton} ${!hasRequiredForWindows || isDownloading ? styles.disabled : ''}`}
+                disabled={!hasRequiredForWindows || isDownloading}
+                onClick={handleWindowsIISDownload}
+                title={
+                  isDownloading 
+                    ? "Downloading..." 
+                    : hasRequiredForWindows 
+                      ? "Download PKCS#12 bundle for Windows IIS" 
+                      : "Full certificate chain required"
+                }
               >
                 <Package size={16} />
-                Windows (IIS)
+                {isDownloading ? 'Downloading...' : 'Windows (IIS)'}
               </button>
               <button
                 className={`${styles.downloadButton} ${!hasAnyFiles ? styles.disabled : ''}`}
@@ -469,9 +541,10 @@ const FloatingPanel = ({ isAuthenticated }) => {
         <AdvancedModal onClose={handleCloseAdvanced} />
       )}
 
-      {showPasswordModal && zipPassword && (
+      {showPasswordModal && (zipPassword || p12Password) && (
         <SecurePasswordModal
           password={zipPassword}
+          p12Password={p12Password}
           onClose={handlePasswordModalClose}
           onCopyComplete={handlePasswordCopyComplete}
         />

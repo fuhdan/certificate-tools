@@ -407,7 +407,7 @@ class SecureZipCreator:
             
         files = {
             'certificate.crt': certificate,
-            'private-key.key': private_key,
+            'private-key.pem': private_key,
             'ca-bundle.crt': ca_bundle,
             'APACHE_INSTALLATION_GUIDE.txt': apache_guide,
             'NGINX_INSTALLATION_GUIDE.txt': nginx_guide
@@ -436,7 +436,7 @@ class SecureZipCreator:
             Tuple of (zip_data, password)
         """
         files = {
-            'certificate-bundle.p12': p12_bundle,
+            'certificate-bundle.pfx': p12_bundle,
             'IIS_INSTALLATION_GUIDE.txt': iis_guide,
             'CERTIFICATE_INFO.txt': cert_info
         }

@@ -706,7 +706,7 @@ class TestDownloads:
                 file_list = zip_file.namelist()
                 expected_files = [
                     'certificate.crt',
-                    'private-key.key',
+                    'private-key.pem',
                     'ca-bundle.crt',
                     'APACHE_INSTALLATION_GUIDE.txt',
                     'NGINX_INSTALLATION_GUIDE.txt'
@@ -768,7 +768,7 @@ class TestDownloads:
                 file_list = zip_file.namelist()
                 expected_files = [
                     'certificate.crt',
-                    'private-key.key',
+                    'private-key.pem',
                     'APACHE_INSTALLATION_GUIDE.txt',
                     'NGINX_INSTALLATION_GUIDE.txt'
                 ]
@@ -830,7 +830,7 @@ class TestDownloads:
                 # Check expected files are present
                 file_list = zip_file.namelist()
                 expected_files = [
-                    'certificate-bundle.p12',
+                    'certificate-bundle.pfx',
                     'IIS_INSTALLATION_GUIDE.txt',
                     'CERTIFICATE_INFO.txt'
                 ]
@@ -895,7 +895,7 @@ class TestDownloads:
 
                 file_list = zip_file.namelist()
                 expected_files = [
-                    'certificate-bundle.p12',
+                    'certificate-bundle.pfx',
                     'IIS_INSTALLATION_GUIDE.txt',
                     'CERTIFICATE_INFO.txt'
                 ]
@@ -1213,9 +1213,9 @@ class TestDownloads:
                 files = zip_file.namelist()
 
                 # Check for expected PKCS#12 file
-                assert 'certificate-bundle.p12' in files, "PKCS#12 file missing from ZIP"
+                assert 'certificate-bundle.pfx' in files, "PKCS#12 file missing from ZIP"
 
-                p12_content = zip_file.read('certificate-bundle.p12')
+                p12_content = zip_file.read('certificate-bundle.pfx')
                 assert len(p12_content) > 100, "PKCS#12 file is unexpectedly small"
                 assert p12_content[0:1] == b'\x30', "PKCS#12 file does not start with ASN.1 marker"
 

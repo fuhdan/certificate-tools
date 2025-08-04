@@ -1,4 +1,6 @@
 // frontend/src/components/FloatingPanel/AdvancedModal.jsx
+// Updated AdvancedModal with working API integration
+
 import React, { useState, useMemo, useEffect } from 'react'
 import { 
   X, 
@@ -16,6 +18,8 @@ import {
 } from 'lucide-react'
 import styles from './AdvancedModal.module.css'
 import { useCertificates } from '../../contexts/CertificateContext'
+import { advancedDownloadAPI } from '../../services/api'
+import SecurePasswordModal from './SecurePasswordModal'
 
 const AdvancedModal = ({ onClose }) => {
   const { components } = useCertificates()
@@ -29,6 +33,8 @@ const AdvancedModal = ({ onClose }) => {
   // UI state
   const [isDownloading, setIsDownloading] = useState(false)
   const [downloadError, setDownloadError] = useState(null)
+  const [showPasswordModal, setShowPasswordModal] = useState(false)
+  const [downloadResult, setDownloadResult] = useState(null)
 
   // Check which bundle formats are selected (simple object access, no dependencies)
   const selectedBundles = {
@@ -350,25 +356,39 @@ const AdvancedModal = ({ onClose }) => {
 
     try {
       const downloadConfig = {
-        componentIds: Array.from(selectedComponents),
-        formatSelections: formatSelections,
+        component_ids: Array.from(selectedComponents),
+        format_selections: formatSelections,
         bundles: selectedBundles
       }
 
-      // TODO: Implement actual download API call
-      console.log('Download config:', downloadConfig)
+      console.log('🚀 Starting advanced download with config:', downloadConfig)
+
+      console.log('🚀 Starting advanced download with config:', downloadConfig)
       
-      // Simulate download
-      await new Promise(resolve => setTimeout(resolve, 2000))
+      // Call the API
+      const result = await advancedDownloadAPI.downloadAdvancedBundle(downloadConfig)
       
-      // Close modal on success
-      onClose()
+      console.log('✅ Download completed:', result)
+      
+      // Show password modal
+      if (result.zipPassword) {
+        setDownloadResult(result)
+        setShowPasswordModal(true)
+      }
       
     } catch (error) {
+      console.error('❌ Download failed:', error)
       setDownloadError(error.message || 'Download failed')
     } finally {
       setIsDownloading(false)
     }
+  }
+
+  const handlePasswordModalClose = () => {
+    setShowPasswordModal(false)
+    setDownloadResult(null)
+    // Close the advanced modal after showing password
+    onClose()
   }
 
   const handleOverlayClick = (e) => {
@@ -406,185 +426,195 @@ const AdvancedModal = ({ onClose }) => {
   }
 
   return (
-    <div className={styles.overlay} onClick={handleOverlayClick}>
-      <div className={styles.modal}>
-        <div className={styles.header}>
-          <div className={styles.titleSection}>
-            <Download size={24} className={styles.icon} />
-            <h2>Advanced Download</h2>
-          </div>
-          <div className={styles.actions}>
-            <button className={styles.closeButton} onClick={onClose}>
-              <X size={20} />
-            </button>
-          </div>
-        </div>
-
-        <div className={styles.content}>
-          {/* Security Notice */}
-          <div className={styles.securityNotice}>
-            <Lock size={18} />
-            <div>
-              <strong>Security First</strong>
-              <p>All downloads are provided as password-protected ZIP files, regardless of format selected.</p>
+    <>
+      <div className={styles.overlay} onClick={handleOverlayClick}>
+        <div className={styles.modal}>
+          <div className={styles.header}>
+            <div className={styles.titleSection}>
+              <Download size={24} className={styles.icon} />
+              <h2>Advanced Download</h2>
             </div>
-          </div>
-
-          {/* Component Selection */}
-          <div className={styles.section}>
-            <div className={styles.sectionHeader}>
-              <h3>Step 1: Select Components ({components.length} available)</h3>
-              <button
-                className={styles.selectAllButton}
-                onClick={handleSelectAll}
-              >
-                {components.filter(c => !disabledComponents.has(c.id)).every(c => selectedComponents.has(c.id)) ? 
-                  <>
-                    <CheckSquare size={16} />
-                    Deselect All
-                  </> : 
-                  <>
-                    <Square size={16} />
-                    Select All
-                  </>
-                }
+            <div className={styles.actions}>
+              <button className={styles.closeButton} onClick={onClose}>
+                <X size={20} />
               </button>
             </div>
-
-            <div className={styles.componentList}>
-              {components.map(comp => {
-                const isDisabled = disabledComponents.has(comp.id)
-                const isSelected = selectedComponents.has(comp.id)
-                
-                return (
-                  <div key={comp.id} className={`${styles.componentItem} ${isDisabled ? styles.disabled : ''}`}>
-                    <button
-                      className={styles.selectButton}
-                      onClick={() => handleComponentSelect(comp.id)}
-                      disabled={isDisabled}
-                      title={isDisabled ? 'This component is included in a selected bundle' : ''}
-                    >
-                      {isSelected ? <CheckSquare size={16} /> : <Square size={16} />}
-                    </button>
-
-                    <div className={styles.componentIcon}>
-                      {getComponentIcon(comp.type)}
-                    </div>
-
-                    <div className={styles.componentInfo}>
-                      <div className={styles.componentName}>
-                        {getComponentDisplayName(comp)}
-                        {isDisabled && <span className={styles.disabledNote}> (in bundle)</span>}
-                      </div>
-                      <div className={styles.componentDetails}>
-                        <span className={styles.componentType}>{comp.type}</span>
-                        <span className={styles.componentFilename}>{comp.filename}</span>
-                      </div>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
           </div>
 
-          {/* Format Selection - Show bundle options first, then individual formats */}
-          {availableFormatGroups.length > 0 && (
+          <div className={styles.content}>
+            {/* Security Notice */}
+            <div className={styles.securityNotice}>
+              <Lock size={18} />
+              <div>
+                <strong>Security First</strong>
+                <p>All downloads are provided as password-protected ZIP files, regardless of format selected.</p>
+              </div>
+            </div>
+
+            {/* Component Selection */}
             <div className={styles.section}>
               <div className={styles.sectionHeader}>
-                <h3>Step 2: Select Download Formats</h3>
+                <h3>Step 1: Select Components ({components.length} available)</h3>
+                <button
+                  className={styles.selectAllButton}
+                  onClick={handleSelectAll}
+                >
+                  {components.filter(c => !disabledComponents.has(c.id)).every(c => selectedComponents.has(c.id)) ? 
+                    <>
+                      <CheckSquare size={16} />
+                      Deselect All
+                    </> : 
+                    <>
+                      <Square size={16} />
+                      Select All
+                    </>
+                  }
+                </button>
               </div>
 
-              <div className={styles.formatGroups}>
-                {availableFormatGroups.map(group => (
-                  <div key={group.id} className={styles.formatGroup}>
-                    <div className={styles.formatGroupHeader}>
-                      {group.icon}
-                      <span>{group.title}</span>
-                      {group.bundle && formatSelections[group.id] && (
-                        <button
-                          className={styles.deselectBundle}
-                          onClick={() => handleBundleDeselect(group.id)}
-                          title="Remove bundle selection"
-                        >
-                          <X size={14} />
-                        </button>
-                      )}
+              <div className={styles.componentList}>
+                {components.map(comp => {
+                  const isDisabled = disabledComponents.has(comp.id)
+                  const isSelected = selectedComponents.has(comp.id)
+                  
+                  return (
+                    <div key={comp.id} className={`${styles.componentItem} ${isDisabled ? styles.disabled : ''}`}>
+                      <button
+                        className={styles.selectButton}
+                        onClick={() => handleComponentSelect(comp.id)}
+                        disabled={isDisabled}
+                        title={isDisabled ? 'This component is included in a selected bundle' : ''}
+                      >
+                        {isSelected ? <CheckSquare size={16} /> : <Square size={16} />}
+                      </button>
+
+                      <div className={styles.componentIcon}>
+                        {getComponentIcon(comp.type)}
+                      </div>
+
+                      <div className={styles.componentInfo}>
+                        <div className={styles.componentName}>
+                          {getComponentDisplayName(comp)}
+                          {isDisabled && <span className={styles.disabledNote}> (in bundle)</span>}
+                        </div>
+                        <div className={styles.componentDetails}>
+                          <span className={styles.componentType}>{comp.type}</span>
+                          <span className={styles.componentFilename}>{comp.filename}</span>
+                        </div>
+                      </div>
                     </div>
-                    
-                    <div className={styles.formatOptions}>
-                      {group.options.map(option => (
-                        <label key={option.value} className={styles.formatOption}>
-                          <input
-                            type="radio"
-                            name={group.id}
-                            value={option.value}
-                            checked={formatSelections[group.id] === option.value}
-                            onChange={() => handleFormatSelect(group.id, option.value)}
-                          />
-                          <div className={styles.formatDetails}>
-                            <div className={styles.formatLabel}>{option.label}</div>
-                            <div className={styles.formatDescription}>{option.description}</div>
-                          </div>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             </div>
-          )}
-        </div>
 
-        {/* Footer */}
-        <div className={styles.footer}>
-          {downloadError && (
-            <div className={styles.error}>
-              <AlertCircle size={16} />
-              <span>{downloadError}</span>
-            </div>
-          )}
+            {/* Format Selection - Show bundle options first, then individual formats */}
+            {availableFormatGroups.length > 0 && (
+              <div className={styles.section}>
+                <div className={styles.sectionHeader}>
+                  <h3>Step 2: Select Download Formats</h3>
+                </div>
 
-          <div className={styles.footerActions}>
-            <div className={styles.selectedCount}>
-              {selectedComponents.size} component{selectedComponents.size !== 1 ? 's' : ''} selected
-              {(selectedBundles.pkcs7 || selectedBundles.pkcs12) && (
-                <span> • Bundle format selected</span>
-              )}
-              {hasAnySelections && !allFormatsSelected && (
-                <span> • Select formats to continue</span>
-              )}
-            </div>
-            
-            <div className={styles.actionButtons}>
-              <button
-                className={styles.cancelButton}
-                onClick={onClose}
-                disabled={isDownloading}
-              >
-                Cancel
-              </button>
-              <button
-                className={styles.downloadButton}
-                onClick={handleDownload}
-                disabled={isDownloading || !hasAnySelections || !allFormatsSelected}
-              >
-                {isDownloading ? (
-                  <>
-                    <Loader size={16} className={styles.spinner} />
-                    Preparing Download...
-                  </>
-                ) : (
-                  <>
-                    <Download size={16} />
-                    Download Encrypted ZIP
-                  </>
+                <div className={styles.formatGroups}>
+                  {availableFormatGroups.map(group => (
+                    <div key={group.id} className={styles.formatGroup}>
+                      <div className={styles.formatGroupHeader}>
+                        {group.icon}
+                        <span>{group.title}</span>
+                        {group.bundle && formatSelections[group.id] && (
+                          <button
+                            className={styles.deselectBundle}
+                            onClick={() => handleBundleDeselect(group.id)}
+                            title="Remove bundle selection"
+                          >
+                            <X size={14} />
+                          </button>
+                        )}
+                      </div>
+                      
+                      <div className={styles.formatOptions}>
+                        {group.options.map(option => (
+                          <label key={option.value} className={styles.formatOption}>
+                            <input
+                              type="radio"
+                              name={group.id}
+                              value={option.value}
+                              checked={formatSelections[group.id] === option.value}
+                              onChange={() => handleFormatSelect(group.id, option.value)}
+                            />
+                            <div className={styles.formatDetails}>
+                              <div className={styles.formatLabel}>{option.label}</div>
+                              <div className={styles.formatDescription}>{option.description}</div>
+                            </div>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Footer */}
+          <div className={styles.footer}>
+            {downloadError && (
+              <div className={styles.error}>
+                <AlertCircle size={16} />
+                <span>{downloadError}</span>
+              </div>
+            )}
+
+            <div className={styles.footerActions}>
+              <div className={styles.selectedCount}>
+                {selectedComponents.size} component{selectedComponents.size !== 1 ? 's' : ''} selected
+                {(selectedBundles.pkcs7 || selectedBundles.pkcs12) && (
+                  <span> • Bundle format selected</span>
                 )}
-              </button>
+                {hasAnySelections && !allFormatsSelected && (
+                  <span> • Select formats to continue</span>
+                )}
+              </div>
+              
+              <div className={styles.actionButtons}>
+                <button
+                  className={styles.cancelButton}
+                  onClick={onClose}
+                  disabled={isDownloading}
+                >
+                  Cancel
+                </button>
+                <button
+                  className={styles.downloadButton}
+                  onClick={handleDownload}
+                  disabled={isDownloading || !hasAnySelections || !allFormatsSelected}
+                >
+                  {isDownloading ? (
+                    <>
+                      <Loader size={16} className={styles.spinner} />
+                      Preparing Download...
+                    </>
+                  ) : (
+                    <>
+                      <Download size={16} />
+                      Download Encrypted ZIP
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         </div>
       </div>
-    </div>
+
+      {/* Password Modal */}
+      {showPasswordModal && downloadResult && (
+        <SecurePasswordModal
+          password={downloadResult.zipPassword}
+          onClose={handlePasswordModalClose}
+        />
+      )}
+    </>
   )
 }
 

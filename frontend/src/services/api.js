@@ -1,5 +1,5 @@
 // frontend/src/services/api.js
-// FIXED: Updated to use sha256_fingerprint and correct endpoints
+// FIXED: Updated to use sha256_fingerprint and correct endpoints + ADDED advanced downloads
 
 import axios from 'axios'
 import { sessionManager } from './sessionManager'
@@ -7,7 +7,7 @@ import { sessionManager } from './sessionManager'
 // Create axios instance with base configuration
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || '/api',
-  timeout: 30000,
+  timeout: 30000, // Increased for downloads
   headers: {
     'Content-Type': 'application/json'
   }
@@ -292,6 +292,152 @@ export const certificateAPI = {
     } catch (error) {
       console.error('Error fetching validation results:', error)
       throw new Error(error.response?.data?.message || 'Failed to fetch validation results')
+    }
+  }
+}
+
+// 🆕 Advanced Downloads API - ADDED TO EXISTING API
+export const advancedDownloadAPI = {
+  /**
+   * Get available download formats for session components
+   */
+  async getAvailableFormats() {
+    try {
+      const sessionId = sessionManager.getSessionId()
+      const response = await api.get(`/downloads/advanced/formats/${sessionId}`)
+      return response.data
+    } catch (error) {
+      console.error('Error getting available formats:', error)
+      throw new Error(error.response?.data?.detail || 'Failed to get available formats')
+    }
+  },
+
+  /**
+   * Download advanced bundle with custom format selections
+   * @param {Object} downloadConfig - Download configuration
+   * @param {string[]} downloadConfig.component_ids - Selected component IDs  
+   * @param {Object} downloadConfig.format_selections - Format selections for components
+   * @param {Object} downloadConfig.bundles - Bundle selections
+   */
+  async downloadAdvancedBundle(downloadConfig) {
+    try {
+      const sessionId = sessionManager.getSessionId()
+      
+      console.log('🔥 Downloading advanced bundle with config:', downloadConfig)
+      console.log('🔥 Session ID:', sessionId)
+      console.log('🔥 API URL:', `/downloads/advanced/download/${sessionId}`)
+      
+      const response = await api.post(
+        `/downloads/advanced/download/${sessionId}`,
+        downloadConfig,
+        {
+          responseType: 'blob', // Important for binary data
+          timeout: 60000, // 60 seconds for large downloads
+        }
+      )
+
+      console.log('🔥 Response received:', response.status, response.headers)
+
+      // Extract password from response headers
+      const zipPassword = response.headers['x-zip-password']
+      const p12Password = response.headers['x-p12-password']
+      
+      // Create download filename
+      const contentDisposition = response.headers['content-disposition']
+      let filename = 'advanced-bundle.zip'
+      if (contentDisposition) {
+        const filenameMatch = contentDisposition.match(/filename=([^;]+)/)
+        if (filenameMatch) {
+          filename = filenameMatch[1].replace(/"/g, '')
+        }
+      }
+
+      // Trigger download
+      const blob = new Blob([response.data], { type: 'application/zip' })
+      const downloadUrl = window.URL.createObjectURL(blob)
+      
+      const link = document.createElement('a')
+      link.href = downloadUrl
+      link.download = filename
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      
+      // Clean up
+      window.URL.revokeObjectURL(downloadUrl)
+
+      return {
+        success: true,
+        filename,
+        zipPassword,
+        p12Password
+      }
+
+    } catch (error) {
+      console.error('❌ Error downloading advanced bundle:', error)
+      console.error('❌ Error response:', error.response?.data)
+      console.error('❌ Error status:', error.response?.status)
+      throw new Error(error.response?.data?.detail || 'Download failed')
+    }
+  }
+}
+
+// Enhanced Download API methods - EXISTING + ENHANCED
+export const downloadAPI = {
+  async downloadApacheBundle() {
+    try {
+      const sessionId = sessionManager.getSessionId()
+      const response = await api.post(`/downloads/apache/${sessionId}`, {}, {
+        responseType: 'blob',
+        timeout: 60000,
+      })
+
+      const zipPassword = response.headers['x-zip-password']
+      const blob = new Blob([response.data], { type: 'application/zip' })
+      
+      // Trigger download
+      const downloadUrl = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = downloadUrl
+      link.download = `apache-bundle-${sessionId}.zip`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      window.URL.revokeObjectURL(downloadUrl)
+
+      return { success: true, zipPassword }
+    } catch (error) {
+      console.error('Error downloading Apache bundle:', error)
+      throw new Error(error.response?.data?.detail || 'Apache download failed')
+    }
+  },
+
+  async downloadIISBundle() {
+    try {
+      const sessionId = sessionManager.getSessionId()
+      const response = await api.post(`/downloads/iis/${sessionId}`, {}, {
+        responseType: 'blob',
+        timeout: 60000,
+      })
+
+      const zipPassword = response.headers['x-zip-password']
+      const p12Password = response.headers['x-p12-password']
+      const blob = new Blob([response.data], { type: 'application/zip' })
+      
+      // Trigger download
+      const downloadUrl = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = downloadUrl
+      link.download = `iis-bundle-${sessionId}.zip`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      window.URL.revokeObjectURL(downloadUrl)
+
+      return { success: true, zipPassword, p12Password }
+    } catch (error) {
+      console.error('Error downloading IIS bundle:', error)
+      throw new Error(error.response?.data?.detail || 'IIS download failed')
     }
   }
 }

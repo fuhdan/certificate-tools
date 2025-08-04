@@ -11,7 +11,8 @@ import secrets
 import string
 import zipfile
 import logging
-from typing import Tuple, Optional, Union, Mapping
+from typing import Tuple, Optional, Union, Mapping, Dict
+from datetime import datetime
 from pathlib import Path
 import tempfile
 import shutil
@@ -467,6 +468,83 @@ class SecureZipCreator:
         logger.debug(f"Estimated memory usage: {estimated_memory:.0f} bytes")
         return int(estimated_memory)
 
+    def create_advanced_bundle(
+        self,
+        files: Optional[Dict[str, bytes]] = None,
+        bundles: Optional[Dict[str, bytes]] = None,
+        readme: Optional[str] = None
+    ) -> Tuple[bytes, str]:
+        """
+        Create advanced download bundle with multiple files and bundles
+        Uses SAME encryption method as Apache/IIS downloads (pyzipper AES-256)
+        """
+        logger.debug("Creating advanced download bundle")
+
+        # Fix type issues - handle None values properly
+        files = files or {}
+        bundles = bundles or {}
+        readme = readme or ""
+
+        if not files and not bundles:
+            raise SecureZipCreatorError("No files or bundles provided for advanced bundle")
+
+        # Prepare files for ZIP creation using SAME method as create_protected_zip
+        zip_files = {}
+
+        # Add individual component files - NO FOLDER STRUCTURE
+        if files:
+            logger.debug(f"Adding {len(files)} individual files")
+            for filename, file_data in files.items():
+                zip_files[filename] = file_data
+
+        # Add bundle files - NO FOLDER STRUCTURE  
+        if bundles:
+            logger.debug(f"Adding {len(bundles)} bundle files")
+            for filename, bundle_data in bundles.items():
+                # Handle password-prefixed bundles
+                if filename.endswith('.p12') and bundle_data.startswith(b'PKCS12_PASSWORD='):
+                    # Extract password info and clean bundle data
+                    lines = bundle_data.split(b'\n', 1)
+                    password_line = lines[0].decode()
+                    clean_bundle = lines[1] if len(lines) > 1 else b''
+
+                    # Add bundle file directly to root
+                    zip_files[filename] = clean_bundle
+
+                    # Add password info file directly to root
+                    password_filename = filename.replace('.p12', '_password.txt')
+                    password_info = f"PKCS#12 Bundle Password\n{'=' * 30}\n\n{password_line.replace('PKCS12_PASSWORD=', '')}\n\nWARNING: Store this password securely!\nYou will need it to import the PKCS#12 bundle."
+                    zip_files[password_filename] = password_info
+                else:
+                    # Add directly to root
+                    zip_files[filename] = bundle_data
+
+        # Add README if provided - directly to root
+        if readme:
+            zip_files["README.txt"] = readme
+
+        # Add download info - directly to root  
+        password = self.generate_secure_password()
+        download_info = self._create_advanced_download_info(password)
+        zip_files["DOWNLOAD_INFO.txt"] = download_info
+
+        # Use the SAME create_protected_zip method as Apache/IIS (with pyzipper AES-256)
+        logger.info("Creating AES-256 encrypted advanced bundle using same method as Apache/IIS")
+        return self.create_protected_zip(zip_files, password)
+
+    def _create_advanced_download_info(self, zip_password: str) -> str:
+        """Create advanced download information file using instruction generator"""
+
+        # Use the instruction generator for consistent formatting
+        from services.instruction_generator import InstructionGenerator
+        instruction_generator = InstructionGenerator()
+
+        # We don't have session_id or component_count here, so use fallback
+        return instruction_generator.generate_advanced_download_info(
+            session_id="SESSION", 
+            component_count=1, 
+            zip_password=zip_password
+        )
 
 # Global service instance
 secure_zip_creator = SecureZipCreator()

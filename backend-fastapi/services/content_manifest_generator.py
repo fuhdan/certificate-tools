@@ -113,10 +113,21 @@ class ContentManifestGenerator:
             description = self._get_file_description(component)
             file_descriptions.append(f"{component.filename}:\n  {description}")
         
+        # ADD THE MANIFEST ITSELF to the file listing
+        manifest_description = "Bundle contents manifest and file information"
+        manifest_size_estimate = 2048  # Reasonable estimate for manifest file size
+        
+        file_list.append(f"- CONTENT_MANIFEST.txt ({manifest_size_estimate:,} bytes)")
+        file_descriptions.append(f"CONTENT_MANIFEST.txt:\n  {manifest_description}")
+        
+        # Update totals to include manifest
+        total_size += manifest_size_estimate
+        total_files = len(selected_components) + 1  # +1 for manifest
+        
         variables.update({
             'file_list': '\n'.join(file_list),
             'file_descriptions': '\n\n'.join(file_descriptions),
-            'total_files': str(len(selected_components)),
+            'total_files': str(total_files),
             'total_size': f"{total_size:,}",
             'total_size_mb': f"{total_size / (1024*1024):.2f}"
         })
@@ -145,9 +156,37 @@ class ContentManifestGenerator:
     def _get_file_description(self, component: PKIComponent) -> str:
         """Generate description based on PKI component type and metadata"""
         
+        if not component.metadata:
+            return f"{component.type.type_name} component ({component.filename})"
+        
         metadata = component.metadata
         
+        # Check if this is a text file based on metadata or filename
+        if (metadata.get('file_type') == 'text' or 
+            component.filename.endswith('.txt') or 
+            component.filename.endswith('.md')):
+            # Use description from metadata if available
+            if 'description' in metadata:
+                return metadata['description']
+            
+            # Generate description based on filename patterns
+            if 'INSTALLATION_GUIDE' in component.filename.upper():
+                server_type = component.filename.upper().split('_')[0].lower()
+                return f"{server_type.title()} web server installation guide"
+            elif 'CERTIFICATE_INFO' in component.filename.upper():
+                return "Certificate information and passwords"
+            elif 'README' in component.filename.upper():
+                return "Bundle information and instructions"
+            else:
+                return f"Text file: {component.filename}"
+        
+        # Handle PKI component types - but check for text file metadata first
         if component.type == PKIComponentType.PRIVATE_KEY:
+            # Check if this is actually a text file using our component type as placeholder
+            if metadata.get('file_type') == 'text':
+                return metadata.get('description', f'Text file: {component.filename}')
+            
+            # This is a real private key
             algorithm = metadata.get('algorithm', 'Unknown')
             key_size = metadata.get('key_size', 'Unknown')
             is_encrypted = metadata.get('is_encrypted', False)
@@ -155,33 +194,46 @@ class ContentManifestGenerator:
             return f"Private key ({algorithm} {key_size}-bit, {encryption_status})"
         
         elif component.type == PKIComponentType.CSR:
-            subject = metadata.get('subject', 'Unknown subject')
-            algorithm = metadata.get('public_key_algorithm', 'Unknown')
-            key_size = metadata.get('public_key_size', 'Unknown')
-            return f"Certificate Signing Request for {subject} ({algorithm} {key_size}-bit)"
+            # Only use CSR description if it's actually a CSR file
+            if component.filename.endswith('.csr') or 'CSR' in component.filename.upper():
+                subject = metadata.get('subject', 'Unknown subject')
+                algorithm = metadata.get('public_key_algorithm', 'Unknown')
+                key_size = metadata.get('public_key_size', 'Unknown')
+                return f"Certificate Signing Request for {subject} ({algorithm} {key_size}-bit)"
+            else:
+                # This is a text file misclassified as CSR - use description from metadata
+                return metadata.get('description', f'Text file: {component.filename}')
         
         elif component.type == PKIComponentType.CERTIFICATE:
             subject = metadata.get('subject', 'Unknown subject')
             algorithm = metadata.get('public_key_algorithm', 'Unknown')
             key_size = metadata.get('public_key_size', 'Unknown')
+            
+            # Special handling for P12 bundles
+            if metadata.get('format') == 'PKCS#12':
+                contains = metadata.get('contains', 'Certificate bundle')
+                password_protected = metadata.get('password_protected', 'Unknown')
+                return f"PKCS#12 bundle for {subject} - {contains} (Password protected: {password_protected})"
+            
             return f"End-entity certificate for {subject} ({algorithm} {key_size}-bit)"
         
         elif component.type in [PKIComponentType.ROOT_CA, PKIComponentType.INTERMEDIATE_CA, PKIComponentType.ISSUING_CA]:
             subject = metadata.get('subject', 'Unknown CA')
-            algorithm = metadata.get('public_key_algorithm', 'Unknown')
-            key_size = metadata.get('public_key_size', 'Unknown')
-            return f"{component.type.type_name} certificate for {subject} ({algorithm} {key_size}-bit)"
+            
+            # Check if this is actually a CA certificate or just a text file with CA bundle content
+            if component.filename.endswith(('.crt', '.cer', '.pem')) and not component.filename.startswith('ca-bundle'):
+                algorithm = metadata.get('public_key_algorithm', 'Unknown')
+                key_size = metadata.get('public_key_size', 'Unknown')
+                return f"{component.type.type_name} certificate for {subject} ({algorithm} {key_size}-bit)"
+            else:
+                # This is likely a CA bundle file
+                return metadata.get('description', 'Certificate Authority bundle')
         
         else:
+            # Fallback for any other types
+            if 'description' in metadata:
+                return metadata['description']
             return f"{component.type.type_name} component ({component.filename})"
-    
-    def _find_certificate_component(self, components: List[PKIComponent]) -> Optional[PKIComponent]:
-        """Find the first certificate component for extracting cert info"""
-        for component in components:
-            if component.type in [PKIComponentType.CERTIFICATE, PKIComponentType.ROOT_CA, 
-                                 PKIComponentType.INTERMEDIATE_CA, PKIComponentType.ISSUING_CA]:
-                return component
-        return None
     
     def _extract_certificate_variables(self, cert_component: PKIComponent) -> Dict[str, str]:
         """Extract certificate-specific variables"""
@@ -342,3 +394,11 @@ Component Format: PEM"""
             result = result.replace(placeholder, str(value))
         
         return result
+
+    def _find_certificate_component(self, components: List[PKIComponent]) -> Optional[PKIComponent]:
+        """Find the first certificate component for extracting cert info"""
+        for component in components:
+            if component.type in [PKIComponentType.CERTIFICATE, PKIComponentType.ROOT_CA, 
+                                 PKIComponentType.INTERMEDIATE_CA, PKIComponentType.ISSUING_CA]:
+                return component
+        return None

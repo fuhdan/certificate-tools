@@ -143,6 +143,7 @@ async def _prepare_download_package(request: AdvancedDownloadRequest, session, s
     logger.info(f"🔥 Preparing download package for {len(request.component_ids)} components")
     
     files = {}
+    selected_components = []  # For manifest generation
     
     # Extract certificate data for instruction generation
     certificate_data = _extract_certificate_data_from_session(session, request.component_ids)
@@ -151,6 +152,9 @@ async def _prepare_download_package(request: AdvancedDownloadRequest, session, s
     for component_id in request.component_ids:
         component = session.components[component_id]
         logger.info(f"🔥 Processing component: {component.filename}")
+        
+        # Add to selected components for manifest
+        selected_components.append(component)
         
         # For now, just include the original content
         filename = f"{component.filename}"
@@ -172,7 +176,9 @@ async def _prepare_download_package(request: AdvancedDownloadRequest, session, s
     package = {
         "files": files,
         "bundles": {},
-        "readme": readme
+        "readme": readme,
+        "session_id": session_id,
+    "selected_components": selected_components
     }
     
     logger.info(f"✅ Package prepared with {len(files)} files")

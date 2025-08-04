@@ -11,7 +11,7 @@ import secrets
 import string
 import zipfile
 import logging
-from typing import Tuple, Optional, Union, Mapping, Dict
+from typing import Tuple, Optional, Union, Mapping, Dict, List
 from datetime import datetime
 from pathlib import Path
 import tempfile
@@ -370,27 +370,18 @@ class SecureZipCreator:
             raise ZipValidationError(f"Failed to validate ZIP integrity: {e}")
     
     def create_apache_bundle(
-        self, 
-        certificate: Union[str, bytes], 
-        private_key: Union[str, bytes], 
-        ca_bundle: Optional[Union[str, bytes]], # FIXED: Made optional
+        self,
+        certificate: Union[bytes, str],
+        private_key: Union[bytes, str],
+        ca_bundle: Optional[Union[bytes, str]],
         apache_guide: str,
         nginx_guide: str,
-        password: Optional[str] = None
+        password: Optional[str] = None,
+        session_id: Optional[str] = None,
+        selected_components: Optional[List] = None
     ) -> Tuple[bytes, str]:
         """
-        Create Apache certificate bundle ZIP file with AES-256 encryption.
-        
-        Args:
-            certificate: Certificate file content (PEM string or bytes)
-            private_key: Private key file content (PEM string or bytes)  
-            ca_bundle: CA bundle file content (PEM string or bytes) - can be None
-            apache_guide: Apache installation guide text
-            nginx_guide: Nginx installation guide text
-            password: Optional password
-            
-        Returns:
-            Tuple of (zip_data, password)
+        Create password-protected ZIP file for Apache with installation guides and manifest.
         """
         # Convert bytes to strings if needed
         if isinstance(certificate, bytes):
@@ -414,7 +405,25 @@ class SecureZipCreator:
             'NGINX_INSTALLATION_GUIDE.txt': nginx_guide
         }
         
-        logger.info("Creating AES-256 encrypted Apache certificate bundle")
+        # Generate manifest using ACTUAL ZIP FILES instead of original components
+        if session_id:
+            # Ensure strings for manifest generation
+            cert_str = str(certificate)
+            key_str = str(private_key) 
+            ca_str = str(ca_bundle)
+            
+            manifest_components = self._create_apache_manifest_components(
+                cert_str, key_str, ca_str, apache_guide, nginx_guide, selected_components
+            )
+            manifest = self._generate_content_manifest(
+                manifest_components, 
+                "Apache/Nginx", 
+                session_id, 
+                password
+            )
+            files['CONTENT_MANIFEST.txt'] = manifest
+        
+        logger.info("Creating AES-256 encrypted Apache certificate bundle with manifest")
         return self.create_protected_zip(files, password)
     
     def create_iis_bundle(
@@ -422,19 +431,13 @@ class SecureZipCreator:
         p12_bundle: bytes,
         iis_guide: str, 
         cert_info: str,
-        password: Optional[str] = None
+        password: Optional[str] = None,
+        session_id: Optional[str] = None,
+        selected_components: Optional[List] = None,
+        bundle_password: Optional[str] = None
     ) -> Tuple[bytes, str]:
         """
-        Create password-protected ZIP file for IIS with PKCS#12 bundle.
-        
-        Args:
-            p12_bundle: PKCS#12 bundle file content
-            iis_guide: IIS installation guide text
-            cert_info: Certificate information text
-            password: Optional password
-            
-        Returns:
-            Tuple of (zip_data, password)
+        Create password-protected ZIP file for IIS with PKCS#12 bundle and manifest.
         """
         files = {
             'certificate-bundle.pfx': p12_bundle,
@@ -442,7 +445,21 @@ class SecureZipCreator:
             'CERTIFICATE_INFO.txt': cert_info
         }
         
-        logger.info("Creating AES-256 encrypted IIS certificate bundle")
+        # Generate manifest using ACTUAL ZIP FILES instead of original components
+        if session_id:
+            manifest_components = self._create_iis_manifest_components(
+                p12_bundle, iis_guide, cert_info, selected_components, bundle_password
+            )
+            manifest = self._generate_content_manifest(
+                manifest_components, 
+                "IIS/Windows", 
+                session_id, 
+                password,
+                bundle_password
+            )
+            files['CONTENT_MANIFEST.txt'] = manifest
+        
+        logger.info("Creating AES-256 encrypted IIS certificate bundle with manifest")
         return self.create_protected_zip(files, password)
     
     def get_memory_usage_estimate(self, files: Mapping[str, Union[bytes, str]]) -> int:
@@ -470,58 +487,58 @@ class SecureZipCreator:
 
     def create_advanced_bundle(
         self,
-        files: Optional[Dict[str, bytes]] = None,
-        bundles: Optional[Dict[str, bytes]] = None,
+        files: Dict[str, Union[bytes, str]],
+        bundles: Dict[str, Union[bytes, str]],
+        password: Optional[str] = None,
+        session_id: Optional[str] = None,
+        selected_components: Optional[List] = None,
         readme: Optional[str] = None
     ) -> Tuple[bytes, str]:
         """
-        Create advanced download bundle with multiple files and bundles
-        Uses SAME encryption method as Apache/IIS downloads (pyzipper AES-256)
+        Create password-protected ZIP file for advanced downloads with manifest.
+        
+        Args:
+            files: Dictionary of filename -> content for individual files
+            bundles: Dictionary of bundle_name -> bundle_data for bundled files
+            password: Optional password
+            session_id: Session identifier for manifest
+            selected_components: List of PKI components for manifest generation
+            readme: Optional README content
+            
+        Returns:
+            Tuple of (zip_data, password)
         """
-        logger.debug("Creating advanced download bundle")
-
-        # Fix type issues - handle None values properly
-        files = files or {}
-        bundles = bundles or {}
-        readme = readme or ""
-
-        if not files and not bundles:
-            raise SecureZipCreatorError("No files or bundles provided for advanced bundle")
-
-        # Prepare files for ZIP creation using SAME method as create_protected_zip
         zip_files = {}
-
-        # Add individual component files - NO FOLDER STRUCTURE
-        if files:
-            logger.debug(f"Adding {len(files)} individual files")
-            for filename, file_data in files.items():
-                zip_files[filename] = file_data
-
-        # Add bundle files - NO FOLDER STRUCTURE  
-        if bundles:
-            logger.debug(f"Adding {len(bundles)} bundle files")
-            for filename, bundle_data in bundles.items():
-                # Handle password-prefixed bundles
-                if filename.endswith('.p12') and bundle_data.startswith(b'PKCS12_PASSWORD='):
-                    # Extract password info and clean bundle data
-                    lines = bundle_data.split(b'\n', 1)
-                    password_line = lines[0].decode()
-                    clean_bundle = lines[1] if len(lines) > 1 else b''
-
-                    # Add bundle file directly to root
-                    zip_files[filename] = clean_bundle
-
-                    # Add password info file directly to root
-                    password_filename = filename.replace('.p12', '_password.txt')
-                    password_info = f"PKCS#12 Bundle Password\n{'=' * 30}\n\n{password_line.replace('PKCS12_PASSWORD=', '')}\n\nWARNING: Store this password securely!\nYou will need it to import the PKCS#12 bundle."
-                    zip_files[password_filename] = password_info
-                else:
-                    # Add directly to root
-                    zip_files[filename] = bundle_data
+        
+        # Add individual files to root
+        for filename, content in files.items():
+            zip_files[filename] = content
+        
+        # Add bundles - can be password-protected sub-files
+        for bundle_name, bundle_data in bundles.items():
+            if bundle_name.endswith('.zip'):
+                # Bundle is a ZIP file - add password info
+                password_filename = bundle_name.replace('.zip', '_password.txt')
+                password_info = f"Password for {bundle_name}: BUNDLE_PASSWORD_HERE\n\nGenerated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}"
+                zip_files[password_filename] = password_info
+                zip_files[bundle_name] = bundle_data
+            else:
+                # Add directly to root
+                zip_files[bundle_name] = bundle_data
 
         # Add README if provided - directly to root
         if readme:
             zip_files["README.txt"] = readme
+
+        # Generate manifest if components provided
+        if selected_components and session_id:
+            manifest = self._generate_content_manifest(
+                selected_components, 
+                "Advanced Selection", 
+                session_id, 
+                password
+            )
+            zip_files['CONTENT_MANIFEST.txt'] = manifest
 
         # Add download info - directly to root  
         password = self.generate_secure_password()
@@ -529,7 +546,7 @@ class SecureZipCreator:
         zip_files["DOWNLOAD_INFO.txt"] = download_info
 
         # Use the SAME create_protected_zip method as Apache/IIS (with pyzipper AES-256)
-        logger.info("Creating AES-256 encrypted advanced bundle using same method as Apache/IIS")
+        logger.info("Creating AES-256 encrypted advanced bundle with manifest")
         return self.create_protected_zip(zip_files, password)
 
     def _create_advanced_download_info(self, zip_password: str) -> str:
@@ -545,6 +562,225 @@ class SecureZipCreator:
             component_count=1, 
             zip_password=zip_password
         )
+
+    def _generate_content_manifest(
+        self, 
+        selected_components: List, 
+        bundle_type: str, 
+        session_id: str, 
+        zip_password: Optional[str] = None,
+        bundle_password: Optional[str] = None
+    ) -> str:
+        """Generate content manifest using ContentManifestGenerator"""
+        try:
+            from services.content_manifest_generator import ContentManifestGenerator
+            
+            manifest_generator = ContentManifestGenerator()
+            
+            # Generate actual password if not provided
+            actual_zip_password = zip_password or "WILL_BE_GENERATED"
+            
+            manifest = manifest_generator.generate_manifest(
+                selected_components=selected_components,
+                bundle_type=bundle_type,
+                session_id=session_id,
+                zip_password=actual_zip_password,
+                bundle_password=bundle_password
+            )
+            
+            logger.info(f"Generated content manifest for {bundle_type} bundle")
+            return manifest
+            
+        except Exception as e:
+            logger.error(f"Failed to generate content manifest: {e}")
+            # Return fallback manifest
+            return self._create_fallback_manifest(bundle_type, session_id, zip_password)
+
+    def _create_fallback_manifest(self, bundle_type: str, session_id: str, zip_password: Optional[str]) -> str:
+        """Create simple fallback manifest if generation fails"""
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')
+        
+        return f"""================================================================================
+ZIP BUNDLE CONTENTS MANIFEST (FALLBACK)
+================================================================================
+
+Bundle Information:
+- Bundle Type: {bundle_type}
+- Session ID: {session_id}
+- Generated: {timestamp}
+- ZIP Password: {zip_password or 'N/A'}
+
+NOTE: This is a simplified manifest due to content generation error.
+Check individual files for detailed information.
+
+Generated by: Certificate Analysis Tool
+Tool Version: 2.0-PKI
+
+================================================================================
+END OF MANIFEST
+================================================================================"""
+
+    def _create_apache_manifest_components(self, certificate: str, private_key: str, ca_bundle: str, 
+                                         apache_guide: str, nginx_guide: str, original_components: Optional[List]) -> List:
+        """Create virtual PKI components representing the actual files in Apache ZIP"""
+        from certificates.storage.session_pki_storage import PKIComponent, PKIComponentType
+        
+        manifest_components = []
+        current_time = datetime.now().isoformat()  # Convert to string format
+        
+        # Find original certificate component for metadata
+        cert_metadata = {}
+        key_metadata = {}
+        if original_components:
+            for comp in original_components:
+                if comp.type == PKIComponentType.CERTIFICATE:
+                    cert_metadata = comp.metadata or {}
+                elif comp.type == PKIComponentType.PRIVATE_KEY:
+                    key_metadata = comp.metadata or {}
+        
+        # Create virtual components for actual ZIP files
+        # Certificate file
+        cert_component = PKIComponent(
+            id="apache_cert",
+            filename="certificate.crt",
+            content=certificate,
+            type=PKIComponentType.CERTIFICATE,
+            metadata=cert_metadata,
+            order=1,
+            uploaded_at=current_time
+        )
+        manifest_components.append(cert_component)
+        
+        # Private key file
+        key_component = PKIComponent(
+            id="apache_key",
+            filename="private-key.pem", 
+            content=private_key,
+            type=PKIComponentType.PRIVATE_KEY,
+            metadata=key_metadata,
+            order=2,
+            uploaded_at=current_time
+        )
+        manifest_components.append(key_component)
+        
+        # CA bundle file (if not placeholder)
+        if not ca_bundle.startswith("# No CA certificates"):
+            ca_component = PKIComponent(
+                id="apache_ca",
+                filename="ca-bundle.crt",
+                content=ca_bundle,
+                type=PKIComponentType.ROOT_CA,  # Generic CA type
+                metadata={"subject": "CA Bundle", "description": "Certificate Authority bundle"},
+                order=3,
+                uploaded_at=current_time
+            )
+            manifest_components.append(ca_component)
+        
+        # Installation guides - use PRIVATE_KEY type with special metadata to identify as text files
+        apache_guide_component = PKIComponent(
+            id="apache_guide",
+            filename="APACHE_INSTALLATION_GUIDE.txt",
+            content=apache_guide,
+            type=PKIComponentType.PRIVATE_KEY,  # Use as placeholder type
+            metadata={
+                "description": "Apache web server installation guide",
+                "file_type": "text",
+                "content_type": "installation_guide"
+            },
+            order=4,
+            uploaded_at=current_time
+        )
+        manifest_components.append(apache_guide_component)
+        
+        nginx_guide_component = PKIComponent(
+            id="nginx_guide", 
+            filename="NGINX_INSTALLATION_GUIDE.txt",
+            content=nginx_guide,
+            type=PKIComponentType.PRIVATE_KEY,  # Use as placeholder type
+            metadata={
+                "description": "Nginx web server installation guide",
+                "file_type": "text",
+                "content_type": "installation_guide"
+            },
+            order=5,
+            uploaded_at=current_time
+        )
+        manifest_components.append(nginx_guide_component)
+        
+        return manifest_components
+
+    def _create_iis_manifest_components(self, p12_bundle: bytes, iis_guide: str, cert_info: str, 
+                                      original_components: Optional[List], bundle_password: Optional[str]) -> List:
+        """Create virtual PKI components representing the actual files in IIS ZIP"""
+        from certificates.storage.session_pki_storage import PKIComponent, PKIComponentType
+        
+        manifest_components = []
+        current_time = datetime.now().isoformat()  # Convert to string format
+        
+        # Find original certificate component for metadata
+        cert_metadata = {}
+        if original_components:
+            for comp in original_components:
+                if comp.type == PKIComponentType.CERTIFICATE:
+                    cert_metadata = comp.metadata or {}
+                    break
+        
+        # Create virtual components for actual ZIP files
+        # PKCS#12 bundle file
+        p12_metadata = dict(cert_metadata)  # Copy certificate metadata
+        p12_metadata.update({
+            "format": "PKCS#12",
+            "contains": "Certificate + Private Key + CA Chain",
+            "password_protected": "Yes" if bundle_password else "No"
+        })
+        
+        # Convert bytes to string for PKI component content
+        p12_content_str = f"PKCS#12 binary bundle ({len(p12_bundle)} bytes)"
+        
+        p12_component = PKIComponent(
+            id="iis_p12",
+            filename="certificate-bundle.pfx",
+            content=p12_content_str,  # Use string description instead of bytes
+            type=PKIComponentType.CERTIFICATE,  # P12 is primarily a certificate bundle
+            metadata=p12_metadata,
+            order=1,
+            uploaded_at=current_time
+        )
+        manifest_components.append(p12_component)
+        
+        # Installation guide - use PRIVATE_KEY type with special metadata
+        iis_guide_component = PKIComponent(
+            id="iis_guide",
+            filename="IIS_INSTALLATION_GUIDE.txt",
+            content=iis_guide,
+            type=PKIComponentType.PRIVATE_KEY,  # Use as placeholder type
+            metadata={
+                "description": "IIS web server installation guide",
+                "file_type": "text",
+                "content_type": "installation_guide"
+            },
+            order=2,
+            uploaded_at=current_time
+        )
+        manifest_components.append(iis_guide_component)
+        
+        # Certificate info - use PRIVATE_KEY type with special metadata
+        cert_info_component = PKIComponent(
+            id="cert_info",
+            filename="CERTIFICATE_INFO.txt", 
+            content=cert_info,
+            type=PKIComponentType.PRIVATE_KEY,  # Use as placeholder type
+            metadata={
+                "description": "Certificate information and passwords",
+                "file_type": "text",
+                "content_type": "certificate_info"
+            },
+            order=3,
+            uploaded_at=current_time
+        )
+        manifest_components.append(cert_info_component)
+        
+        return manifest_components
 
 # Global service instance
 secure_zip_creator = SecureZipCreator()

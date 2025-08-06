@@ -2,20 +2,13 @@
 NGINX SSL CERTIFICATE INSTALLATION GUIDE
 ================================================================================
 
-Certificate Information:
-- Certificate File: {certificate_filename}
-- Private Key File: {private_key_filename}
-- Certificate Chain: {certificate_chain_filename}
-- Domain Name: {domain_name}
-- Certificate Type: {certificate_type}
-- Validity Period: {validity_period}
+Domain: {domain_name}
+Generated: {timestamp}
 
-⚠️  SECURITY WARNING:
-- Keep your private key file secure and never share it
-- Ensure proper file permissions are set (600 for private key)
-- Use strong SSL/TLS configurations
-- Regularly update Nginx and OpenSSL
-- Backup your certificates and keys securely
+📝 BEFORE STARTING:
+- Check the CONTENT_MANIFEST.txt file for certificate details, passwords, and file hashes
+- All certificate files are included in this ZIP bundle
+- Installation requires root/administrator privileges
 
 ================================================================================
 STEP 1: PREPARE CERTIFICATE FILES
@@ -323,4 +316,4 @@ INSTALLATION COMPLETE
 Your SSL certificate should now be installed and active.
 Visit https://{domain_name} to verify the installation.
 
-Generated on: {timestamp}
+Generated: {timestamp}

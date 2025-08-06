@@ -2,19 +2,13 @@
 APACHE SSL CERTIFICATE INSTALLATION GUIDE
 ================================================================================
 
-Certificate Information:
-- Certificate File: {certificate_filename}
-- Private Key File: {private_key_filename}
-- Certificate Chain: {certificate_chain_filename}
-- Domain Name: {domain_name}
-- Certificate Type: {certificate_type}
-- Validity Period: {validity_period}
+Domain: {domain_name}
+Generated: {timestamp}
 
-⚠️  SECURITY WARNING:
-- Keep your private key file secure and never share it
-- Ensure proper file permissions are set (600 for private key)
-- Use strong SSL/TLS configurations
-- Backup your certificates and keys securely
+📝 BEFORE STARTING:
+- Check the CONTENT_MANIFEST.txt file for certificate details, passwords, and file hashes
+- All certificate files are included in this ZIP bundle
+- Installation requires root/administrator privileges
 
 ================================================================================
 STEP 1: PREPARE CERTIFICATE FILES
@@ -49,10 +43,10 @@ STEP 1: PREPARE CERTIFICATE FILES
    sudo chown root:root /etc/ssl/private/{private_key_filename}
 
 ================================================================================
-STEP 3: ENABLE SSL MODULE AND CONFIGURE APACHE
+STEP 2: ENABLE SSL MODULE AND CONFIGURE APACHE
 ================================================================================
 
-3.1) Enable required Apache modules:
+2.1) Enable required Apache modules:
    Ubuntu/Debian:
    sudo a2enmod ssl
    sudo a2enmod rewrite
@@ -151,7 +145,7 @@ LoadModule expires_module modules/mod_expires.so
 LoadModule headers_module modules/mod_headers.so
 
 ================================================================================
-STEP 4: TEST CONFIGURATION AND RESTART
+STEP 3: TEST CONFIGURATION AND RESTART
 ================================================================================
 
 3.1) Test Apache configuration syntax:
@@ -176,10 +170,10 @@ STEP 4: TEST CONFIGURATION AND RESTART
    sudo systemctl enable httpd      # CentOS/RHEL/Fedora
 
 ================================================================================
-STEP 5: VERIFY SSL INSTALLATION
+STEP 4: VERIFY SSL INSTALLATION
 ================================================================================
 
-5.1) Check Apache status:
+4.1) Check Apache status:
    sudo systemctl status apache2    # Ubuntu/Debian
    sudo systemctl status httpd      # CentOS/RHEL/Fedora
 
@@ -322,12 +316,10 @@ SECURITY BEST PRACTICES
    ServerTokens Prod
    ServerSignature Off
 
-4) Monitor certificate expiration and renew before {timestamp}
-
-5) Regularly review access logs for suspicious activity:
+4) Regularly review access logs for suspicious activity:
    sudo tail -f /var/log/apache2/{domain_name}_ssl_access.log
 
-6) Consider implementing fail2ban for additional security:
+5) Consider implementing fail2ban for additional security:
    sudo apt install fail2ban    # Ubuntu/Debian
    sudo yum install fail2ban    # CentOS/RHEL
 
@@ -349,4 +341,4 @@ INSTALLATION COMPLETE
 Your SSL certificate should now be installed and active. 
 Visit https://{domain_name} to verify the installation.
 
-Generated on: {timestamp}
+Generated: {timestamp}

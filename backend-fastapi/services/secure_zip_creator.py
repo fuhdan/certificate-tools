@@ -2,7 +2,7 @@
 Secure ZIP Creation & Password Protection Service
 Provides AES-256 encrypted ZIP file generation with cryptographically secure passwords.
 
-FINAL VERSION: Uses pyzipper for true AES-256 encrypted ZIP files (pure Python)
+UPDATED VERSION: Integrated with File Naming Service for standardized filenames
 """
 
 import os
@@ -51,7 +51,8 @@ class SecureZipCreator:
     - Memory-efficient streaming for large files
     - Automatic cleanup of temporary resources
     - ZIP integrity validation
-    - Graceful fallback to unencrypted ZIP if pyzipper unavailable
+    - Requires pyzipper for AES-256 encryption (no unencrypted fallback)
+    - Standardized filenames using File Naming Service
     """
     
     # Password generation constants
@@ -63,18 +64,19 @@ class SecureZipCreator:
         """Initialize the SecureZipCreator service."""
         self._temp_dir = None
         self._check_encryption_support()
-        logger.info("SecureZipCreator service initialized")
+        logger.info("SecureZipCreator service initialized with File Naming Service")
     
     def _check_encryption_support(self):
-        """Check if pyzipper is available for encryption"""
+        """Check if pyzipper is available for encryption - REQUIRED"""
         try:
             import pyzipper  # type: ignore
             self._has_encryption = True
             logger.info("SecureZipCreator: AES-256 encryption available (pyzipper)")
         except ImportError:
-            self._has_encryption = False
-            logger.warning("SecureZipCreator: AES-256 encryption NOT available (pyzipper missing)")
-            logger.warning("Install with: pip install pyzipper")
+            logger.error("SecureZipCreator: pyzipper is REQUIRED for AES-256 encryption")
+            raise ImportError(
+                "pyzipper is required for secure ZIP creation. Install with: pip install pyzipper"
+            )
     
     @contextmanager
     def _temp_directory(self):
@@ -163,16 +165,8 @@ class SecureZipCreator:
         if password is None:
             password = self.generate_secure_password()
         
-        # Try encrypted ZIP first, fallback to unencrypted
-        if self._has_encryption:
-            try:
-                return self._create_encrypted_zip(files, password)
-            except Exception as e:
-                logger.error(f"Encrypted ZIP creation failed: {e}")
-                logger.warning("Falling back to unencrypted ZIP")
-        
-        # Fallback to unencrypted ZIP
-        return self._create_unencrypted_zip(files, password)
+        # Create encrypted ZIP - pyzipper is required
+        return self._create_encrypted_zip(files, password)
     
     def _create_encrypted_zip(
         self, 
@@ -225,65 +219,7 @@ class SecureZipCreator:
             logger.error(f"AES-256 ZIP creation failed: {e}")
             raise ZipCreationError(f"Failed to create encrypted ZIP: {e}")
     
-    def _create_unencrypted_zip(
-        self, 
-        files: Mapping[str, Union[bytes, str]], 
-        password: str
-    ) -> Tuple[bytes, str]:
-        """
-        Fallback: Create unencrypted ZIP using standard zipfile module.
-        
-        Args:
-            files: Mapping of filename to file content
-            password: Password (returned but ZIP won't be encrypted)
-            
-        Returns:
-            Tuple of (zip_data_bytes, password_used)
-        """
-        try:
-            with self._temp_directory() as temp_dir:
-                zip_path = Path(temp_dir) / "unencrypted.zip"
-                
-                # Create standard ZIP with maximum compression
-                with zipfile.ZipFile(
-                    zip_path, 
-                    'w', 
-                    zipfile.ZIP_DEFLATED,
-                    compresslevel=9
-                ) as zip_file:
-                    
-                    for filename, content in files.items():
-                        try:
-                            # Convert string content to bytes if necessary
-                            if isinstance(content, str):
-                                content = content.encode('utf-8')
-                            
-                            # Add file to ZIP (NO ENCRYPTION - zipfile limitation)
-                            zip_file.writestr(
-                                filename, 
-                                content,
-                                compress_type=zipfile.ZIP_DEFLATED
-                            )
-                            
-                            logger.debug(f"Added file '{filename}' to unencrypted ZIP ({len(content)} bytes)")
-                            
-                        except Exception as e:
-                            logger.error(f"Failed to add file '{filename}' to ZIP: {e}")
-                            raise ZipCreationError(f"Failed to add file '{filename}': {e}")
-                
-                # Read the created ZIP file
-                zip_data = zip_path.read_bytes()
-                
-                logger.warning(f"Created UNENCRYPTED ZIP with {len(files)} files ({len(zip_data)} bytes)")
-                logger.warning("Install 'pyzipper' for AES-256 encryption support")
-                
-                return zip_data, password
-                
-        except ZipCreationError:
-            raise
-        except Exception as e:
-            logger.error(f"Unencrypted ZIP creation failed: {e}")
-            raise ZipCreationError(f"Failed to create ZIP: {e}")
+    # Remove the entire _create_unencrypted_zip method - NO UNENCRYPTED FALLBACK
     
     def validate_zip_integrity(self, zip_data: bytes, password: str) -> bool:
         """
@@ -310,57 +246,23 @@ class SecureZipCreator:
                 zip_path = Path(temp_dir) / "validate.zip"
                 zip_path.write_bytes(zip_data)
                 
-                # Try with pyzipper first if available
-                if self._has_encryption:
-                    try:
-                        import pyzipper  # type: ignore
-                        with pyzipper.AESZipFile(str(zip_path), 'r') as zip_file:
-                            zip_file.setpassword(password.encode('utf-8'))
-                            
-                            # Try to read first file to verify password
-                            file_list = zip_file.namelist()
-                            if file_list:
-                                try:
-                                    zip_file.read(file_list[0])
-                                    logger.debug(f"AES ZIP integrity validated successfully ({len(file_list)} files)")
-                                    return True
-                                except RuntimeError as e:
-                                    if "Bad password" in str(e) or "incorrect password" in str(e).lower():
-                                        logger.error("AES ZIP password validation failed")
-                                        return False
-                                    raise
-                            return True
-                    except Exception:
-                        # Fall back to standard zipfile validation
-                        pass
-                
-                # Standard zipfile validation
-                with zipfile.ZipFile(zip_path, 'r') as zip_file:
-                    # Set password
+                # Try with pyzipper for encrypted ZIP validation
+                import pyzipper  # type: ignore
+                with pyzipper.AESZipFile(str(zip_path), 'r') as zip_file:
                     zip_file.setpassword(password.encode('utf-8'))
-                    
-                    # Test all files in the ZIP
-                    test_result = zip_file.testzip()
-                    
-                    if test_result is not None:
-                        logger.error(f"ZIP integrity check failed for file: {test_result}")
-                        return False
                     
                     # Try to read first file to verify password
                     file_list = zip_file.namelist()
                     if file_list:
                         try:
                             zip_file.read(file_list[0])
-                            logger.debug(f"ZIP integrity validated successfully ({len(file_list)} files)")
+                            logger.debug(f"AES ZIP integrity validated successfully ({len(file_list)} files)")
                             return True
                         except RuntimeError as e:
                             if "Bad password" in str(e) or "incorrect password" in str(e).lower():
-                                logger.error("ZIP password validation failed")
+                                logger.error("AES ZIP password validation failed")
                                 return False
                             raise
-                    
-                    # If no files, consider it valid
-                    logger.debug("ZIP integrity validated (empty ZIP)")
                     return True
                     
         except ZipValidationError:
@@ -382,7 +284,11 @@ class SecureZipCreator:
     ) -> Tuple[bytes, str]:
         """
         Create password-protected ZIP file for Apache with installation guides and manifest.
+        Uses File Naming Service for standardized filenames.
         """
+        from .file_naming_service import get_standard_filename
+        from certificates.storage.session_pki_storage import PKIComponentType
+        
         # Convert bytes to strings if needed
         if isinstance(certificate, bytes):
             certificate = certificate.decode('utf-8')
@@ -396,11 +302,16 @@ class SecureZipCreator:
         else:
             # Create a placeholder message when no CA bundle is available
             ca_bundle = "# No CA certificates found in this bundle\n# This certificate may be self-signed or the CA certificates were not uploaded\n"
-            
+        
+        # Use File Naming Service for standardized filenames
+        cert_filename = get_standard_filename(PKIComponentType.CERTIFICATE, "PEM")
+        key_filename = get_standard_filename(PKIComponentType.PRIVATE_KEY, "PEM")
+        ca_filename = "ca-bundle.crt"  # CA bundle naming
+        
         files = {
-            'certificate.crt': certificate,
-            'private-key.pem': private_key,
-            'ca-bundle.crt': ca_bundle,
+            cert_filename: certificate,
+            key_filename: private_key,
+            ca_filename: ca_bundle,
             'APACHE_INSTALLATION_GUIDE.txt': apache_guide,
             'NGINX_INSTALLATION_GUIDE.txt': nginx_guide
         }
@@ -413,7 +324,8 @@ class SecureZipCreator:
             ca_str = str(ca_bundle)
             
             manifest_components = self._create_apache_manifest_components(
-                cert_str, key_str, ca_str, apache_guide, nginx_guide, selected_components
+                cert_str, key_str, ca_str, apache_guide, nginx_guide, selected_components,
+                cert_filename, key_filename, ca_filename
             )
             manifest = self._generate_content_manifest(
                 manifest_components, 
@@ -423,7 +335,7 @@ class SecureZipCreator:
             )
             files['CONTENT_MANIFEST.txt'] = manifest
         
-        logger.info("Creating AES-256 encrypted Apache certificate bundle with manifest")
+        logger.info(f"Creating Apache bundle with standardized filenames: {cert_filename}, {key_filename}, {ca_filename}")
         return self.create_protected_zip(files, password)
     
     def create_iis_bundle(
@@ -438,9 +350,16 @@ class SecureZipCreator:
     ) -> Tuple[bytes, str]:
         """
         Create password-protected ZIP file for IIS with PKCS#12 bundle and manifest.
+        Uses File Naming Service for standardized filenames.
         """
+        from .file_naming_service import get_standard_filename
+        from certificates.storage.session_pki_storage import PKIComponentType
+        
+        # Use File Naming Service for standardized PKCS#12 filename
+        p12_filename = get_standard_filename(PKIComponentType.CERTIFICATE, "PKCS12")
+        
         files = {
-            'certificate-bundle.pfx': p12_bundle,
+            p12_filename: p12_bundle,
             'IIS_INSTALLATION_GUIDE.txt': iis_guide,
             'CERTIFICATE_INFO.txt': cert_info
         }
@@ -448,7 +367,7 @@ class SecureZipCreator:
         # Generate manifest using ACTUAL ZIP FILES instead of original components
         if session_id:
             manifest_components = self._create_iis_manifest_components(
-                p12_bundle, iis_guide, cert_info, selected_components, bundle_password
+                p12_bundle, iis_guide, cert_info, selected_components, bundle_password, p12_filename
             )
             manifest = self._generate_content_manifest(
                 manifest_components, 
@@ -459,7 +378,7 @@ class SecureZipCreator:
             )
             files['CONTENT_MANIFEST.txt'] = manifest
         
-        logger.info("Creating AES-256 encrypted IIS certificate bundle with manifest")
+        logger.info(f"Creating IIS bundle with standardized filename: {p12_filename}")
         return self.create_protected_zip(files, password)
     
     def get_memory_usage_estimate(self, files: Mapping[str, Union[bytes, str]]) -> int:
@@ -572,57 +491,30 @@ class SecureZipCreator:
         bundle_password: Optional[str] = None
     ) -> str:
         """Generate content manifest using ContentManifestGenerator"""
-        try:
-            from services.content_manifest_generator import ContentManifestGenerator
-            
-            manifest_generator = ContentManifestGenerator()
-            
-            # Generate actual password if not provided
-            actual_zip_password = zip_password or "WILL_BE_GENERATED"
-            
-            manifest = manifest_generator.generate_manifest(
-                selected_components=selected_components,
-                bundle_type=bundle_type,
-                session_id=session_id,
-                zip_password=actual_zip_password,
-                bundle_password=bundle_password
-            )
-            
-            logger.info(f"Generated content manifest for {bundle_type} bundle")
-            return manifest
-            
-        except Exception as e:
-            logger.error(f"Failed to generate content manifest: {e}")
-            # Return fallback manifest
-            return self._create_fallback_manifest(bundle_type, session_id, zip_password)
-
-    def _create_fallback_manifest(self, bundle_type: str, session_id: str, zip_password: Optional[str]) -> str:
-        """Create simple fallback manifest if generation fails"""
-        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')
+        from services.content_manifest_generator import ContentManifestGenerator
         
-        return f"""================================================================================
-ZIP BUNDLE CONTENTS MANIFEST (FALLBACK)
-================================================================================
+        manifest_generator = ContentManifestGenerator()
+        
+        # Generate actual password if not provided
+        actual_zip_password = zip_password or "WILL_BE_GENERATED"
+        
+        manifest = manifest_generator.generate_manifest(
+            selected_components=selected_components,
+            bundle_type=bundle_type,
+            session_id=session_id,
+            zip_password=actual_zip_password,
+            bundle_password=bundle_password
+        )
+        
+        logger.info(f"Generated content manifest for {bundle_type} bundle")
+        return manifest
 
-Bundle Information:
-- Bundle Type: {bundle_type}
-- Session ID: {session_id}
-- Generated: {timestamp}
-- ZIP Password: {zip_password or 'N/A'}
 
-NOTE: This is a simplified manifest due to content generation error.
-Check individual files for detailed information.
-
-Generated by: Certificate Analysis Tool
-Tool Version: 2.0-PKI
-
-================================================================================
-END OF MANIFEST
-================================================================================"""
 
     def _create_apache_manifest_components(self, certificate: str, private_key: str, ca_bundle: str, 
-                                         apache_guide: str, nginx_guide: str, original_components: Optional[List]) -> List:
-        """Create virtual PKI components representing the actual files in Apache ZIP"""
+                                         apache_guide: str, nginx_guide: str, original_components: Optional[List],
+                                         cert_filename: str, key_filename: str, ca_filename: str) -> List:
+        """Create virtual PKI components representing the actual files in Apache ZIP with standardized filenames"""
         from certificates.storage.session_pki_storage import PKIComponent, PKIComponentType
         
         manifest_components = []
@@ -638,11 +530,11 @@ END OF MANIFEST
                 elif comp.type == PKIComponentType.PRIVATE_KEY:
                     key_metadata = comp.metadata or {}
         
-        # Create virtual components for actual ZIP files
+        # Create virtual components for actual ZIP files using standardized filenames
         # Certificate file
         cert_component = PKIComponent(
             id="apache_cert",
-            filename="certificate.crt",
+            filename=cert_filename,
             content=certificate,
             type=PKIComponentType.CERTIFICATE,
             metadata=cert_metadata,
@@ -654,7 +546,7 @@ END OF MANIFEST
         # Private key file
         key_component = PKIComponent(
             id="apache_key",
-            filename="private-key.pem", 
+            filename=key_filename, 
             content=private_key,
             type=PKIComponentType.PRIVATE_KEY,
             metadata=key_metadata,
@@ -667,7 +559,7 @@ END OF MANIFEST
         if not ca_bundle.startswith("# No CA certificates"):
             ca_component = PKIComponent(
                 id="apache_ca",
-                filename="ca-bundle.crt",
+                filename=ca_filename,
                 content=ca_bundle,
                 type=PKIComponentType.ROOT_CA,  # Generic CA type
                 metadata={"subject": "CA Bundle", "description": "Certificate Authority bundle"},
@@ -710,8 +602,9 @@ END OF MANIFEST
         return manifest_components
 
     def _create_iis_manifest_components(self, p12_bundle: bytes, iis_guide: str, cert_info: str, 
-                                      original_components: Optional[List], bundle_password: Optional[str]) -> List:
-        """Create virtual PKI components representing the actual files in IIS ZIP"""
+                                      original_components: Optional[List], bundle_password: Optional[str],
+                                      p12_filename: str) -> List:
+        """Create virtual PKI components representing the actual files in IIS ZIP with standardized filenames"""
         from certificates.storage.session_pki_storage import PKIComponent, PKIComponentType
         
         manifest_components = []
@@ -726,7 +619,7 @@ END OF MANIFEST
                     break
         
         # Create virtual components for actual ZIP files
-        # PKCS#12 bundle file
+        # PKCS#12 bundle file with standardized filename
         p12_metadata = dict(cert_metadata)  # Copy certificate metadata
         p12_metadata.update({
             "format": "PKCS#12",
@@ -739,7 +632,7 @@ END OF MANIFEST
         
         p12_component = PKIComponent(
             id="iis_p12",
-            filename="certificate-bundle.pfx",
+            filename=p12_filename,
             content=p12_content_str,  # Use string description instead of bytes
             type=PKIComponentType.CERTIFICATE,  # P12 is primarily a certificate bundle
             metadata=p12_metadata,

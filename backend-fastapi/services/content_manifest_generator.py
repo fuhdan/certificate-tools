@@ -4,9 +4,11 @@ Content Manifest Generator Service
 
 Generates content manifest files for ZIP bundles using PKI component storage.
 Creates detailed file listings with descriptions for certificate bundles.
+Enhanced with SHA256 hash verification for file integrity.
 """
 
 import logging
+import hashlib
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from pathlib import Path
@@ -71,6 +73,12 @@ class ContentManifestGenerator:
         with open(template_path, 'r', encoding='utf-8') as f:
             return f.read()
     
+    def _calculate_file_hash(self, content: str) -> str:
+        """Calculate SHA256 hash of file content"""
+        content_bytes = content.encode('utf-8')
+        sha256_hash = hashlib.sha256(content_bytes).hexdigest().upper()
+        return sha256_hash
+    
     def _prepare_template_variables(self, 
                                    selected_components: List[PKIComponent],
                                    bundle_type: str,
@@ -96,40 +104,58 @@ class ContentManifestGenerator:
             variables['bundle_password_line'] = ""
             variables['bundle_password_security'] = ""
         
-        # Calculate file information
+        # Calculate file information with hashes
         file_list = []
+        file_list_with_hashes = []
         file_descriptions = []
+        linux_commands = []
+        windows_commands = []
         total_size = 0
         
         for component in selected_components:
-            # Calculate file size
+            # Calculate file size and hash
             file_size = len(component.content.encode('utf-8'))
+            file_hash = self._calculate_file_hash(component.content)
             total_size += file_size
             
-            # Add to file list
+            # Add to file lists
             file_list.append(f"- {component.filename} ({file_size:,} bytes)")
+            file_list_with_hashes.append(f"- {component.filename} ({file_size:,} bytes) - SHA256: {file_hash}")
+            
+            # Generate verification commands
+            linux_commands.append(f"echo '{file_hash.lower()}  {component.filename}' | sha256sum -c -")
+            windows_commands.append(f"Get-FileHash -Path '{component.filename}' -Algorithm SHA256 | Select-Object Hash")
             
             # Generate file description
             description = self._get_file_description(component)
-            file_descriptions.append(f"{component.filename}:\n  {description}")
+            file_descriptions.append(f"{component.filename}:\n  {description}\n  SHA256: {file_hash}")
         
         # ADD THE MANIFEST ITSELF to the file listing
         manifest_description = "Bundle contents manifest and file information"
-        manifest_size_estimate = 2048  # Reasonable estimate for manifest file size
+        manifest_size_estimate = 4096  # Increased estimate due to hash content
+        manifest_hash = "CALCULATED_AFTER_GENERATION"  # Placeholder
         
         file_list.append(f"- CONTENT_MANIFEST.txt ({manifest_size_estimate:,} bytes)")
-        file_descriptions.append(f"CONTENT_MANIFEST.txt:\n  {manifest_description}")
+        file_list_with_hashes.append(f"- CONTENT_MANIFEST.txt ({manifest_size_estimate:,} bytes) - SHA256: {manifest_hash}")
+        file_descriptions.append(f"CONTENT_MANIFEST.txt:\n  {manifest_description}\n  SHA256: {manifest_hash}")
         
         # Update totals to include manifest
         total_size += manifest_size_estimate
         total_files = len(selected_components) + 1  # +1 for manifest
         
+        # Generate verification command blocks
+        linux_verification_commands = self._generate_linux_verification_commands(linux_commands)
+        windows_verification_commands = self._generate_windows_verification_commands(windows_commands)
+        
         variables.update({
             'file_list': '\n'.join(file_list),
+            'file_list_with_hashes': '\n'.join(file_list_with_hashes),
             'file_descriptions': '\n\n'.join(file_descriptions),
             'total_files': str(total_files),
             'total_size': f"{total_size:,}",
-            'total_size_mb': f"{total_size / (1024*1024):.2f}"
+            'total_size_mb': f"{total_size / (1024*1024):.2f}",
+            'linux_verification_commands': linux_verification_commands,
+            'windows_verification_commands': windows_verification_commands
         })
         
         # Extract certificate information (if any certificate component exists)
@@ -152,6 +178,66 @@ class ContentManifestGenerator:
         variables['support_section'] = self._build_support_section(cert_component)
         
         return variables
+    
+    def _generate_linux_verification_commands(self, commands: List[str]) -> str:
+        """Generate Linux verification command block"""
+        command_block = """LINUX / UNIX / macOS Verification:
+
+1) Create hash verification file:
+   cat > expected_hashes.txt << 'EOF'
+""" + '\n'.join([cmd.split("'")[1] for cmd in commands]) + """
+EOF
+
+2) Verify all files at once:
+   sha256sum -c expected_hashes.txt
+
+3) Verify individual files:
+"""
+        
+        # Add individual verification commands
+        individual_commands = []
+        for cmd in commands:
+            individual_commands.append(f"   {cmd}")
+        
+        command_block += '\n'.join(individual_commands)
+        
+        command_block += """
+
+Expected output for each file: "filename: OK"
+If any file shows "FAILED", do not use the file - re-download the bundle."""
+        
+        return command_block
+    
+    def _generate_windows_verification_commands(self, commands: List[str]) -> str:
+        """Generate Windows verification command block"""
+        command_block = """WINDOWS PowerShell Verification:
+
+1) Open PowerShell as Administrator
+
+2) Navigate to extracted ZIP directory:
+   cd "C:\\path\\to\\extracted\\files"
+
+3) Verify individual files:
+"""
+        
+        # Add individual verification commands  
+        individual_commands = []
+        for cmd in commands:
+            individual_commands.append(f"   {cmd}")
+        
+        command_block += '\n'.join(individual_commands)
+        
+        command_block += """
+
+4) Compare displayed hash values with the SHA256 values listed above
+5) All hash values must match exactly (case insensitive)
+
+Alternative one-liner to check all files:
+   Get-ChildItem *.* | Get-FileHash -Algorithm SHA256 | Format-Table Name, Hash -AutoSize
+
+If any hash doesn't match, do not use the file - re-download the bundle."""
+        
+        return command_block
     
     def _get_file_description(self, component: PKIComponent) -> str:
         """Generate description based on PKI component type and metadata"""
@@ -347,6 +433,7 @@ Refer to documentation for your specific use case."""
         
         checklist = ["Before using these files, verify:",
                     "□ All files are present and not corrupted",
+                    "□ File SHA256 hashes match the values above (see verification commands below)",
                     "□ File sizes match the values listed above"]
         
         if has_cert and has_key:

@@ -22,6 +22,42 @@ Total Files: {total_files}
 Total Size: {total_size} bytes ({total_size_mb} MB)
 
 ================================================================================
+FILES WITH SHA256 HASHES
+================================================================================
+
+{file_list_with_hashes}
+
+⚠️  IMPORTANT: Always verify file integrity using the SHA256 hashes above before installation!
+
+================================================================================
+FILE VERIFICATION & HASH CHECKING
+================================================================================
+
+🔒 VERIFY FILE INTEGRITY BEFORE USE:
+
+{linux_verification_commands}
+
+{windows_verification_commands}
+
+⚠️  SECURITY WARNING:
+- If ANY hash verification fails, DO NOT use those files
+- Re-download the entire bundle if hash mismatches occur  
+- Hash verification protects against file corruption and tampering
+- Always verify hashes in a secure environment
+
+================================================================================
+FILE VERIFICATION & HASH CHECKING
+================================================================================
+
+🔒 VERIFY FILE INTEGRITY BEFORE USE:
+
+LINUX / UNIX / macOS Verification:
+[Linux commands here]
+
+WINDOWS PowerShell Verification:
+[Windows commands here]
+
+================================================================================
 FILE DESCRIPTIONS
 ================================================================================
 
@@ -38,7 +74,8 @@ SECURITY INFORMATION
 - Private key files are highly sensitive - protect them carefully
 - Certificate files can be shared publicly but keys must remain private
 - Delete temporary files after installation
-- Verify file integrity before use in production
+- Verify file integrity using SHA256 hashes before use in production
+- Keep this manifest file for your records and future reference
 
 ================================================================================
 INSTALLATION SUMMARY

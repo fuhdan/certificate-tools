@@ -1,5 +1,6 @@
-# certificates/formats/pkcs12.py
+# backend-fastapi/certificates/formats/pkcs12.py
 # PKCS12 format analysis functions with comprehensive debugging
+# Updated to use centralized Password Entry Service
 
 import logging
 import json
@@ -13,20 +14,32 @@ from ..utils.hashing import (
     generate_normalized_private_key_hash, generate_file_hash
 )
 
+# Import the centralized Password Entry Service
+from services.password_entry_service import (
+    password_entry_service,
+    handle_encrypted_content,
+    PasswordResult
+)
+
 logger = logging.getLogger(__name__)
 
-logger.debug("formats/pkcs12.py initialized")
+logger.debug("formats/pkcs12.py initialized with Password Entry Service")
 
-def analyze_pkcs12(file_content: bytes, password: Optional[str]) -> Dict[str, Any]:
-    """Analyze PKCS12 content"""
-    logger.info(f"=== PKCS12 ANALYSIS ===")
+def analyze_pkcs12(file_content: bytes, password: Optional[str], filename: str = "") -> Dict[str, Any]:
+    """
+    Analyze PKCS12 content using centralized Password Entry Service
+    
+    This function now uses the Password Entry Service to handle all password-related
+    logic consistently with other formats, ensuring standardized behavior.
+    """
+    logger.info(f"=== PKCS12 ANALYSIS (with Password Service) ===")
     logger.debug(f"File content length: {len(file_content)} bytes")
     logger.debug(f"Password provided: {'YES' if password else 'NO'}")
+    logger.debug(f"Filename: {filename}")
     logger.debug(f"First 32 bytes (hex): {file_content[:32].hex()}")
     
-    # Check PKCS12 file signature
+    # Check PKCS12 file signature for debugging
     if len(file_content) >= 4:
-        # PKCS12 files typically start with ASN.1 SEQUENCE (0x30)
         header = file_content[:4]
         logger.debug(f"PKCS12 header analysis: {header.hex()}")
         
@@ -36,104 +49,93 @@ def analyze_pkcs12(file_content: bytes, password: Optional[str]) -> Dict[str, An
             logger.warning(f"Unexpected PKCS12 header: expected 0x30, got 0x{header[0]:02x}")
     
     try:
-        logger.debug("Attempting PKCS12 parsing without password...")
-        # Try to parse PKCS12 without password first (many have no password)
-        private_key, cert, additional_certs = pkcs12.load_key_and_certificates(
-            file_content, password=None
+        # Use the centralized Password Entry Service
+        result, components, error, content_type = handle_encrypted_content(
+            file_content, password, filename
         )
         
-        logger.info("Successfully parsed PKCS12 without password")
-        logger.debug(f"PKCS12 components found:")
-        logger.debug(f"  Main certificate: {'YES' if cert else 'NO'}")
-        logger.debug(f"  Private key: {'YES' if private_key else 'NO'}")
-        logger.debug(f"  Additional certificates: {len(additional_certs) if additional_certs else 0}")
+        logger.debug(f"Password service result: {result}")
+        logger.debug(f"Content type detected: {content_type}")
         
-        # Success without password
-        return _process_pkcs12_success(cert, private_key, additional_certs)
-        
-    except Exception as p12_err:
-        # Failed without password - check if it needs password
-        error_str = str(p12_err).lower()
-        logger.debug(f"PKCS12 parsing without password failed: {p12_err}")
-        logger.debug(f"Error string analysis: {error_str}")
-        
-        # Check for password-related error indicators
-        password_keywords = ['password', 'decrypt', 'invalid', 'mac', 'integrity', 'authentication']
-        is_password_error = any(keyword in error_str for keyword in password_keywords)
-        logger.debug(f"Password-related error detected: {is_password_error}")
-        
-        if is_password_error:
-            logger.info("PKCS12 appears to be password-protected")
-            # It's password-protected
-            if not password:
-                logger.debug("No password provided for password-protected PKCS12")
-                return {
-                    "type": "PKCS12 Certificate - Password Required",
-                    "isValid": False,
-                    "requiresPassword": True,
-                    "content_hash": generate_file_hash(file_content),
-                    "details": {
-                        "algorithm": "PKCS12 (password required)",
-                        "key_size": 0,
-                        "curve": "N/A",
-                        "is_encrypted": True,
-                        "requiresPassword": True
-                    }
-                }
-            else:
-                logger.debug("Attempting PKCS12 parsing with provided password...")
-                # Try with provided password
-                try:
-                    password_bytes = password.encode('utf-8')
-                    logger.debug(f"Password encoded to {len(password_bytes)} bytes")
-                    
-                    private_key, cert, additional_certs = pkcs12.load_key_and_certificates(
-                        file_content, password_bytes
-                    )
-                    
-                    logger.info("Successfully parsed PKCS12 with provided password")
-                    logger.debug(f"PKCS12 components found with password:")
-                    logger.debug(f"  Main certificate: {'YES' if cert else 'NO'}")
-                    logger.debug(f"  Private key: {'YES' if private_key else 'NO'}")
-                    logger.debug(f"  Additional certificates: {len(additional_certs) if additional_certs else 0}")
-                    
-                    # Success with password
-                    return _process_pkcs12_success(cert, private_key, additional_certs)
-                    
-                except Exception as pwd_error:
-                    # Wrong password
-                    logger.error(f"PKCS12 parsing with provided password failed: {pwd_error}")
-                    logger.debug(f"Password error details: {str(pwd_error)}")
-                    
-                    return {
-                        "type": "PKCS12 Certificate - Invalid Password",
-                        "isValid": False,
-                        "requiresPassword": True,
-                        "content_hash": generate_file_hash(file_content),
-                        "details": {
-                            "algorithm": "PKCS12 (incorrect password)",
-                            "key_size": 0,
-                            "curve": "N/A",
-                            "is_encrypted": True,
-                            "requiresPassword": True
-                        }
-                    }
-        else:
-            # Some other PKCS12 parsing error (not password related)
-            logger.error(f"PKCS12 parsing failed with non-password error: {p12_err}")
-            import traceback
-            logger.error(f"Full traceback: {traceback.format_exc()}")
+        if result == PasswordResult.SUCCESS:
+            # Successfully loaded PKCS12 bundle
+            logger.info("PKCS12 bundle successfully loaded via Password Entry Service")
+            if components is None:
+                raise ValueError("Password service returned None components for successful result")
+                
+            private_key, cert, additional_certs = components
             
+            # Ensure additional_certs is a list (it can be None from cryptography)
+            additional_certs = additional_certs or []
+            
+            logger.debug(f"PKCS12 components found:")
+            logger.debug(f"  Main certificate: {'YES' if cert else 'NO'}")
+            logger.debug(f"  Private key: {'YES' if private_key else 'NO'}")
+            logger.debug(f"  Additional certificates: {len(additional_certs)}")
+            
+            return _process_pkcs12_success(cert, private_key, additional_certs, is_encrypted=(password is not None))
+            
+        elif result == PasswordResult.NO_PASSWORD_NEEDED:
+            # Unencrypted PKCS12 bundle
+            logger.info("PKCS12 bundle loaded without password via Password Entry Service")
+            if components is None:
+                raise ValueError("Password service returned None components for no-password-needed result")
+                
+            private_key, cert, additional_certs = components
+            
+            # Ensure additional_certs is a list (it can be None from cryptography)
+            additional_certs = additional_certs or []
+            
+            logger.debug(f"PKCS12 components found (unencrypted):")
+            logger.debug(f"  Main certificate: {'YES' if cert else 'NO'}")
+            logger.debug(f"  Private key: {'YES' if private_key else 'NO'}")
+            logger.debug(f"  Additional certificates: {len(additional_certs)}")
+            
+            return _process_pkcs12_success(cert, private_key, additional_certs, is_encrypted=False)
+            
+        elif result == PasswordResult.PASSWORD_REQUIRED:
+            # Password is required but not provided
+            logger.info("Password required for encrypted PKCS12 bundle")
+            return password_entry_service.create_password_required_response(
+                file_content, content_type, filename
+            )
+            
+        elif result == PasswordResult.WRONG_PASSWORD:
+            # Wrong password provided
+            logger.error("Wrong password provided for encrypted PKCS12 bundle")
+            return password_entry_service.create_wrong_password_response(
+                file_content, content_type
+            )
+            
+        else:
+            # Other error (INVALID_FORMAT, UNKNOWN_ERROR)
+            logger.error(f"Password Entry Service error: {result} - {error}")
             return {
                 "type": "PKCS12 Certificate",
                 "isValid": False,
                 "content_hash": generate_file_hash(file_content),
-                "error": str(p12_err)
+                "error": error or f"Password service error: {result}"
             }
+            
+    except Exception as e:
+        logger.error(f"Unexpected error in PKCS12 analysis: {e}")
+        import traceback
+        logger.error(f"Full traceback: {traceback.format_exc()}")
+        
+        return {
+            "type": "PKCS12 Certificate",
+            "isValid": False,
+            "content_hash": generate_file_hash(file_content),
+            "error": str(e)
+        }
 
-def _process_pkcs12_success(cert, private_key, additional_certs) -> Dict[str, Any]:
-    """Process successfully parsed PKCS12 content - extract all components with standardized types"""
+def _process_pkcs12_success(cert, private_key, additional_certs: List, is_encrypted: bool = False) -> Dict[str, Any]:
+    """
+    Process successfully parsed PKCS12 content - extract all components with standardized types
+    Updated to use consistent metadata and type handling
+    """
     logger.debug(f"=== PKCS12 SUCCESS PROCESSING ===")
+    logger.debug(f"Bundle was encrypted: {is_encrypted}")
     
     # Import standardization functions
     get_consistent_types = None
@@ -144,53 +146,9 @@ def _process_pkcs12_success(cert, private_key, additional_certs) -> Dict[str, An
         use_standardized = True
         logger.debug("Using standardized certificate types")
     except ImportError:
-        logger.warning("Standardized types not available, using legacy types")
+        logger.debug("Certificate type standardization not available, using legacy types")
     
-    # Log component details
-    if cert:
-        logger.debug("Main certificate found - extracting details...")
-        try:
-            subject_cn = None
-            for attribute in cert.subject:
-                if attribute.oid._name == 'commonName':
-                    subject_cn = attribute.value
-                    break
-            logger.debug(f"  Certificate subject CN: {subject_cn}")
-            logger.debug(f"  Certificate serial: {cert.serial_number}")
-        except Exception as cert_info_err:
-            logger.debug(f"  Error extracting certificate info: {cert_info_err}")
-    else:
-        logger.debug("No main certificate in PKCS12")
-    
-    if private_key:
-        logger.debug("Private key found - extracting details...")
-        try:
-            key_type = type(private_key).__name__
-            logger.debug(f"  Private key type: {key_type}")
-            if hasattr(private_key, 'key_size'):
-                logger.debug(f"  Private key size: {private_key.key_size} bits")
-        except Exception as key_info_err:
-            logger.debug(f"  Error extracting private key info: {key_info_err}")
-    else:
-        logger.debug("No private key in PKCS12")
-    
-    if additional_certs:
-        logger.debug(f"Additional certificates found: {len(additional_certs)}")
-        for i, add_cert in enumerate(additional_certs):
-            try:
-                subject_cn = None
-                for attribute in add_cert.subject:
-                    if attribute.oid._name == 'commonName':
-                        subject_cn = attribute.value
-                        break
-                logger.debug(f"  Additional cert [{i}]: {subject_cn}")
-            except Exception as add_cert_err:
-                logger.debug(f"  Error extracting additional cert [{i}] info: {add_cert_err}")
-    else:
-        logger.debug("No additional certificates in PKCS12")
-    
-    # Always use the main certificate hash for duplicate detection
-    # This allows PKCS12 certificates to be detected as duplicates of standalone certificates
+    # Generate content hash for main certificate (primary identifier)
     if cert:
         # Use main certificate hash - same as standalone certificates
         content_hash = generate_certificate_hash(cert)
@@ -200,7 +158,7 @@ def _process_pkcs12_success(cert, private_key, additional_certs) -> Dict[str, An
         content_hash = generate_pkcs12_content_hash(cert, private_key, additional_certs)
         logger.debug(f"PKCS12 no main certificate, using combined hash: {content_hash[:16]}...")
     
-    # Extract certificate metadata if available using new extractor
+    # Extract certificate metadata if available using standardized extractor
     metadata = None
     if cert:
         logger.debug("Extracting main certificate metadata...")
@@ -235,93 +193,89 @@ def _process_pkcs12_success(cert, private_key, additional_certs) -> Dict[str, An
         try:
             # Generate normalized hash for the private key (same as standalone private keys)
             key_hash = generate_normalized_private_key_hash(private_key)
-            key_metadata = extract_private_key_metadata(private_key, is_encrypted=False)
+            key_metadata = extract_private_key_metadata(private_key, is_encrypted=is_encrypted)
             
             logger.debug(f"Private key hash: {key_hash[:16]}...")
             logger.debug(f"Private key metadata: {key_metadata}")
             
-            # Use standardized type if available
-            if use_standardized and get_consistent_types:
-                type_info = get_consistent_types("Private Key", key_metadata)
-                item_type = type_info["type"]  # Will be "PrivateKey"
-                logger.debug(f"Private key standardized type: {item_type}")
-            else:
-                item_type = "Private Key"  # Legacy fallback
-                logger.debug(f"Private key legacy type: {item_type}")
-            
-            additional_items.append({
-                "type": item_type,  # Now uses "PrivateKey" instead of "Private Key"
-                "format": "PKCS12",
+            # Create private key item for additional items list
+            key_item = {
+                "type": "Private Key",
                 "isValid": True,
-                "size": 0,  # Size is part of the PKCS12 container
-                "content_hash": key_hash,  # Use consistent hash based on key material
+                "content_hash": key_hash,
                 "details": key_metadata
-            })
-            logger.debug(f"Extracted private key from PKCS12 with type: {item_type}")
+            }
+            additional_items.append(key_item)
+            logger.debug("Added private key to additional items")
+            
         except Exception as key_err:
-            logger.error(f"Error extracting private key from PKCS12: {key_err}")
-            import traceback
-            logger.error(f"Private key extraction traceback: {traceback.format_exc()}")
+            logger.error(f"Error processing PKCS12 private key: {key_err}")
     
     # Extract additional certificates if present
     if additional_certs:
         logger.debug(f"Processing {len(additional_certs)} additional certificates...")
         for i, additional_cert in enumerate(additional_certs):
-            if additional_cert:
-                try:
-                    logger.debug(f"Processing additional certificate [{i}]...")
-                    cert_hash = generate_certificate_hash(additional_cert)
-                    cert_metadata = extract_certificate_metadata(additional_cert)
-                    
-                    logger.debug(f"Additional cert [{i}] hash: {cert_hash[:16]}...")
-                    
-                    # Use standardized type if available
-                    if use_standardized and get_consistent_types:
-                        type_info = get_consistent_types("Certificate", cert_metadata)
-                        item_type = type_info["type"]  # Will be "Certificate", "IssuingCA", "IntermediateCA", or "RootCA"
-                        logger.debug(f"Additional cert [{i}] standardized type: {item_type}")
-                    else:
-                        item_type = "Certificate"  # Legacy fallback
-                        logger.debug(f"Additional cert [{i}] legacy type: {item_type}")
-                    
-                    additional_items.append({
-                        "type": item_type,  # Now uses standardized types
-                        "format": "PKCS12",
-                        "isValid": True,
-                        "size": 0,  # Size is part of the PKCS12 container
-                        "content_hash": cert_hash,
-                        "details": cert_metadata
-                    })
-                    logger.debug(f"Extracted additional certificate {i} from PKCS12 with type: {item_type}")
-                except Exception as cert_err:
-                    logger.error(f"Error extracting additional certificate {i} from PKCS12: {cert_err}")
-                    import traceback
-                    logger.error(f"Additional cert extraction traceback: {traceback.format_exc()}")
+            try:
+                # Generate hash for additional certificate
+                additional_hash = generate_certificate_hash(additional_cert)
+                additional_metadata = extract_certificate_metadata(additional_cert)
+                
+                logger.debug(f"Additional cert {i+1} hash: {additional_hash[:16]}...")
+                
+                # Determine certificate type for additional certs
+                if use_standardized and get_consistent_types:
+                    type_info = get_consistent_types("Certificate", additional_metadata)
+                    additional_type = type_info["type"]
+                else:
+                    additional_type = "Certificate"
+                
+                # Create additional certificate item
+                additional_item = {
+                    "type": additional_type,
+                    "isValid": True,
+                    "content_hash": additional_hash,
+                    "details": additional_metadata
+                }
+                additional_items.append(additional_item)
+                logger.debug(f"Added additional certificate {i+1} to items")
+                
+            except Exception as additional_err:
+                logger.error(f"Error processing additional certificate {i+1}: {additional_err}")
     
     # Add additional items to result if any were found
     if additional_items:
         result["additional_items"] = additional_items
-        logger.debug(f"PKCS12 contains {len(additional_items)} additional items")
-        for i, item in enumerate(additional_items):
-            logger.debug(f"  Additional item [{i}]: {item['type']} - {item['content_hash'][:16]}...")
+        logger.debug(f"Added {len(additional_items)} additional items to result")
+    
+    # Add bundle-specific information
+    bundle_info = {
+        "bundle_type": "PKCS12",
+        "has_main_certificate": cert is not None,
+        "has_private_key": private_key is not None,
+        "additional_certificate_count": len(additional_certs),
+        "total_components": 1 + len(additional_items),  # Main cert + additional items
+        "is_encrypted": is_encrypted
+    }
+    
+    if metadata:
+        # Add bundle info to the main certificate's metadata
+        metadata["bundle_info"] = bundle_info
     else:
-        logger.debug("No additional items extracted from PKCS12")
+        # If no main cert metadata, create minimal metadata with bundle info
+        result["details"] = {"bundle_info": bundle_info}
     
-    # Generate summary log with standardized types
-    cert_count = int(bool(cert))
-    key_count = int(bool(private_key))
-    additional_count = len(additional_certs or [])
+    logger.info(f"PKCS12 bundle processing complete:")
+    logger.info(f"  Main certificate: {'YES' if cert else 'NO'}")
+    logger.info(f"  Private key: {'YES' if private_key else 'NO'}")  
+    logger.info(f"  Additional certificates: {bundle_info['additional_certificate_count']}")
+    logger.info(f"  Total components: {bundle_info['total_components']}")
+    logger.info(f"  Bundle encrypted: {is_encrypted}")
     
-    parts = []
-    if cert_count:
-        parts.append(f"{cert_count} Certificate")
-    if key_count:
-        parts.append(f"{key_count} Private Key")
-    if additional_count:
-        parts.append(f"1 Chain ({additional_count} certs)")
-    
-    total = cert_count + key_count + additional_count
-    logger.info(f"PKCS12 extraction complete: {', '.join(parts)} ({total} total)")
-
-    logger.debug(f"PKCS12 processing complete - main type: {result['type']}")
     return result
+
+# Legacy compatibility functions (if needed by other parts of the system)
+
+def _process_pkcs12_success_legacy(cert, private_key, additional_certs) -> Dict[str, Any]:
+    """Legacy wrapper for backward compatibility"""
+    logger.warning("Using legacy PKCS12 processing - consider updating to use Password Entry Service")
+    return _process_pkcs12_success(cert, private_key, additional_certs, is_encrypted=False)

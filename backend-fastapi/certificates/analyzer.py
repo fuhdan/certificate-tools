@@ -1,5 +1,6 @@
 # backend-fastapi/certificates/analyzer.py
 # Enhanced analyzer with smart chain management and comprehensive format support
+# Updated to integrate centralized Password Entry Service while preserving all existing features
 
 import hashlib
 import logging
@@ -17,6 +18,13 @@ from .storage.session_pki_storage import (
     session_pki_storage, 
     PKIComponentType,
     process_pkcs12_bundle
+)
+
+# Import the centralized Password Entry Service
+from services.password_entry_service import (
+    password_entry_service,
+    handle_encrypted_content,
+    PasswordResult
 )
 
 logger = logging.getLogger(__name__)
@@ -48,6 +56,7 @@ def get_file_format(filename: str) -> str:
 def analyze_uploaded_certificate(file_content: bytes, filename: str, password: Optional[str] = None, session_id: Optional[str] = None) -> Dict[str, Any]:
     """
     Main certificate analysis function with enhanced chain management
+    Updated to integrate centralized Password Entry Service while preserving all existing functionality
     Returns: analysis results with component IDs
     """
     logger.debug(f"=== SESSION-BASED PKI ANALYSIS START ===")
@@ -85,7 +94,7 @@ def analyze_uploaded_certificate(file_content: bytes, filename: str, password: O
             analysis_result["message"] = f"PKCS7 bundle processed: {len(component_ids)} components extracted"
             
         elif file_format in ['PEM', 'CRT', 'CER']:
-            component_ids = _process_pem_file(file_content, filename, session_id)
+            component_ids = _process_pem_file(file_content, filename, password, session_id)
             analysis_result["message"] = f"PEM file processed: {len(component_ids)} components extracted"
             
         elif file_format == 'DER':
@@ -114,34 +123,47 @@ def analyze_uploaded_certificate(file_content: bytes, filename: str, password: O
     return analysis_result
 
 def _process_pkcs12_file(file_content: bytes, filename: str, password: Optional[str], session_id: str) -> List[str]:
-    """Process PKCS12 file with enhanced chain management"""
-    logger.debug("Processing PKCS12 file")
-    
-    from cryptography.hazmat.primitives.serialization import pkcs12
+    """
+    Process PKCS12 file with enhanced chain management using centralized Password Entry Service
+    """
+    logger.debug("Processing PKCS12 file using Password Entry Service")
     
     try:
-        # Try without password first
-        private_key, cert, additional_certs = pkcs12.load_key_and_certificates(file_content, password=None)
-        logger.debug("PKCS12 loaded without password")
-    except Exception:
-        # Try with password
-        if not password:
-            raise ValueError("Password required for PKCS12 file")
+        # Use the centralized Password Entry Service
+        result, components, error, content_type = handle_encrypted_content(
+            file_content, password, filename
+        )
         
-        try:
-            private_key, cert, additional_certs = pkcs12.load_key_and_certificates(
-                file_content, 
-                password=password.encode()
-            )
-            logger.debug("PKCS12 loaded with password")
-        except Exception as e:
-            raise ValueError(f"Failed to decrypt PKCS12 file: {e}")
-    
-    # Use enhanced session-based processing with chain management
-    component_ids = process_pkcs12_bundle(session_id, filename, cert, private_key, additional_certs)
-    
-    logger.info(f"PKCS12 processing complete: {len(component_ids)} components stored")
-    return component_ids
+        logger.debug(f"Password service result for PKCS12: {result}")
+        
+        if result in [PasswordResult.SUCCESS, PasswordResult.NO_PASSWORD_NEEDED]:
+            # Successfully loaded PKCS12 bundle
+            if components is None:
+                raise ValueError("Password service returned None components for successful PKCS12 result")
+                
+            private_key, cert, additional_certs = components
+            additional_certs = additional_certs or []
+            
+            logger.info(f"PKCS12 bundle loaded: cert={'YES' if cert else 'NO'}, key={'YES' if private_key else 'NO'}, additional_certs={len(additional_certs)}")
+            
+            # Use enhanced session-based processing with chain management
+            component_ids = process_pkcs12_bundle(session_id, filename, cert, private_key, additional_certs)
+            
+            logger.info(f"PKCS12 processing complete: {len(component_ids)} components stored")
+            return component_ids
+            
+        elif result == PasswordResult.PASSWORD_REQUIRED:
+            raise ValueError("Password required for PKCS12 file")
+            
+        elif result == PasswordResult.WRONG_PASSWORD:
+            raise ValueError("Failed to decrypt PKCS12 file: Invalid password")
+            
+        else:
+            raise ValueError(f"Failed to decrypt PKCS12 file: {error}")
+            
+    except Exception as e:
+        logger.error(f"PKCS12 processing failed: {e}")
+        raise
 
 def _process_pkcs7_file(file_content: bytes, filename: str, password: Optional[str], session_id: str) -> List[str]:
     """Process PKCS7 file with enhanced chain management"""
@@ -292,9 +314,12 @@ def _process_pem_certificate_chain(file_content: bytes, filename: str, session_i
     # Process as a chain
     return session_pki_storage.process_chain_upload(session_id, filename, components_data)
 
-def _process_pem_file(file_content: bytes, filename: str, session_id: str) -> List[str]:
-    """Process PEM file (could contain multiple certificates, keys, CSRs)"""
-    logger.debug("Processing PEM file")
+def _process_pem_file(file_content: bytes, filename: str, password: Optional[str], session_id: str) -> List[str]:
+    """
+    Process PEM file (could contain multiple certificates, keys, CSRs)
+    Updated to use Password Entry Service for private key handling
+    """
+    logger.debug("Processing PEM file with Password Entry Service")
     
     try:
         content_str = file_content.decode('utf-8')
@@ -334,24 +359,50 @@ def _process_pem_file(file_content: bytes, filename: str, session_id: str) -> Li
         )
         component_ids.append(component_id)
     
-    # Look for private keys
+    # Look for private keys using Password Entry Service
     key_patterns = [
         r'-----BEGIN PRIVATE KEY-----.*?-----END PRIVATE KEY-----',
         r'-----BEGIN RSA PRIVATE KEY-----.*?-----END RSA PRIVATE KEY-----',
-        r'-----BEGIN EC PRIVATE KEY-----.*?-----END EC PRIVATE KEY-----'
+        r'-----BEGIN EC PRIVATE KEY-----.*?-----END EC PRIVATE KEY-----',
+        r'-----BEGIN ENCRYPTED PRIVATE KEY-----.*?-----END ENCRYPTED PRIVATE KEY-----'
     ]
     
     for pattern in key_patterns:
         key_matches = re.findall(pattern, content_str, re.DOTALL)
         for key_pem in key_matches:
-            private_key = serialization.load_pem_private_key(key_pem.encode(), password=None)
-            
-            key_metadata = extract_private_key_metadata(private_key, is_encrypted=False)
-            
-            component_id = session_pki_storage.add_component(
-                session_id, PKIComponentType.PRIVATE_KEY, key_pem, filename, key_metadata
-            )
-            component_ids.append(component_id)
+            try:
+                # Use Password Entry Service for private key handling
+                result, private_key, error, content_type = handle_encrypted_content(
+                    key_pem.encode(), password, filename
+                )
+                
+                if result in [PasswordResult.SUCCESS, PasswordResult.NO_PASSWORD_NEEDED]:
+                    # Successfully loaded private key
+                    key_metadata = extract_private_key_metadata(
+                        private_key, 
+                        is_encrypted=(result == PasswordResult.SUCCESS and password is not None)
+                    )
+                    
+                    component_id = session_pki_storage.add_component(
+                        session_id, PKIComponentType.PRIVATE_KEY, key_pem, filename, key_metadata
+                    )
+                    component_ids.append(component_id)
+                    
+                elif result == PasswordResult.PASSWORD_REQUIRED:
+                    raise ValueError("Password required for encrypted private key in PEM file")
+                    
+                elif result == PasswordResult.WRONG_PASSWORD:
+                    raise ValueError("Invalid password for encrypted private key in PEM file")
+                    
+                else:
+                    logger.warning(f"Could not process private key in PEM file: {error}")
+                    
+            except Exception as key_err:
+                # If it's a password-related error, re-raise it
+                if any(keyword in str(key_err).lower() for keyword in ["password required", "invalid password"]):
+                    raise
+                logger.warning(f"Failed to process private key: {key_err}")
+                continue
     
     # Look for CSRs
     csr_pattern = r'-----BEGIN CERTIFICATE REQUEST-----.*?-----END CERTIFICATE REQUEST-----'
@@ -373,8 +424,10 @@ def _process_pem_file(file_content: bytes, filename: str, session_id: str) -> Li
     return component_ids
 
 def _process_der_file(file_content: bytes, filename: str, session_id: str, password: Optional[str] = None) -> List[str]:
-    """Process DER file (certificate, private key, or CSR)"""
-    logger.debug("Processing DER file")
+    """
+    Process DER file (certificate, private key, or CSR) using Password Entry Service
+    """
+    logger.debug("Processing DER file with Password Entry Service")
     
     component_ids = []
     errors = []
@@ -426,44 +479,44 @@ def _process_der_file(file_content: bytes, filename: str, session_id: str, passw
         logger.debug(f"DER CSR parsing failed: {csr_error}")
         errors.append(f"CSR: {csr_error}")
     
-    # Try to load as private key third
+    # Try to load as private key third using Password Entry Service
     try:
-        # First try without password for unencrypted keys
-        try:
-            private_key = serialization.load_der_private_key(file_content, password=None)
-            logger.debug("Successfully loaded unencrypted DER private key")
-        except Exception as unencrypted_error:
-            # Check if it's an encryption-related error
-            error_str = str(unencrypted_error).lower()
-            if any(keyword in error_str for keyword in ['encrypted', 'password', 'decrypt', 'bad decrypt']):
-                if password is None:
-                    logger.debug("Encrypted DER private key detected but no password provided")
-                    raise ValueError("Password was not given but private key is encrypted")
-                else:
-                    logger.debug(f"Attempting to decrypt DER private key with provided password")
-                    # Try with provided password
-                    password_bytes = password.encode('utf-8') if isinstance(password, str) else password
-                    private_key = serialization.load_der_private_key(file_content, password=password_bytes)
-                    logger.debug("Successfully decrypted DER private key with password")
-            else:
-                # Not encryption-related, re-raise the original error
-                raise unencrypted_error
-        
-        # Convert to PEM for storage
-        key_pem = private_key.private_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PrivateFormat.PKCS8,
-            encryption_algorithm=serialization.NoEncryption()
-        ).decode('utf-8')
-        
-        key_metadata = extract_private_key_metadata(private_key, is_encrypted=(password is not None))
-        
-        component_id = session_pki_storage.add_component(
-            session_id, PKIComponentType.PRIVATE_KEY, key_pem, filename, key_metadata
+        result, private_key, error, content_type = handle_encrypted_content(
+            file_content, password, filename
         )
-        component_ids.append(component_id)
         
-        return component_ids
+        if result in [PasswordResult.SUCCESS, PasswordResult.NO_PASSWORD_NEEDED]:
+            # Successfully loaded private key
+            if private_key is None:
+                errors.append("Private Key: Password service returned None private key")
+            else:
+                key_metadata = extract_private_key_metadata(
+                    private_key, 
+                    is_encrypted=(result == PasswordResult.SUCCESS and password is not None)
+                )
+                
+                # Convert to PEM for storage
+                key_pem = private_key.private_bytes(
+                    encoding=serialization.Encoding.PEM,
+                    format=serialization.PrivateFormat.PKCS8,
+                    encryption_algorithm=serialization.NoEncryption()
+                ).decode('utf-8')
+                
+                component_id = session_pki_storage.add_component(
+                    session_id, PKIComponentType.PRIVATE_KEY, key_pem, filename, key_metadata
+                )
+                component_ids.append(component_id)
+                
+                return component_ids
+            
+        elif result == PasswordResult.PASSWORD_REQUIRED:
+            raise ValueError("Password was not given but private key is encrypted")
+            
+        elif result == PasswordResult.WRONG_PASSWORD:
+            raise ValueError("Invalid password for encrypted DER private key")
+            
+        else:
+            errors.append(f"Private Key: {error}")
         
     except Exception as key_error:
         logger.debug(f"DER private key parsing failed: {key_error}")
@@ -477,20 +530,23 @@ def _process_csr_file(file_content: bytes, filename: str, session_id: str) -> Li
     """Process CSR file"""
     logger.debug("Processing CSR file")
     
+    csr_pem = ""
+    csr_metadata = {}
+    
     try:
         # Try PEM first
         content_str = file_content.decode('utf-8')
         csr = x509.load_pem_x509_csr(content_str.encode())
         csr_pem = content_str
+        csr_metadata = extract_csr_metadata(csr)
     except Exception:
         try:
             # Try DER
             csr = x509.load_der_x509_csr(file_content)
             csr_pem = csr.public_bytes(serialization.Encoding.PEM).decode('utf-8')
+            csr_metadata = extract_csr_metadata(csr)
         except Exception as e:
             raise ValueError(f"Failed to load CSR: {e}")
-    
-    csr_metadata = extract_csr_metadata(csr)
     
     component_id = session_pki_storage.add_component(
         session_id, PKIComponentType.CSR, csr_pem, filename, csr_metadata

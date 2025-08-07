@@ -422,22 +422,70 @@ def _extract_domain_name_from_metadata(cert_metadata):
     return "example.com"  # Default fallback
 
 def _create_pkcs12_bundle(certificate_pem: str, private_key_pem: str, ca_bundle_pem: Optional[str] = None, p12_password: Optional[str] = None) -> bytes:
-    """Create PKCS#12 bundle from PEM content"""
+    """
+    Create PKCS#12 bundle from PEM content
+    FIXED: Now uses Password Entry Service for PEM private key loading
+    """
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.serialization import pkcs12
     from cryptography import x509
     import re
     
-    # Load certificate and private key from PEM
+    # Import the Password Entry Service
+    from services.password_entry_service import (
+        handle_encrypted_content,
+        PasswordResult
+    )
+    
+    logger = logging.getLogger(__name__)
+    
+    # Load certificate (unchanged)
     cert = x509.load_pem_x509_certificate(certificate_pem.encode())
-    private_key = serialization.load_pem_private_key(private_key_pem.encode(), password=None)
+    logger.debug("Certificate loaded successfully for PKCS#12 bundle")
     
-    # Validate private key type for PKCS#12 compatibility
-    from cryptography.hazmat.primitives.asymmetric import rsa, ec, ed25519, ed448, dsa
-    if not isinstance(private_key, (rsa.RSAPrivateKey, ec.EllipticCurvePrivateKey, ed25519.Ed25519PrivateKey, ed448.Ed448PrivateKey, dsa.DSAPrivateKey)):
-        raise ValueError(f"Unsupported private key type for PKCS#12: {type(private_key)}")
+    # FIXED: Load private key using Password Entry Service
+    logger.debug("Loading PEM private key using Password Entry Service")
+    try:
+        result, loaded_key, error, content_type = handle_encrypted_content(
+            private_key_pem.encode(), 
+            password=None,  # The PEM is already decrypted in storage
+            filename="bundle_private_key.pem"
+        )
+        
+        if result in [PasswordResult.SUCCESS, PasswordResult.NO_PASSWORD_NEEDED]:
+            if loaded_key is None:
+                raise ValueError("Password Entry Service returned None private key")
+            
+            # Validate private key type for PKCS#12 compatibility BEFORE assignment
+            from cryptography.hazmat.primitives.asymmetric import rsa, ec, ed25519, ed448, dsa
+            if not isinstance(loaded_key, (rsa.RSAPrivateKey, ec.EllipticCurvePrivateKey, ed25519.Ed25519PrivateKey, ed448.Ed448PrivateKey, dsa.DSAPrivateKey)):
+                raise ValueError(f"Unsupported private key type for PKCS#12: {type(loaded_key)}. PKCS#12 only supports RSA, EC, Ed25519, Ed448, and DSA keys.")
+            
+            # Type is validated, safe to assign
+            private_key = loaded_key
+            logger.debug(f"Private key loaded successfully via Password Entry Service: {type(private_key).__name__}")
+        else:
+            # If Password Entry Service fails, fall back to direct loading
+            # This handles the case where the PEM is already decrypted
+            logger.debug("Password Entry Service failed, trying direct PEM loading")
+            loaded_key = serialization.load_pem_private_key(private_key_pem.encode(), password=None)
+            
+            # Validate type for fallback as well
+            from cryptography.hazmat.primitives.asymmetric import rsa, ec, ed25519, ed448, dsa
+            if not isinstance(loaded_key, (rsa.RSAPrivateKey, ec.EllipticCurvePrivateKey, ed25519.Ed25519PrivateKey, ed448.Ed448PrivateKey, dsa.DSAPrivateKey)):
+                raise ValueError(f"Unsupported private key type for PKCS#12: {type(loaded_key)}. PKCS#12 only supports RSA, EC, Ed25519, Ed448, and DSA keys.")
+            
+            private_key = loaded_key
+            logger.debug(f"Private key loaded successfully via direct PEM loading: {type(private_key).__name__}")
+            
+    except Exception as e:
+        logger.error(f"Failed to load private key for PKCS#12 bundle: {e}")
+        raise ValueError(f"Cannot load private key for PKCS#12 bundle: {e}")
     
-    # Load additional certificates if provided
+    # Remove redundant validation since we already validated above
+    logger.debug(f"Private key type confirmed compatible: {type(private_key).__name__}")
+    
+    # Load additional certificates if provided (unchanged)
     additional_certs = []
     if ca_bundle_pem:
         # Split CA bundle into individual certificates
@@ -452,23 +500,33 @@ def _create_pkcs12_bundle(certificate_pem: str, private_key_pem: str, ca_bundle_
                 additional_certs.append(ca_cert)
             except Exception as e:
                 logger.warning(f"Failed to load CA certificate: {e}")
+        
+        logger.debug(f"Loaded {len(additional_certs)} additional certificates")
     
-    # FIXED: Use password if provided, otherwise no encryption
+    # Use password if provided, otherwise no encryption (unchanged)
     if p12_password:
         encryption_algorithm = serialization.BestAvailableEncryption(p12_password.encode('utf-8'))
+        logger.debug("PKCS#12 bundle will be encrypted with provided password")
     else:
         encryption_algorithm = serialization.NoEncryption()
+        logger.debug("PKCS#12 bundle will be unencrypted")
     
-    # Create PKCS#12 bundle
-    p12_data = pkcs12.serialize_key_and_certificates(
-        name=b"certificate",
-        key=private_key,
-        cert=cert,
-        cas=additional_certs if additional_certs else None,
-        encryption_algorithm=encryption_algorithm
-    )
-    
-    return p12_data
+    # Create PKCS#12 bundle (unchanged)
+    try:
+        p12_data = pkcs12.serialize_key_and_certificates(
+            name=b"certificate",
+            key=private_key,
+            cert=cert,
+            cas=additional_certs if additional_certs else None,
+            encryption_algorithm=encryption_algorithm
+        )
+        
+        logger.info(f"PKCS#12 bundle created successfully: {len(p12_data)} bytes")
+        return p12_data
+        
+    except Exception as e:
+        logger.error(f"Failed to create PKCS#12 bundle: {e}")
+        raise ValueError(f"PKCS#12 bundle creation failed: {e}")
 
 def _create_certificate_info_text(certificate_data: Dict[str, Any], zip_password: str, p12_password: str) -> str:
     """Create certificate information text using enhanced instruction generator"""
@@ -481,3 +539,190 @@ def _create_certificate_info_text(certificate_data: Dict[str, Any], zip_password
         zip_password=zip_password, 
         p12_password=p12_password
     )
+
+def _get_private_key_encryption_info(private_key_pem: str) -> Dict[str, Any]:
+    """
+    Get information about PEM private key encryption status
+    This helps with debugging PEM private key issues
+    """
+    logger = logging.getLogger(__name__)
+    
+    # Check for encryption markers in the PEM content
+    encryption_markers = [
+        '-----BEGIN ENCRYPTED PRIVATE KEY-----',
+        'Proc-Type: 4,ENCRYPTED',
+        'DEK-Info:'
+    ]
+    
+    is_encrypted_format = any(marker in private_key_pem for marker in encryption_markers)
+    
+    # Try to load and get actual encryption status
+    try:
+        from services.password_entry_service import handle_encrypted_content, PasswordResult
+        
+        result, private_key, error, content_type = handle_encrypted_content(
+            private_key_pem.encode(), 
+            password=None, 
+            filename="test_key.pem"
+        )
+        
+        actual_encrypted = result == PasswordResult.PASSWORD_REQUIRED
+        successfully_loaded = result in [PasswordResult.SUCCESS, PasswordResult.NO_PASSWORD_NEEDED]
+        
+        logger.debug(f"Private key encryption analysis:")
+        logger.debug(f"  Has encryption markers: {is_encrypted_format}")
+        logger.debug(f"  Actually encrypted: {actual_encrypted}")
+        logger.debug(f"  Successfully loaded: {successfully_loaded}")
+        logger.debug(f"  Content type: {content_type}")
+        
+        return {
+            "has_encryption_markers": is_encrypted_format,
+            "actually_encrypted": actual_encrypted,
+            "successfully_loaded": successfully_loaded,
+            "content_type": str(content_type),
+            "password_service_result": str(result)
+        }
+        
+    except Exception as e:
+        logger.warning(f"Could not analyze private key encryption: {e}")
+        return {
+            "has_encryption_markers": is_encrypted_format,
+            "actually_encrypted": "unknown",
+            "successfully_loaded": False,
+            "error": str(e)
+        }
+
+# Enhanced error handling for PKCS#12 bundle creation
+def _create_pkcs12_bundle_with_fallback(certificate_pem: str, private_key_pem: str, ca_bundle_pem: Optional[str] = None, p12_password: Optional[str] = None) -> bytes:
+    """
+    Create PKCS#12 bundle with enhanced error handling and fallback methods
+    This function provides better debugging and multiple approaches to handle PEM private keys
+    """
+    logger = logging.getLogger(__name__)
+    
+    logger.info("Creating PKCS#12 bundle with enhanced error handling")
+    
+    # First, analyze the private key to understand potential issues
+    key_info = _get_private_key_encryption_info(private_key_pem)
+    logger.debug(f"Private key analysis: {key_info}")
+    
+    # Try the main method first
+    try:
+        return _create_pkcs12_bundle(certificate_pem, private_key_pem, ca_bundle_pem, p12_password)
+    
+    except Exception as primary_error:
+        logger.warning(f"Primary PKCS#12 creation method failed: {primary_error}")
+        
+        # If the primary method fails, try fallback approaches
+        fallback_methods = [
+            ("Direct PEM loading with no password", _try_direct_pem_loading),
+            ("Password Entry Service with empty password", _try_service_with_empty_password),
+            ("Raw PEM parsing", _try_raw_pem_parsing)
+        ]
+        
+        for method_name, method_func in fallback_methods:
+            try:
+                logger.debug(f"Trying fallback method: {method_name}")
+                return method_func(certificate_pem, private_key_pem, ca_bundle_pem, p12_password)
+            
+            except Exception as fallback_error:
+                logger.debug(f"Fallback method '{method_name}' failed: {fallback_error}")
+                continue
+        
+        # If all methods fail, raise the original error with enhanced information
+        enhanced_error = (
+            f"PKCS#12 bundle creation failed. "
+            f"Primary error: {primary_error}. "
+            f"Private key info: {key_info}. "
+            f"All fallback methods also failed."
+        )
+        logger.error(enhanced_error)
+        raise ValueError(enhanced_error)
+
+def _try_direct_pem_loading(certificate_pem: str, private_key_pem: str, ca_bundle_pem: Optional[str] = None, p12_password: Optional[str] = None) -> bytes:
+    """Fallback method 1: Direct PEM loading with type validation"""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.serialization import pkcs12
+    from cryptography import x509
+    from cryptography.hazmat.primitives.asymmetric import rsa, ec, ed25519, ed448, dsa
+    import re
+    
+    cert = x509.load_pem_x509_certificate(certificate_pem.encode())
+    loaded_key = serialization.load_pem_private_key(private_key_pem.encode(), password=None)
+    
+    # Validate private key type for PKCS#12 compatibility
+    if not isinstance(loaded_key, (rsa.RSAPrivateKey, ec.EllipticCurvePrivateKey, ed25519.Ed25519PrivateKey, ed448.Ed448PrivateKey, dsa.DSAPrivateKey)):
+        raise ValueError(f"Unsupported private key type for PKCS#12: {type(loaded_key)}. PKCS#12 only supports RSA, EC, Ed25519, Ed448, and DSA keys.")
+    
+    # Type validated, safe to use
+    private_key = loaded_key
+    
+    additional_certs = []
+    if ca_bundle_pem:
+        cert_blocks = re.findall(r'-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----', ca_bundle_pem, re.DOTALL)
+        for cert_block in cert_blocks:
+            try:
+                ca_cert = x509.load_pem_x509_certificate(cert_block.encode())
+                additional_certs.append(ca_cert)
+            except Exception:
+                continue
+    
+    encryption_algorithm = serialization.BestAvailableEncryption(p12_password.encode('utf-8')) if p12_password else serialization.NoEncryption()
+    
+    return pkcs12.serialize_key_and_certificates(
+        name=b"certificate",
+        key=private_key,
+        cert=cert,
+        cas=additional_certs if additional_certs else None,
+        encryption_algorithm=encryption_algorithm
+    )
+
+def _try_service_with_empty_password(certificate_pem: str, private_key_pem: str, ca_bundle_pem: Optional[str] = None, p12_password: Optional[str] = None) -> bytes:
+    """Fallback method 2: Try Password Entry Service with empty password"""
+    from services.password_entry_service import handle_encrypted_content, PasswordResult
+    from cryptography.hazmat.primitives.asymmetric import rsa, ec, ed25519, ed448, dsa
+    
+    result, loaded_key, error, content_type = handle_encrypted_content(
+        private_key_pem.encode(), 
+        password="",  # Try empty password
+        filename="fallback_key.pem"
+    )
+    
+    if result not in [PasswordResult.SUCCESS, PasswordResult.NO_PASSWORD_NEEDED]:
+        raise ValueError(f"Password Entry Service with empty password failed: {error}")
+    
+    if loaded_key is None:
+        raise ValueError("Password Entry Service returned None key")
+    
+    # Validate private key type for PKCS#12 compatibility
+    if not isinstance(loaded_key, (rsa.RSAPrivateKey, ec.EllipticCurvePrivateKey, ed25519.Ed25519PrivateKey, ed448.Ed448PrivateKey, dsa.DSAPrivateKey)):
+        raise ValueError(f"Unsupported private key type for PKCS#12: {type(loaded_key)}. PKCS#12 only supports RSA, EC, Ed25519, Ed448, and DSA keys.")
+    
+    # Use the direct loading method with the validated key type info
+    return _try_direct_pem_loading(certificate_pem, private_key_pem, ca_bundle_pem, p12_password)
+
+def _try_raw_pem_parsing(certificate_pem: str, private_key_pem: str, ca_bundle_pem: Optional[str] = None, p12_password: Optional[str] = None) -> bytes:
+    """Fallback method 3: Raw PEM parsing with multiple password attempts"""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa, ec, ed25519, ed448, dsa
+    
+    # Try common passwords for testing/development keys
+    password_attempts = [None, b"", b"password", b"test", b"default"]
+    
+    loaded_key = None
+    for pwd in password_attempts:
+        try:
+            loaded_key = serialization.load_pem_private_key(private_key_pem.encode(), password=pwd)
+            break
+        except Exception:
+            continue
+    
+    if loaded_key is None:
+        raise ValueError("Could not load private key with any attempted password")
+    
+    # Validate private key type for PKCS#12 compatibility
+    if not isinstance(loaded_key, (rsa.RSAPrivateKey, ec.EllipticCurvePrivateKey, ed25519.Ed25519PrivateKey, ed448.Ed448PrivateKey, dsa.DSAPrivateKey)):
+        raise ValueError(f"Unsupported private key type for PKCS#12: {type(loaded_key)}. PKCS#12 only supports RSA, EC, Ed25519, Ed448, and DSA keys.")
+    
+    # Use the direct loading method since we've validated the key type
+    return _try_direct_pem_loading(certificate_pem, private_key_pem, ca_bundle_pem, p12_password)

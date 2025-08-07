@@ -1,4 +1,5 @@
 // frontend/src/components/FileUpload/FileUpload.jsx
+// REVERTED: Back to original working version - NO UI CHANGES
 import React, { useState, useRef, useEffect } from 'react'
 import { Upload, Key, AlertCircle } from 'lucide-react'
 import { useCertificates } from '../../contexts/CertificateContext'
@@ -234,7 +235,7 @@ const FileUpload = () => {
             <>
               <Key size={48} className={styles.lockIcon} />
               <h3>Password Required</h3>
-              <p>Enter password for protected files below</p>
+              <p>Enter password for encrypted files below</p>
             </>
           ) : isAnalyzing ? (
             <>

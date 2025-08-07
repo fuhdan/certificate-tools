@@ -1,5 +1,6 @@
-# certificates/formats/der.py
+# backend-fastapi/certificates/formats/der.py
 # DER and binary format analysis functions with comprehensive debugging
+# Updated to use centralized Password Entry Service
 
 import logging
 from typing import Dict, Any, Optional
@@ -14,9 +15,16 @@ from ..utils.hashing import (
     generate_normalized_private_key_hash, generate_file_hash
 )
 
+# Import the centralized Password Entry Service
+from services.password_entry_service import (
+    password_entry_service,
+    handle_encrypted_content,
+    PasswordResult
+)
+
 logger = logging.getLogger(__name__)
 
-logger.debug("formats/der.py initialized")
+logger.debug("formats/der.py initialized with Password Entry Service")
 
 def analyze_der_certificate(file_content: bytes) -> Dict[str, Any]:
     """Analyze DER certificate content"""
@@ -91,126 +99,120 @@ def analyze_der_csr(file_content: bytes) -> Dict[str, Any]:
         logger.error(f"Full traceback: {traceback.format_exc()}")
         raise csr_error
 
-def analyze_der_private_key(file_content: bytes, password: Optional[str]) -> Dict[str, Any]:
-    """Analyze DER private key content"""
+def analyze_der_private_key(file_content: bytes, password: Optional[str], filename: str = "") -> Dict[str, Any]:
+    """
+    Analyze DER private key content using centralized Password Entry Service
+    
+    This function now uses the Password Entry Service to handle all password-related
+    logic consistently with PEM and PKCS12 formats.
+    """
+    logger.info(f"=== DER PRIVATE KEY ANALYSIS (with Password Service) ===")
     logger.debug(f"File content length: {len(file_content)} bytes")
     logger.debug(f"Password provided: {'YES' if password else 'NO'}")
+    logger.debug(f"Filename: {filename}")
     logger.debug(f"First 16 bytes (hex): {file_content[:16].hex()}")
     
     try:
-        logger.debug("Attempting to load DER private key without password...")
-        # Try without password first
-        private_key = serialization.load_der_private_key(file_content, password=None)
+        # Use the centralized Password Entry Service
+        result, private_key, error, content_type = handle_encrypted_content(
+            file_content, password, filename
+        )
         
-        logger.debug("Successfully loaded unencrypted DER private key")
-        # Unencrypted private key
-        normalized_hash = generate_normalized_private_key_hash(private_key)
-        logger.debug(f"DER private key normalized hash: {normalized_hash[:16]}...")
+        logger.debug(f"Password service result: {result}")
+        logger.debug(f"Content type detected: {content_type}")
         
-        logger.debug("Extracting DER private key metadata...")
-        metadata = extract_private_key_metadata(private_key, is_encrypted=False)
-        logger.debug(f"DER private key metadata: {metadata}")
-        
-        result = {
-            "type": "Private Key",
-            "isValid": True,
-            "content_hash": normalized_hash,
-            "details": metadata
-        }
-        
-        logger.info(f"DER private key analysis complete: {metadata.get('algorithm', 'Unknown')} {metadata.get('key_size', 0)} bits")
-        return result
-        
-    except Exception as key_error:
-        # Check if it might be an encrypted DER/PKCS8 key
-        error_str = str(key_error).lower()
-        logger.debug(f"DER private key loading without password failed: {key_error}")
-        logger.debug(f"Error string analysis: {error_str}")
-        
-        if any(keyword in error_str for keyword in ['encrypted', 'password', 'decrypt', 'bad decrypt']):
-            logger.info("DER private key appears to be encrypted")
-            if password is None:
-                logger.debug("No password provided for encrypted DER private key")
-                return {
-                    "type": "Private Key - Password Required",
-                    "isValid": False,
-                    "requiresPassword": True,
-                    "content_hash": generate_file_hash(file_content),
-                    "details": {
-                        "algorithm": "Encrypted (password required)",
-                        "key_size": 0,
-                        "curve": "N/A",
-                        "is_encrypted": True,
-                        "format": "DER/PKCS8"
-                    }
-                }
-            else:
-                logger.debug("Attempting to decrypt DER private key with provided password...")
-                # Try with provided password
-                try:
-                    password_bytes = password.encode('utf-8')
-                    logger.debug(f"Password encoded to {len(password_bytes)} bytes")
-                    
-                    private_key = serialization.load_der_private_key(file_content, password=password_bytes)
-                    logger.info("Successfully decrypted DER private key with password")
-                    
-                    # Success with password
-                    normalized_hash = generate_normalized_private_key_hash(private_key)
-                    logger.debug(f"Decrypted DER private key hash: {normalized_hash[:16]}...")
-                    
-                    metadata = extract_private_key_metadata(private_key, is_encrypted=True)
-                    logger.debug(f"Decrypted DER private key metadata: {metadata}")
-                    
-                    result = {
-                        "type": "Private Key",
-                        "isValid": True,
-                        "content_hash": normalized_hash,
-                        "details": metadata
-                    }
-                    
-                    logger.info(f"Encrypted DER private key analysis complete: {metadata.get('algorithm', 'Unknown')} {metadata.get('key_size', 0)} bits")
-                    return result
-                    
-                except Exception as pwd_error:
-                    logger.error(f"DER private key password decryption failed: {pwd_error}")
-                    # Wrong password
-                    return {
-                        "type": "Private Key - Invalid Password",
-                        "isValid": False,
-                        "requiresPassword": True,
-                        "content_hash": generate_file_hash(file_content),
-                        "details": {
-                            "algorithm": "Encrypted (incorrect password)",
-                            "key_size": 0,
-                            "curve": "N/A",
-                            "is_encrypted": True,
-                            "format": "DER/PKCS8"
-                        }
-                    }
-        else:
-            logger.error(f"DER private key parsing failed with non-password error: {key_error}")
-            import traceback
-            logger.error(f"Full traceback: {traceback.format_exc()}")
+        if result == PasswordResult.SUCCESS:
+            # Successfully loaded private key with password
+            logger.info("DER private key successfully loaded via Password Entry Service")
             
-            # Unknown DER format
+            # Generate normalized hash and extract metadata
+            normalized_hash = generate_normalized_private_key_hash(private_key)
+            logger.debug(f"Normalized private key hash: {normalized_hash[:16]}...")
+            
+            metadata = extract_private_key_metadata(private_key, is_encrypted=(password is not None))
+            logger.debug(f"Private key metadata: {metadata}")
+            
+            result_dict = {
+                "type": "Private Key",
+                "isValid": True,
+                "content_hash": normalized_hash,
+                "details": metadata
+            }
+            
+            logger.info(f"DER private key analysis complete: {metadata.get('algorithm', 'Unknown')} {metadata.get('key_size', 0)} bits")
+            return result_dict
+            
+        elif result == PasswordResult.NO_PASSWORD_NEEDED:
+            # Unencrypted private key
+            logger.info("DER private key loaded without password via Password Entry Service")
+            
+            normalized_hash = generate_normalized_private_key_hash(private_key)
+            logger.debug(f"Normalized private key hash: {normalized_hash[:16]}...")
+            
+            metadata = extract_private_key_metadata(private_key, is_encrypted=False)
+            logger.debug(f"Private key metadata: {metadata}")
+            
+            result_dict = {
+                "type": "Private Key",
+                "isValid": True,
+                "content_hash": normalized_hash,
+                "details": metadata
+            }
+            
+            logger.info(f"Unencrypted DER private key analysis complete: {metadata.get('algorithm', 'Unknown')} {metadata.get('key_size', 0)} bits")
+            return result_dict
+            
+        elif result == PasswordResult.PASSWORD_REQUIRED:
+            # Password is required but not provided
+            logger.info("Password required for encrypted DER private key")
+            return password_entry_service.create_password_required_response(
+                file_content, content_type, filename
+            )
+            
+        elif result == PasswordResult.WRONG_PASSWORD:
+            # Wrong password provided
+            logger.error("Wrong password provided for encrypted DER private key")
+            return password_entry_service.create_wrong_password_response(
+                file_content, content_type
+            )
+            
+        else:
+            # Other error (INVALID_FORMAT, UNKNOWN_ERROR)
+            logger.error(f"Password Entry Service error: {result} - {error}")
             return {
-                "type": "Unknown DER",
+                "type": "Private Key",
                 "isValid": False,
                 "content_hash": generate_file_hash(file_content),
-                "error": str(key_error)
+                "error": error or f"Password service error: {result}"
             }
+            
+    except Exception as e:
+        logger.error(f"Unexpected error in DER private key analysis: {e}")
+        import traceback
+        logger.error(f"Full traceback: {traceback.format_exc()}")
+        
+        return {
+            "type": "Private Key",
+            "isValid": False,
+            "content_hash": generate_file_hash(file_content),
+            "error": str(e)
+        }
 
-def analyze_der_formats(file_content: bytes, password: Optional[str]) -> Dict[str, Any]:
-    """Try different DER formats in order of likelihood"""
+def analyze_der_formats(file_content: bytes, password: Optional[str], filename: str = "") -> Dict[str, Any]:
+    """
+    Try different DER formats in order of likelihood
+    Updated to use Password Entry Service for private key handling
+    """
     logger.info(f"=== DER FORMAT DETECTION ===")
     logger.debug(f"File content length: {len(file_content)} bytes")
     logger.debug(f"Password provided: {'YES' if password else 'NO'}")
+    logger.debug(f"Filename: {filename}")
     logger.debug(f"Content header (32 bytes): {file_content[:32].hex()}")
     
     # Initialize error variables to avoid unbound variable errors
     cert_err: Optional[Exception] = None
     csr_err: Optional[Exception] = None
-    key_err: Optional[Exception] = None
+    key_result: Optional[Dict[str, Any]] = None
     
     # Analyze ASN.1 structure
     if len(file_content) >= 2:
@@ -247,16 +249,17 @@ def analyze_der_formats(file_content: bytes, password: Optional[str]) -> Dict[st
         csr_err = e
         logger.debug(f"DER CSR parsing failed: {csr_err}")
     
-    # Try private key third
-    logger.debug("Attempting DER private key parsing...")
+    # Try private key third (now using Password Entry Service)
+    logger.debug("Attempting DER private key parsing with Password Entry Service...")
     try:
-        result = analyze_der_private_key(file_content, password)
-        if result.get('isValid') or result.get('requiresPassword'):
-            logger.info(f"Successfully processed as DER private key: {result.get('type')}")
-            return result
+        key_result = analyze_der_private_key(file_content, password, filename)
+        if key_result.get('isValid') or key_result.get('requiresPassword'):
+            logger.info(f"Successfully processed as DER private key: {key_result.get('type')}")
+            return key_result
+        else:
+            logger.debug(f"DER private key processing returned invalid result: {key_result}")
     except Exception as e:
-        key_err = e
-        logger.debug(f"DER private key parsing failed: {key_err}")
+        logger.debug(f"DER private key parsing failed: {e}")
     
     # If all specific formats fail
     logger.error("All DER format parsing attempts failed")
@@ -265,7 +268,8 @@ def analyze_der_formats(file_content: bytes, password: Optional[str]) -> Dict[st
     logger.error(f"  Header: {file_content[:64].hex()}")
     logger.error(f"  Last certificate error: {cert_err}")
     logger.error(f"  Last CSR error: {csr_err}")
-    logger.error(f"  Last key error: {key_err}")
+    if key_result:
+        logger.error(f"  Private key result: {key_result}")
     
     return {
         "type": "Unknown Binary",
@@ -275,6 +279,6 @@ def analyze_der_formats(file_content: bytes, password: Optional[str]) -> Dict[st
         "format_hints": {
             "certificate_error": str(cert_err) if cert_err else None,
             "csr_error": str(csr_err) if csr_err else None,
-            "private_key_error": str(key_err) if key_err else None
+            "private_key_result": key_result.get('error') if key_result else None
         }
     }

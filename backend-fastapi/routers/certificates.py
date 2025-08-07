@@ -7,8 +7,10 @@ from typing import Annotated, List, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from fastapi.responses import JSONResponse
 
+import uuid
+from config import settings
+from certificates.analyzer import analyze_uploaded_certificate
 from auth.models import User
-from auth.dependencies import get_current_active_user
 from middleware.session_middleware import get_session_id
 from certificates.analyzer import analyze_uploaded_certificate
 from certificates.storage.session_pki_storage import session_pki_storage, PKIComponentType
@@ -16,100 +18,134 @@ from certificates.storage.session_pki_storage import session_pki_storage, PKICom
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-@router.post("/analyze-certificate", tags=["certificates"])
+# Use MAX_FILE_SIZE from settings
+MAX_FILE_SIZE = settings.MAX_FILE_SIZE
+
+@router.post("/analyze-certificate")
 async def analyze_certificate(
     file: UploadFile = File(...),
     password: str = Form(None),
-    session_id: str = Depends(get_session_id)
+    session_id_validated: str = Depends(get_session_id)
 ):
-    """Analyze uploaded certificate with smart chain management and deduplication"""
-    
-    filename = file.filename or "unknown_file"
-    logger.info(f"[{session_id}] Analyzing certificate: {filename}")
-    
+    """
+    Analyze uploaded certificate file with enhanced password handling
+    """
     try:
+        # Validate file
+        if not file.filename:
+            raise HTTPException(status_code=400, detail="No filename provided")
+        
         # Read file content
         file_content = await file.read()
-        
         if len(file_content) == 0:
-            raise HTTPException(status_code=422, detail="Empty file uploaded")
+            raise HTTPException(status_code=400, detail="Empty file")
         
-        if len(file_content) > 10 * 1024 * 1024:  # 10MB limit
-            raise HTTPException(status_code=422, detail="File too large (max 10MB)")
+        if len(file_content) > MAX_FILE_SIZE:
+            raise HTTPException(status_code=413, detail=f"File too large (max {MAX_FILE_SIZE//1024//1024}MB)")
         
-        # Get current state before upload for comparison
-        pre_upload_summary = session_pki_storage.get_chain_summary(session_id)
-        pre_upload_count = pre_upload_summary.get('total_components', 0)
+        logger.info(f"[{session_id_validated}] Analyzing certificate: {file.filename}")
         
-        # Analyze and store components with smart deduplication
-        analysis_result = analyze_uploaded_certificate(
-            file_content=file_content,
-            filename=filename,
-            password=password,
-            session_id=session_id
-        )
-        
-        # Get post-upload state
-        post_upload_summary = session_pki_storage.get_chain_summary(session_id)
-        post_upload_count = post_upload_summary.get('total_components', 0)
-        
-        # Determine what happened during upload
-        components_added = len(analysis_result.get('component_ids', []))
-        net_change = post_upload_count - pre_upload_count
-        
-        # Enhanced response with deduplication info
-        response_data = {
-            "success": True,
-            "message": f"Successfully analyzed {filename}",
-            "analysis": analysis_result,
-            "session_id": session_id,
-            "upload_summary": {
-                "components_processed": components_added,
-                "net_components_added": net_change,
-                "total_components_before": pre_upload_count,
-                "total_components_after": post_upload_count,
-                "deduplication_occurred": components_added > net_change,
-                "chains_before": len(pre_upload_summary.get('chains', {})),
-                "chains_after": len(post_upload_summary.get('chains', {}))
-            }
-        }
-        
-        # Add specific messages based on what happened
-        if net_change == 0 and components_added > 0:
-            response_data["message"] += f" (replaced {components_added} existing components)"
-        elif net_change < components_added:
-            replaced_count = components_added - net_change
-            response_data["message"] += f" (added {net_change}, replaced {replaced_count})"
-        
-        logger.info(f"[{session_id}] Successfully analyzed: {filename} - {response_data['message']}")
-        
-        return JSONResponse(
-            status_code=201,
-            content=response_data
-        )
-    except HTTPException:
-        # FIXED: Let HTTPException pass through unchanged
-        raise
-    except ValueError as ve:
-        error_message = str(ve)
-        if "password required" in error_message.lower() or "password" in error_message.lower():
-            logger.info(f"[{session_id}] Password required for {filename}")
-            return JSONResponse(
-                status_code=400,
-                content={
-                    "success": False,
-                    "requiresPassword": True,
-                    "message": error_message,
-                    "filename": filename,
-                    "session_id": session_id
-                }
+        # FIXED: Use the correct function name from analyzer.py
+        try:
+            analysis_result = analyze_uploaded_certificate(
+                file_content=file_content,
+                filename=file.filename,
+                password=password,
+                session_id=session_id_validated
             )
-        else:
-            logger.error(f"[{session_id}] Validation error for {filename}: {ve}")
-            raise HTTPException(status_code=400, detail=str(ve))
+            
+            # FIXED: Handle the success/failure based on analyzer response format
+            success = analysis_result.get("success", False)
+            
+            if not success:
+                # Analysis failed - check if it's a password issue
+                error_msg = analysis_result.get("message", "Unknown analysis error")
+                if "password required" in error_msg.lower():
+                    logger.info(f"[{session_id_validated}] Password required for {file.filename}")
+                    return JSONResponse(
+                        status_code=400,
+                        content={
+                            "success": False,
+                            "requiresPassword": True,
+                            "message": error_msg,
+                            "filename": file.filename,
+                            "analysis": analysis_result
+                        }
+                    )
+                elif "invalid password" in error_msg.lower():
+                    logger.info(f"[{session_id_validated}] Wrong password for {file.filename}")
+                    return JSONResponse(
+                        status_code=400,
+                        content={
+                            "success": False,
+                            "requiresPassword": True,
+                            "message": error_msg,
+                            "filename": file.filename,
+                            "analysis": analysis_result
+                        }
+                    )
+                else:
+                    # Other analysis error
+                    logger.error(f"[{session_id_validated}] Analysis failed for {file.filename}: {error_msg}")
+                    raise HTTPException(status_code=400, detail=error_msg)
+                    
+            else:
+                # Success - file was processed successfully
+                components_created = analysis_result.get("components_created", 0)
+                logger.info(f"[{session_id_validated}] Successfully analyzed: {file.filename} ({components_created} components)")
+                return {
+                    "success": True,
+                    "message": analysis_result.get("message", f"Certificate analyzed successfully: {file.filename}"),
+                    "filename": file.filename,
+                    "requiresPassword": False,
+                    "analysis": analysis_result,
+                    "id": analysis_result.get("session_id") or str(uuid.uuid4()),
+                    "components_created": components_created
+                }
+                
+        except ValueError as ve:
+            # Handle password-related ValueErrors from analyzer
+            error_msg = str(ve)
+            if any(keyword in error_msg.lower() for keyword in ["password required", "password was not given"]):
+                logger.info(f"[{session_id_validated}] Password required for {file.filename}")
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        "success": False,
+                        "requiresPassword": True,
+                        "message": error_msg,
+                        "filename": file.filename
+                    }
+                )
+            elif any(keyword in error_msg.lower() for keyword in ["invalid password", "wrong password", "decrypt"]):
+                logger.info(f"[{session_id_validated}] Wrong password for {file.filename}")
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        "success": False,
+                        "requiresPassword": True,
+                        "message": error_msg,
+                        "filename": file.filename
+                    }
+                )
+            else:
+                # Other ValueError
+                logger.error(f"[{session_id_validated}] Analysis failed for {file.filename}: {error_msg}")
+                raise HTTPException(status_code=400, detail=error_msg)
+        except Exception as analysis_error:
+            logger.error(f"[{session_id_validated}] Certificate analysis exception: {analysis_error}")
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Analysis failed: {str(analysis_error)}"
+            )
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"[{session_id}] Analysis error for {filename}: {e}")
-        raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
+        logger.error(f"[{session_id_validated}] Validation error for {file.filename if file else 'unknown'}: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
 
 @router.get("/certificates", tags=["certificates"])
 def get_certificates(

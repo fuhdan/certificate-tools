@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { X, Lock, Copy, Check, Eye, EyeOff, AlertCircle, Shield, Key } from 'lucide-react'
 import styles from './SecurePasswordModal.module.css'
 
-const SecurePasswordModal = ({ password, p12Password, onClose, onCopyComplete }) => {
+const SecurePasswordModal = ({ password, encryptionPassword, onClose, onCopyComplete }) => {
   const [copiedZip, setCopiedZip] = useState(false)
   const [copiedP12, setCopiedP12] = useState(false)
   const [showZipPassword, setShowZipPassword] = useState(false)
@@ -14,7 +14,7 @@ const SecurePasswordModal = ({ password, p12Password, onClose, onCopyComplete })
   const intervalRef = useRef(null)
 
   // Determine if this is dual password mode (both ZIP and P12)
-  const isDualMode = !!(password && p12Password)
+  const isDualMode = !!(password && encryptionPassword)
 
   useEffect(() => {
     // Auto-close timer
@@ -203,18 +203,18 @@ const SecurePasswordModal = ({ password, p12Password, onClose, onCopyComplete })
             )}
 
             {/* P12 Password Section (only show in dual mode) */}
-            {p12Password && (
+            {encryptionPassword && (
               <div className={styles.passwordSection}>
                 <label className={styles.passwordLabel}>
                   <Key size={16} />
-                  PKCS#12 Bundle Password (for certificate import):
+                  Encryption Password (for certificate import):
                 </label>
                 
                 <div className={styles.passwordContainer}>
                   <input
                     ref={p12PasswordRef}
                     type={showP12Password ? 'text' : 'password'}
-                    value={p12Password}
+                    value={encryptionPassword}
                     readOnly
                     className={styles.passwordInput}
                     onClick={(e) => e.target.select()}
@@ -231,7 +231,7 @@ const SecurePasswordModal = ({ password, p12Password, onClose, onCopyComplete })
                     
                     <button
                       className={styles.copyButton}
-                      onClick={() => copyToClipboard(p12Password, true)}
+                      onClick={() => copyToClipboard(encryptionPassword, true)}
                       title="Copy P12 password to clipboard"
                     >
                       {copiedP12 ? <Check size={16} /> : <Copy size={16} />}

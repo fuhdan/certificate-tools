@@ -65,7 +65,7 @@ class SecureZipCreator:
         self._temp_dir = None
         self._check_encryption_support()
         logger.info("SecureZipCreator service initialized with File Naming Service")
-    
+
     def _check_encryption_support(self):
         """Check if pyzipper is available for encryption - REQUIRED"""
         try:
@@ -77,7 +77,7 @@ class SecureZipCreator:
             raise ImportError(
                 "pyzipper is required for secure ZIP creation. Install with: pip install pyzipper"
             )
-    
+
     @contextmanager
     def _temp_directory(self):
         """Context manager for temporary directory with automatic cleanup."""
@@ -89,7 +89,7 @@ class SecureZipCreator:
                 shutil.rmtree(temp_dir)
             except Exception as e:
                 logger.warning(f"Failed to cleanup temp directory {temp_dir}: {e}")
-    
+
     def generate_secure_password(self, length: Optional[int] = None) -> str:
         """
         Generate a cryptographically secure random password.
@@ -139,7 +139,7 @@ class SecureZipCreator:
         except Exception as e:
             logger.error(f"Password generation failed: {e}")
             raise PasswordGenerationError(f"Failed to generate secure password: {e}")
-    
+
     def create_protected_zip(
         self, 
         files: Mapping[str, Union[bytes, str]], 
@@ -167,7 +167,7 @@ class SecureZipCreator:
         
         # Create encrypted ZIP - pyzipper is required
         return self._create_encrypted_zip(files, password)
-    
+
     def _create_encrypted_zip(
         self, 
         files: Mapping[str, Union[bytes, str]], 
@@ -220,7 +220,6 @@ class SecureZipCreator:
             raise ZipCreationError(f"Failed to create encrypted ZIP: {e}")
     
     # Remove the entire _create_unencrypted_zip method - NO UNENCRYPTED FALLBACK
-    
     def validate_zip_integrity(self, zip_data: bytes, password: str) -> bool:
         """
         Validate the integrity of a password-protected ZIP file.
@@ -270,7 +269,7 @@ class SecureZipCreator:
         except Exception as e:
             logger.error(f"ZIP validation error: {e}")
             raise ZipValidationError(f"Failed to validate ZIP integrity: {e}")
-    
+
     def create_apache_bundle(
         self,
         certificate: Union[bytes, str],
@@ -337,7 +336,7 @@ class SecureZipCreator:
         
         logger.info(f"Creating Apache bundle with standardized filenames: {cert_filename}, {key_filename}, {ca_filename}")
         return self.create_protected_zip(files, password)
-    
+
     def create_iis_bundle(
         self,
         p12_bundle: bytes,
@@ -380,7 +379,7 @@ class SecureZipCreator:
         
         logger.info(f"Creating IIS bundle with standardized filename: {p12_filename}")
         return self.create_protected_zip(files, password)
-    
+
     def get_memory_usage_estimate(self, files: Mapping[str, Union[bytes, str]]) -> int:
         """
         Estimate memory usage for ZIP creation.
@@ -416,7 +415,7 @@ class SecureZipCreator:
     ) -> Tuple[bytes, str]:
         """
         Create password-protected ZIP file for advanced downloads with manifest.
-        
+
         Args:
             files: Dictionary of filename -> content for individual files
             bundles: Dictionary of bundle_name -> bundle_data for bundled files
@@ -425,26 +424,26 @@ class SecureZipCreator:
             selected_components: List of PKI components for manifest generation
             readme: Optional README content (DEPRECATED - not used)
             bundle_password: Optional encryption password for encrypted files (NEW)
-            
+
         Returns:
             Tuple of (zip_data, password)
         """
         from .file_naming_service import get_standard_filename
-        
+
         zip_files = {}
-        
+
         # Generate password FIRST so it's available for manifest
         if password is None:
             password = self.generate_secure_password()
-        
+
         logger.debug(f"🔐 DEBUG: ZIP password for manifest: {password}")
         if bundle_password:
             logger.debug(f"🔐 DEBUG: Bundle password for manifest: {bundle_password}")
-        
+
         # Add individual files using standard naming service
         for original_filename, content in files.items():
             zip_files[original_filename] = content
-        
+
         # Add bundles - can be password-protected sub-files
         for bundle_name, bundle_data in bundles.items():
             if bundle_name.endswith('.zip'):
@@ -456,7 +455,7 @@ class SecureZipCreator:
             else:
                 # Add directly to root
                 zip_files[bundle_name] = bundle_data
-    
+
         # Generate manifest if components provided - NOW with correct passwords
         if selected_components and session_id:
             logger.debug(f"🔐 DEBUG: Passing ZIP password to manifest: {password}")
@@ -469,7 +468,7 @@ class SecureZipCreator:
                 bundle_password  # Pass the encryption password as bundle_password (NEW)
             )
             zip_files['CONTENT_MANIFEST.txt'] = manifest
-    
+
         # Use the SAME create_protected_zip method as Apache/IIS (with pyzipper AES-256)
         logger.info("Creating AES-256 encrypted advanced bundle with manifest")
         return self.create_protected_zip(zip_files, password)
@@ -514,8 +513,6 @@ class SecureZipCreator:
         
         logger.info(f"Generated content manifest for {bundle_type} bundle")
         return manifest
-
-
 
     def _create_apache_manifest_components(self, certificate: str, private_key: str, ca_bundle: str, 
                                          apache_guide: str, nginx_guide: str, original_components: Optional[List],

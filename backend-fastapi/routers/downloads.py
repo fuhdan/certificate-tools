@@ -11,11 +11,13 @@ from middleware.session_middleware import get_session_id
 from certificates.storage.session_pki_storage import session_pki_storage, PKIComponentType
 from services.secure_zip_creator import secure_zip_creator, SecureZipCreatorError
 from services.instruction_generator import InstructionGenerator
+from services.debug_utils import log_function_call
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/downloads", tags=["downloads"])
 
 @router.post("/apache/{session_id}")
+
 async def download_apache_bundle(
     session_id: str,
     session_id_validated: str = Depends(get_session_id)
@@ -154,6 +156,7 @@ async def download_apache_bundle(
         )
 
 @router.post("/iis/{session_id}")
+
 async def download_iis_bundle(
     session_id: str,
     session_id_validated: str = Depends(get_session_id)
@@ -242,7 +245,7 @@ async def download_iis_bundle(
             headers={
                 "Content-Disposition": f"attachment; filename=iis-bundle-{session_id}.zip",
                 "X-Zip-Password": actual_zip_password,  # Use the ACTUAL password from create_iis_bundle
-                "X-P12-Password": p12_password,
+                "X-Encryption-Password": p12_password,
                 "Content-Length": str(len(zip_data))
             }
         )
@@ -276,6 +279,7 @@ def _find_primary_certificate_component(session):
             return component
     
     return None
+
 
 def _extract_certificate_data_for_apache(primary_cert, session, session_id):
     """
@@ -331,6 +335,7 @@ def _extract_certificate_data_for_apache(primary_cert, session, session_id):
         'expiry_date': cert_metadata.get('not_valid_after', ''),
         'filename': primary_cert.filename
     }
+
 
 def _extract_certificate_data_for_iis(primary_cert, session, session_id):
     """
@@ -390,6 +395,7 @@ def _extract_certificate_data_for_iis(primary_cert, session, session_id):
         'filename': primary_cert.filename
     }
 
+
 def _extract_domain_name_from_metadata(cert_metadata):
     """Extract domain name from certificate metadata - FIXED"""
     # FIXED: Add type checking for cert_metadata
@@ -420,6 +426,7 @@ def _extract_domain_name_from_metadata(cert_metadata):
                 return part.split('CN=')[1].strip()
     
     return "example.com"  # Default fallback
+
 
 def _create_pkcs12_bundle(certificate_pem: str, private_key_pem: str, ca_bundle_pem: Optional[str] = None, p12_password: Optional[str] = None) -> bytes:
     """
@@ -528,6 +535,7 @@ def _create_pkcs12_bundle(certificate_pem: str, private_key_pem: str, ca_bundle_
         logger.error(f"Failed to create PKCS#12 bundle: {e}")
         raise ValueError(f"PKCS#12 bundle creation failed: {e}")
 
+
 def _create_certificate_info_text(certificate_data: Dict[str, Any], zip_password: str, p12_password: str) -> str:
     """Create certificate information text using enhanced instruction generator"""
     
@@ -539,6 +547,7 @@ def _create_certificate_info_text(certificate_data: Dict[str, Any], zip_password
         zip_password=zip_password, 
         p12_password=p12_password
     )
+
 
 def _get_private_key_encryption_info(private_key_pem: str) -> Dict[str, Any]:
     """
@@ -639,6 +648,7 @@ def _create_pkcs12_bundle_with_fallback(certificate_pem: str, private_key_pem: s
         logger.error(enhanced_error)
         raise ValueError(enhanced_error)
 
+
 def _try_direct_pem_loading(certificate_pem: str, private_key_pem: str, ca_bundle_pem: Optional[str] = None, p12_password: Optional[str] = None) -> bytes:
     """Fallback method 1: Direct PEM loading with type validation"""
     from cryptography.hazmat.primitives import serialization
@@ -677,6 +687,7 @@ def _try_direct_pem_loading(certificate_pem: str, private_key_pem: str, ca_bundl
         encryption_algorithm=encryption_algorithm
     )
 
+
 def _try_service_with_empty_password(certificate_pem: str, private_key_pem: str, ca_bundle_pem: Optional[str] = None, p12_password: Optional[str] = None) -> bytes:
     """Fallback method 2: Try Password Entry Service with empty password"""
     from services.password_entry_service import handle_encrypted_content, PasswordResult
@@ -700,6 +711,7 @@ def _try_service_with_empty_password(certificate_pem: str, private_key_pem: str,
     
     # Use the direct loading method with the validated key type info
     return _try_direct_pem_loading(certificate_pem, private_key_pem, ca_bundle_pem, p12_password)
+
 
 def _try_raw_pem_parsing(certificate_pem: str, private_key_pem: str, ca_bundle_pem: Optional[str] = None, p12_password: Optional[str] = None) -> bytes:
     """Fallback method 3: Raw PEM parsing with multiple password attempts"""

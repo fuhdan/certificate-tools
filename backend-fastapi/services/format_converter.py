@@ -19,6 +19,7 @@ class FormatConverter:
     def __init__(self):
         pass
     
+    
     def convert_private_key(self, 
                           private_key_content: str, 
                           target_format: str, 
@@ -108,7 +109,7 @@ class FormatConverter:
                 format=serialization.PrivateFormat.PKCS8,
                 encryption_algorithm=serialization.NoEncryption()
             )
-    
+
     def convert_certificate(self, 
                           certificate_content: str, 
                           target_format: str) -> bytes:
@@ -141,7 +142,7 @@ class FormatConverter:
             # Default to PEM
             logger.warning(f"Unknown format {target_format}, defaulting to PEM")
             return certificate.public_bytes(serialization.Encoding.PEM)
-    
+
     def convert_csr(self, 
                    csr_content: str, 
                    target_format: str) -> bytes:

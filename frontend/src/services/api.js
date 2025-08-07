@@ -340,7 +340,12 @@ export const advancedDownloadAPI = {
 
       // Extract password from response headers
       const zipPassword = response.headers['x-zip-password']
-      const p12Password = response.headers['x-p12-password']
+      const encryptionPassword = response.headers['x-encryption-password'] || response.headers['X-Encryption-Password']
+
+      // ADD THESE DEBUG LINES:
+      console.log('🔍 Raw header access:', response.headers['x-encryption-password'])
+      console.log('🔍 Lowercase header access:', response.headers['x-encryption-password'.toLowerCase()])
+      console.log('🔍 Header keys:', Object.keys(response.headers))
       
       // Create download filename
       const contentDisposition = response.headers['content-disposition']
@@ -370,7 +375,7 @@ export const advancedDownloadAPI = {
         success: true,
         filename,
         zipPassword,
-        p12Password
+        encryptionPassword
       }
 
     } catch (error) {
@@ -421,7 +426,7 @@ export const downloadAPI = {
       })
 
       const zipPassword = response.headers['x-zip-password']
-      const p12Password = response.headers['x-p12-password']
+      const encryptionPassword = response.headers['x-encryption-password']
       const blob = new Blob([response.data], { type: 'application/zip' })
       
       // Trigger download
@@ -434,7 +439,7 @@ export const downloadAPI = {
       document.body.removeChild(link)
       window.URL.revokeObjectURL(downloadUrl)
 
-      return { success: true, zipPassword, p12Password }
+      return { success: true, zipPassword, encryptionPassword }
     } catch (error) {
       console.error('Error downloading IIS bundle:', error)
       throw new Error(error.response?.data?.detail || 'IIS download failed')

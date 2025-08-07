@@ -367,8 +367,11 @@ const AdvancedModal = ({ onClose }) => {
       
       // Call the API
       const result = await advancedDownloadAPI.downloadAdvancedBundle(downloadConfig)
-      
+
+      // ADD THESE DEBUG LINES:
       console.log('✅ Download completed:', result)
+      console.log('🔍 ZIP Password:', result.zipPassword)
+      console.log('🔍 P12 Password:', result.encryptionPassword)
       
       // Show password modal
       if (result.zipPassword) {
@@ -611,6 +614,7 @@ const AdvancedModal = ({ onClose }) => {
       {showPasswordModal && downloadResult && (
         <SecurePasswordModal
           password={downloadResult.zipPassword}
+          encryptionPassword={downloadResult.encryptionPassword}
           onClose={handlePasswordModalClose}
         />
       )}

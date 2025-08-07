@@ -32,7 +32,7 @@ const FloatingPanel = ({ isAuthenticated }) => {
   // NEW: Download-related state
   const [showPasswordModal, setShowPasswordModal] = useState(false)
   const [zipPassword, setZipPassword] = useState('')
-  const [p12Password, setP12Password] = useState('')
+  const [encryptionPassword, setP12Password] = useState('')
   const [isDownloading, setIsDownloading] = useState(false)
   const [downloadError, setDownloadError] = useState(null)
   const [showSuccessNotification, setShowSuccessNotification] = useState(false)
@@ -207,11 +207,17 @@ const FloatingPanel = ({ isAuthenticated }) => {
         timeout: 30000 // 30 second timeout for large files
       })
 
+      // ADD THESE DEBUG LINES:
+      console.log('🔍 All headers:', Object.fromEntries(Object.entries(response.headers)))
+      console.log('🔍 x-zip-password:', response.headers['x-zip-password'])
+      console.log('🔍 x-encryption-password:', response.headers['x-encryption-password'])
+      console.log('🔍 x-p12-password:', response.headers['x-p12-password'])
+
       // Extract both passwords from response headers
       const zipPassword = response.headers['x-zip-password']
-      const p12Password = response.headers['x-p12-password']
+      const encryptionPassword = response.headers['x-encryption-password']
       
-      if (!zipPassword || !p12Password) {
+      if (!zipPassword || !encryptionPassword) {
         throw new Error('Required passwords not found in response headers')
       }
 
@@ -228,7 +234,7 @@ const FloatingPanel = ({ isAuthenticated }) => {
 
       // Show dual password modal
       setZipPassword(zipPassword)
-      setP12Password(p12Password)
+      setP12Password(encryptionPassword)
       setShowPasswordModal(true)
 
       // Show success notification
@@ -541,10 +547,10 @@ const FloatingPanel = ({ isAuthenticated }) => {
         <AdvancedModal onClose={handleCloseAdvanced} />
       )}
 
-      {showPasswordModal && (zipPassword || p12Password) && (
+      {showPasswordModal && (zipPassword || encryptionPassword) && (
         <SecurePasswordModal
           password={zipPassword}
-          p12Password={p12Password}
+          encryptionPassword={encryptionPassword}
           onClose={handlePasswordModalClose}
           onCopyComplete={handlePasswordCopyComplete}
         />

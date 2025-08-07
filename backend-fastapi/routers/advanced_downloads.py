@@ -54,22 +54,40 @@ async def advanced_download(
         # Validate request
         _validate_download_request(request, session)
         
-        # Prepare download package with proper certificate data
-        download_package = await _prepare_download_package(request, session, session_id)
+        # NEW: Check if we need encryption password (like IIS does)
+        bundle_password = None
+        needs_encryption = _check_if_encryption_needed(request, session)
+        if needs_encryption:
+            bundle_password = secure_zip_creator.generate_secure_password()
+            logger.info(f"🔐 Generated encryption password for encrypted components")
         
-        # Use secure_zip_creator with the same method as Apache/IIS
-        zip_data, password = secure_zip_creator.create_advanced_bundle(**download_package)
+        # Prepare download package with proper certificate data
+        download_package = await _prepare_download_package(request, session, session_id, bundle_password)
+        
+        # Use secure_zip_creator with the same method as Apache/IIS (including bundle_password)
+        zip_data, password = secure_zip_creator.create_advanced_bundle(
+            files=download_package["files"],
+            bundles=download_package["bundles"],
+            session_id=download_package["session_id"],
+            selected_components=download_package["selected_components"],
+            bundle_password=bundle_password  # NEW: Pass encryption password like IIS
+        )
         
         logger.info(f"✅ Advanced download package created successfully for session: {session_id}")
+        
+        # NEW: Include bundle password in headers if present (like IIS does with P12 password)
+        headers = {
+            "Content-Disposition": f"attachment; filename=advanced-bundle-{session_id}.zip",
+            "X-Zip-Password": password,
+            "Content-Length": str(len(zip_data))
+        }
+        if bundle_password:
+            headers["X-Encryption-Password"] = bundle_password
         
         return Response(
             content=zip_data,
             media_type="application/zip",
-            headers={
-                "Content-Disposition": f"attachment; filename=advanced-bundle-{session_id}.zip",
-                "X-Zip-Password": password,
-                "Content-Length": str(len(zip_data))
-            }
+            headers=headers
         )
         
     except HTTPException:
@@ -138,7 +156,7 @@ def _validate_download_request(request: AdvancedDownloadRequest, session) -> Non
     
     logger.info(f"✅ Request validation passed")
 
-async def _prepare_download_package(request: AdvancedDownloadRequest, session, session_id: str) -> Dict[str, Any]:
+async def _prepare_download_package(request: AdvancedDownloadRequest, session, session_id: str, bundle_password: Optional[str] = None) -> Dict[str, Any]:
     """Prepare download package with formatted components and bundles using File Naming Service"""
     logger.info(f"🔥 Preparing download package for {len(request.component_ids)} components")
     
@@ -173,10 +191,16 @@ async def _prepare_download_package(request: AdvancedDownloadRequest, session, s
         
         try:
             if component.type.type_name == 'PrivateKey':
-                # Convert private key to target format
+                # Use bundle_password for encrypted formats (passed from main function like IIS)
+                encryption_password = None
+                if selected_format in ['pem_encrypted', 'pkcs8_encrypted']:
+                    encryption_password = bundle_password
+                
+                # Convert private key to target format WITH password
                 converted_content = format_converter.convert_private_key(
                     component.content, 
-                    selected_format
+                    selected_format,
+                    password=encryption_password  # Pass the password from main function
                 )
             elif component.type.type_name == 'Certificate':
                 # Convert certificate to target format  
@@ -210,7 +234,6 @@ async def _prepare_download_package(request: AdvancedDownloadRequest, session, s
         "bundles": {},
         "session_id": session_id,
         "selected_components": selected_components
-        # NOTE: Removed readme - no longer needed
     }
     
     logger.info(f"✅ Package prepared with {len(files)} files using standardized naming")
@@ -323,3 +346,14 @@ def _get_component_display_name(component) -> str:
     
     # Fall back to filename
     return component.filename
+
+def _check_if_encryption_needed(request: AdvancedDownloadRequest, session) -> bool:
+    """Check if any components need encryption password"""
+    for component_id in request.component_ids:
+        component = session.components[component_id]
+        if component.type.type_name == 'PrivateKey':
+            format_key = f"{component.type.type_name.lower()}_{component_id}"
+            selected_format = request.format_selections.get(format_key, 'pem')
+            if selected_format in ['pem_encrypted', 'pkcs8_encrypted']:
+                return True
+    return False

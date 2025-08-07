@@ -645,7 +645,7 @@ class TestDownloads:
         assert response.status_code == 200
         assert response.headers["content-type"] == "application/zip"
         zip_password = response.headers.get("X-Zip-Password")
-        p12_password = response.headers.get("X-P12-Password")
+        p12_password = response.headers.get("X-Encryption-Password")
         assert zip_password is not None, "Missing ZIP password header"
         assert p12_password is not None, "Missing P12 password header"
         
@@ -814,7 +814,7 @@ class TestDownloads:
             pytest.skip("Download failed - likely missing requirements")
 
         zip_password = response.headers.get("X-Zip-Password")
-        p12_password = response.headers.get("X-P12-Password")
+        p12_password = response.headers.get("X-Encryption-Password")
         assert zip_password is not None, "Missing ZIP password header"
         assert p12_password is not None, "Missing P12 password header"
 
@@ -883,7 +883,7 @@ class TestDownloads:
             pytest.skip("Download failed - likely missing requirements")
 
         zip_password = response.headers["X-Zip-Password"]
-        p12_password = response.headers["X-P12-Password"]
+        p12_password = response.headers["X-Encryption-Password"]
 
         # Extract and verify ZIP contents using pyzipper for AES-encrypted ZIP support
         with tempfile.NamedTemporaryFile() as temp_file:
@@ -1076,7 +1076,7 @@ class TestDownloads:
             assert "content-length" in response.headers
             assert int(response.headers["content-length"]) == len(response.content)
             if expect_p12:
-                assert "X-P12-Password" in response.headers, "Missing X-P12-Password for IIS bundle"
+                assert "X-Encryption-Password" in response.headers, "Missing X-Encryption-Password for IIS bundle"
 
         # Apache: use first session
         session_id_apache = str(uuid.uuid4())
@@ -1200,7 +1200,7 @@ class TestDownloads:
         # Step 3: Verify download response headers and content
         assert len(download_response.content) > 1000, "Downloaded ZIP seems too small"
         assert "X-Zip-Password" in download_response.headers, "Missing ZIP password"
-        assert "X-P12-Password" in download_response.headers, "Missing PKCS#12 password"
+        assert "X-Encryption-Password" in download_response.headers, "Missing PKCS#12 password"
 
         # Step 4: Inspect ZIP contents
         zip_password = download_response.headers["X-Zip-Password"]

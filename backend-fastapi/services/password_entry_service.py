@@ -64,7 +64,7 @@ class PasswordEntryService:
             ],
             'pkcs8': ['-----BEGIN ENCRYPTED PRIVATE KEY-----']
         }
-    
+
     def detect_content_type(self, file_content: bytes, filename: str = "") -> ContentType:
         """
         Detect the type of encrypted content
@@ -122,7 +122,7 @@ class PasswordEntryService:
         except Exception as e:
             logger.warning(f"Content type detection failed: {e}")
             return ContentType.UNKNOWN
-    
+
     def is_encrypted(self, file_content: bytes, content_type: ContentType) -> bool:
         """
         Check if content is encrypted (requires password)
@@ -152,7 +152,7 @@ class PasswordEntryService:
         except Exception as e:
             logger.error(f"Encryption check failed: {e}")
             return False
-    
+
     def validate_password(
         self, 
         file_content: bytes, 
@@ -190,7 +190,7 @@ class PasswordEntryService:
         except Exception as e:
             logger.error(f"Password validation failed: {e}")
             return (PasswordResult.UNKNOWN_ERROR, None, str(e))
-    
+
     def create_password_required_response(
         self, 
         file_content: bytes, 
@@ -236,7 +236,7 @@ class PasswordEntryService:
                 "requiresPassword": True
             }
         }
-    
+
     def create_wrong_password_response(
         self, 
         file_content: bytes, 
@@ -282,7 +282,6 @@ class PasswordEntryService:
         }
     
     # Private helper methods
-    
     def _is_pem_encrypted(self, file_content: bytes) -> bool:
         """Check if PEM content is encrypted"""
         try:
@@ -290,7 +289,7 @@ class PasswordEntryService:
             return any(marker in content_str for marker in self.encryption_markers['pem'])
         except:
             return False
-    
+
     def _is_der_encrypted(self, file_content: bytes) -> bool:
         """Check if DER private key is encrypted by attempting to load it"""
         try:
@@ -299,7 +298,7 @@ class PasswordEntryService:
         except Exception as e:
             error_str = str(e).lower()
             return any(keyword in error_str for keyword in self.password_error_keywords['der'])
-    
+
     def _is_pkcs8_encrypted(self, file_content: bytes) -> bool:
         """Check if PKCS#8 content is encrypted"""
         logger.debug("Checking PKCS#8 encryption status...")
@@ -362,7 +361,7 @@ class PasswordEntryService:
             logger.error(f"PKCS#8 encryption check failed: {e}")
             # If we can't determine, assume not encrypted to avoid false positives
             return False
-    
+
     def _is_pkcs12_encrypted(self, file_content: bytes) -> bool:
         """Check if PKCS#12 bundle is encrypted by attempting to load it"""
         try:
@@ -371,7 +370,7 @@ class PasswordEntryService:
         except Exception as e:
             error_str = str(e).lower()
             return any(keyword in error_str for keyword in self.password_error_keywords['pkcs12'])
-    
+
     def _load_without_password(
         self, 
         file_content: bytes, 
@@ -414,7 +413,7 @@ class PasswordEntryService:
         except Exception as e:
             logger.error(f"Failed to load content without password: {e}")
             return (PasswordResult.UNKNOWN_ERROR, None, str(e))
-    
+
     def _decrypt_with_password(
         self, 
         file_content: bytes, 
@@ -475,7 +474,7 @@ class PasswordEntryService:
                 return (PasswordResult.WRONG_PASSWORD, None, "Invalid password provided")
             else:
                 return (PasswordResult.UNKNOWN_ERROR, None, str(e))
-    
+
     def _is_password_error(self, error: Exception, content_type: ContentType) -> bool:
         """Determine if an error is password-related"""
         error_str = str(error).lower()

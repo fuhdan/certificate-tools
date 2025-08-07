@@ -411,7 +411,8 @@ class SecureZipCreator:
         password: Optional[str] = None,
         session_id: Optional[str] = None,
         selected_components: Optional[List] = None,
-        readme: Optional[str] = None
+        readme: Optional[str] = None,
+        bundle_password: Optional[str] = None  # NEW: Accept encryption password
     ) -> Tuple[bytes, str]:
         """
         Create password-protected ZIP file for advanced downloads with manifest.
@@ -422,16 +423,27 @@ class SecureZipCreator:
             password: Optional password
             session_id: Session identifier for manifest
             selected_components: List of PKI components for manifest generation
-            readme: Optional README content
+            readme: Optional README content (DEPRECATED - not used)
+            bundle_password: Optional encryption password for encrypted files (NEW)
             
         Returns:
             Tuple of (zip_data, password)
         """
+        from .file_naming_service import get_standard_filename
+        
         zip_files = {}
         
-        # Add individual files to root
-        for filename, content in files.items():
-            zip_files[filename] = content
+        # Generate password FIRST so it's available for manifest
+        if password is None:
+            password = self.generate_secure_password()
+        
+        logger.debug(f"🔐 DEBUG: ZIP password for manifest: {password}")
+        if bundle_password:
+            logger.debug(f"🔐 DEBUG: Bundle password for manifest: {bundle_password}")
+        
+        # Add individual files using standard naming service
+        for original_filename, content in files.items():
+            zip_files[original_filename] = content
         
         # Add bundles - can be password-protected sub-files
         for bundle_name, bundle_data in bundles.items():
@@ -444,26 +456,20 @@ class SecureZipCreator:
             else:
                 # Add directly to root
                 zip_files[bundle_name] = bundle_data
-
-        # Add README if provided - directly to root
-        if readme:
-            zip_files["README.txt"] = readme
-
-        # Generate manifest if components provided
+    
+        # Generate manifest if components provided - NOW with correct passwords
         if selected_components and session_id:
+            logger.debug(f"🔐 DEBUG: Passing ZIP password to manifest: {password}")
+            logger.debug(f"🔐 DEBUG: Passing bundle password to manifest: {bundle_password}")
             manifest = self._generate_content_manifest(
                 selected_components, 
                 "Advanced Selection", 
                 session_id, 
-                password
+                password,  # Pass the actual ZIP password
+                bundle_password  # Pass the encryption password as bundle_password (NEW)
             )
             zip_files['CONTENT_MANIFEST.txt'] = manifest
-
-        # Add download info - directly to root  
-        password = self.generate_secure_password()
-        download_info = self._create_advanced_download_info(password)
-        zip_files["DOWNLOAD_INFO.txt"] = download_info
-
+    
         # Use the SAME create_protected_zip method as Apache/IIS (with pyzipper AES-256)
         logger.info("Creating AES-256 encrypted advanced bundle with manifest")
         return self.create_protected_zip(zip_files, password)

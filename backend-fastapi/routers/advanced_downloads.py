@@ -139,90 +139,82 @@ def _validate_download_request(request: AdvancedDownloadRequest, session) -> Non
     logger.info(f"✅ Request validation passed")
 
 async def _prepare_download_package(request: AdvancedDownloadRequest, session, session_id: str) -> Dict[str, Any]:
-    """Prepare download package with formatted components and bundles"""
+    """Prepare download package with formatted components and bundles using File Naming Service"""
     logger.info(f"🔥 Preparing download package for {len(request.component_ids)} components")
     
     files = {}
     selected_components = []  # For manifest generation
     
-    # Extract certificate data for instruction generation
-    certificate_data = _extract_certificate_data_from_session(session, request.component_ids)
+    # Import file naming service
+    from services.file_naming_service import get_standard_filename
     
-    # Process individual component files
+    # Process individual component files with standardized naming
     for component_id in request.component_ids:
         component = session.components[component_id]
         logger.info(f"🔥 Processing component: {component.filename}")
         
-        # Add to selected components for manifest
-        selected_components.append(component)
+        # Get format selection for this component
+        format_key = f"{component.type.type_name.lower()}_{component_id}"
+        selected_format = request.format_selections.get(format_key, 'pem')
         
-        # For now, just include the original content
-        filename = f"{component.filename}"
-        content = component.content
-        if isinstance(content, str):
-            content = content.encode()
-        files[filename] = content
-    
-    # Generate README using instruction generator with proper certificate data
-    from services.instruction_generator import InstructionGenerator
-    instruction_generator = InstructionGenerator()
-    
-    readme = instruction_generator.generate_advanced_download_info(
-        session_id=session_id,
-        component_count=len(request.component_ids),
-        zip_password="WILL_BE_GENERATED"  # Will be replaced by secure_zip_creator
-    )
+        # Use standardized filename from naming service
+        standard_filename = get_standard_filename(component.type, selected_format)
+        
+        # Create a copy of the component with the standardized filename for manifest
+        import copy
+        component_for_manifest = copy.deepcopy(component)
+        component_for_manifest.filename = standard_filename
+        
+        # Add to selected components for manifest (with updated filename)
+        selected_components.append(component_for_manifest)
+        
+        # Convert content to requested format
+        from services.format_converter import format_converter
+        
+        try:
+            if component.type.type_name == 'PrivateKey':
+                # Convert private key to target format
+                converted_content = format_converter.convert_private_key(
+                    component.content, 
+                    selected_format
+                )
+            elif component.type.type_name == 'Certificate':
+                # Convert certificate to target format  
+                converted_content = format_converter.convert_certificate(
+                    component.content, 
+                    selected_format
+                )
+            elif component.type.type_name == 'CSR':
+                # Convert CSR to target format
+                converted_content = format_converter.convert_csr(
+                    component.content, 
+                    selected_format
+                )
+            else:
+                # For other types, keep original content
+                converted_content = component.content
+                if isinstance(converted_content, str):
+                    converted_content = converted_content.encode()
+        
+        except Exception as e:
+            logger.error(f"Format conversion failed for {component.filename}: {e}")
+            # Fall back to original content
+            converted_content = component.content
+            if isinstance(converted_content, str):
+                converted_content = converted_content.encode()
+        
+        files[standard_filename] = converted_content
     
     package = {
         "files": files,
         "bundles": {},
-        "readme": readme,
         "session_id": session_id,
-    "selected_components": selected_components
+        "selected_components": selected_components
+        # NOTE: Removed readme - no longer needed
     }
     
-    logger.info(f"✅ Package prepared with {len(files)} files")
+    logger.info(f"✅ Package prepared with {len(files)} files using standardized naming")
     return package
-
-def _extract_certificate_data_from_session(session, component_ids: List[str]) -> Dict[str, Any]:
-    """Extract certificate data from session for instruction generation"""
-    
-    certificate_data = {
-        'domain_name': 'example.com',
-        'subject': 'CN=example.com',
-        'issuer': 'Certificate Authority',
-        'filename': 'certificate'
-    }
-    
-    # Find primary certificate component
-    for component_id in component_ids:
-        component = session.components.get(component_id)
-        if component and component.type.type_name == 'Certificate':
-            metadata = component.metadata or {}
-            
-            # Extract domain name from certificate metadata
-            if metadata.get('subject_common_name'):
-                certificate_data['domain_name'] = metadata['subject_common_name']
-            elif metadata.get('subject'):
-                # Try to extract CN from subject
-                subject = metadata['subject']
-                if 'CN=' in subject:
-                    for part in subject.split(','):
-                        if 'CN=' in part:
-                            cn = part.split('CN=')[1].strip()
-                            if cn:
-                                certificate_data['domain_name'] = cn
-                                break
-            
-            # Add other metadata - FIX: Handle None values properly
-            certificate_data['subject'] = metadata.get('subject') or certificate_data['subject']
-            certificate_data['issuer'] = metadata.get('issuer') or certificate_data['issuer']
-            certificate_data['filename'] = component.filename
-            certificate_data['expiry_date'] = str(metadata.get('not_valid_after') or '')
-            certificate_data['subject_alt_name'] = ', '.join(metadata.get('subject_alt_name') or [])
-            break
-    
-    return certificate_data
 
 def _analyze_component_formats(session) -> List[Dict[str, Any]]:
     """Analyze available formats for each component"""

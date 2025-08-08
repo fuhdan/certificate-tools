@@ -1,736 +1,286 @@
 # backend-fastapi/routers/downloads.py
-# Complete rewrite for session_pki_storage with ALL features preserved
-# Updated with File Naming Service integration for standardized filenames
+# STEP 3: Unified Download Router - ALL bundle types supported
+# One API endpoint handles everything: server bundles, individual components, custom selections
 
 import logging
-from typing import Optional, Dict, Any
-from fastapi import APIRouter, HTTPException, Response, Depends
-from fastapi.responses import StreamingResponse
+import json
+from typing import Optional
+from fastapi import APIRouter, HTTPException, Response, Depends, Query
 
 from middleware.session_middleware import get_session_id
-from certificates.storage.session_pki_storage import session_pki_storage, PKIComponentType
-from services.secure_zip_creator import secure_zip_creator, SecureZipCreatorError
-from services.instruction_generator import InstructionGenerator
-from services.debug_utils import log_function_call
+from services.download_service import download_service, BundleConfig, BundleType
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/downloads", tags=["downloads"])
 
-@router.post("/apache/{session_id}")
-
-async def download_apache_bundle(
+@router.post("/download/{bundle_type}/{session_id}")
+async def download_bundle(
+    bundle_type: str,
     session_id: str,
+    include_instructions: bool = Query(default=True, description="Include installation guides"),
+    formats: Optional[str] = Query(default=None, description="JSON string of format selections"),
+    components: Optional[str] = Query(default=None, description="JSON array of component IDs"),
     session_id_validated: str = Depends(get_session_id)
 ):
     """
-    Generate Apache-compatible certificate bundle as password-protected ZIP file.
-    Rewritten for session_pki_storage with File Naming Service integration.
-    """
-    logger.info(f"Apache bundle download started for session: {session_id}")
+    Unified download endpoint for ALL bundle types.
     
-    try:
-        # Validate session_id from path matches validated session
-        if session_id != session_id_validated:
-            logger.warning(f"Session ID mismatch: path={session_id}, validated={session_id_validated}")
-            raise HTTPException(
-                status_code=400, 
-                detail="Session ID validation failed"
-            )
-        
-        # Get session from PKI storage
-        session = session_pki_storage.get_or_create_session(session_id)
-        
-        if not session.components:
-            logger.warning(f"No PKI components found in session: {session_id}")
-            raise HTTPException(
-                status_code=404,
-                detail="No PKI components found in session"
-            )
-        
-        # Debug: Log component types
-        logger.debug(f"Found {len(session.components)} components in session:")
-        for component in session.components.values():
-            logger.debug(f"  {component.filename} - type: {component.type.type_name}")
-        
-        # Find the primary end-entity certificate
-        primary_cert = _find_primary_certificate_component(session)
-        if not primary_cert:
-            logger.warning(f"No end-entity certificate found in session: {session_id}")
-            raise HTTPException(
-                status_code=404,
-                detail="No end-entity certificate found in session"
-            )
-        
-        logger.debug(f"Using primary certificate: {primary_cert.filename}")
-        
-        # Extract certificate data from session components
-        try:
-            certificate_data = _extract_certificate_data_for_apache(primary_cert, session, session_id)
-        except ValueError as e:
-            logger.warning(f"Certificate data extraction error for session {session_id}: {e}")
-            raise HTTPException(status_code=404, detail=f"Certificate data incomplete: {e}")
-        
-        # Get standardized filenames for Apache bundle
-        from services.file_naming_service import get_standard_filename
-        apache_filenames = {
-            'certificate': get_standard_filename(PKIComponentType.CERTIFICATE, "PEM"),
-            'private_key': get_standard_filename(PKIComponentType.PRIVATE_KEY, "PEM"),
-            'ca_bundle': "ca-bundle.crt"  # CA bundle naming
-        }
-        
-        # Add standardized filenames to certificate data for instruction generator
-        certificate_data['filenames'] = apache_filenames
-        
-        # 🔍 DEBUG: Log the exact certificate_data structure
-        logger.info("🔥 CERTIFICATE_DATA DEBUG:")
-        logger.info(f"🔥 Type: {type(certificate_data)}")
-        logger.info(f"🔥 Keys: {list(certificate_data.keys()) if isinstance(certificate_data, dict) else 'NOT A DICT'}")
-        for key, value in certificate_data.items():
-            logger.info(f"🔥 {key}: {type(value)} = {value[:100] if isinstance(value, str) else value}")
-        
-        # 🔍 DEBUG: Log primary_cert.metadata specifically
-        logger.info("🔥 PRIMARY_CERT.METADATA DEBUG:")
-        logger.info(f"🔥 metadata type: {type(primary_cert.metadata)}")
-        logger.info(f"🔥 metadata value: {primary_cert.metadata}")
-        
-        # Generate installation guides with updated call
-        instruction_generator = InstructionGenerator()
-        
-        logger.info("🔥 CALLING INSTRUCTION GENERATOR WITH:")
-        logger.info(f"🔥 server_type: apache")
-        logger.info(f"🔥 certificate_data type: {type(certificate_data)}")
-
-        apache_guide = instruction_generator.generate_instructions(
-            server_type="apache",
-            certificate_data=certificate_data,
-            zip_password=None  # Will be generated by secure_zip_creator
-        )
-
-        nginx_guide = instruction_generator.generate_instructions(
-            server_type="nginx", 
-            certificate_data=certificate_data,
-            zip_password=None  # Will be generated by secure_zip_creator
-        )
-        
-        selected_components = list(session.components.values())  # All components for manifest
-
-        # Create password-protected ZIP bundle using secure_zip_creator
-        zip_data, password = secure_zip_creator.create_apache_bundle(
-            certificate=certificate_data['certificate'],
-            private_key=certificate_data['private_key'],
-            ca_bundle=certificate_data['ca_bundle'],
-            apache_guide=apache_guide,
-            nginx_guide=nginx_guide,
-            session_id=session_id,
-            selected_components=selected_components
-        )
-        
-        logger.info(f"Apache bundle created successfully for session: {session_id}")
-        
-        # Return ZIP file with password in header
-        return Response(
-            content=zip_data,
-            media_type="application/zip",
-            headers={
-                "Content-Disposition": f"attachment; filename=apache-bundle-{session_id}.zip",
-                "X-Zip-Password": password,
-                "Content-Length": str(len(zip_data))
-            }
-        )
-        
-    except SecureZipCreatorError as e:
-        logger.error(f"ZIP creation failed for session {session_id}: {e}")
-        raise HTTPException(
-            status_code=500, 
-            detail="Failed to create certificate bundle"
-        )
+    Supported bundle types:
+    - apache: Apache server bundle (cert + key + chain + guides)
+    - iis: IIS server bundle (PKCS#12 + guides)  
+    - nginx: Nginx server bundle (cert + key + chain + guides)
+    - private_key: Just the private key in selected format
+    - certificate: Just the certificate in selected format
+    - ca_chain: Just the CA certificate chain
+    - custom: Custom selection of components with format choices
     
-    except HTTPException as http_exc:
-        raise http_exc
+    Examples:
+    - POST /download/apache/{session_id}?include_instructions=true
+    - POST /download/private_key/{session_id}?formats={"private_key":"pkcs8_encrypted"}
+    - POST /download/certificate/{session_id}?formats={"certificate":"der"}
+    - POST /download/custom/{session_id}?components=["id1","id2"]&formats={"cert":"pem"}
     
-    except Exception as e:
-        logger.error(f"Unexpected error creating Apache bundle for session {session_id}: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail="Internal server error while creating bundle"
-        )
-
-@router.post("/iis/{session_id}")
-
-async def download_iis_bundle(
-    session_id: str,
-    session_id_validated: str = Depends(get_session_id)
-):
+    Args:
+        bundle_type: Type of bundle to create
+        session_id: Session identifier
+        include_instructions: Whether to include installation guides (server bundles only)
+        formats: JSON string of format selections for components
+        components: JSON array of specific component IDs to include
+    
+    Returns:
+        Password-protected ZIP file with appropriate contents
     """
-    Generate IIS-compatible PKCS#12 bundle as password-protected ZIP file.
-    Rewritten for session_pki_storage with File Naming Service integration.
-    """
-    logger.info(f"IIS bundle download started for session: {session_id}")
+    logger.info(f"Unified download - type: {bundle_type}, session: {session_id}, instructions: {include_instructions}")
     
     try:
         # Validate session_id
         if session_id != session_id_validated:
             raise HTTPException(status_code=400, detail="Session ID validation failed")
         
-        # Get session from PKI storage
-        session = session_pki_storage.get_or_create_session(session_id)
+        # Validate bundle_type
+        valid_types = ["apache", "iis", "nginx", "private_key", "certificate", "ca_chain", "custom"]
+        if bundle_type not in valid_types:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Invalid bundle_type: {bundle_type}. Must be one of: {valid_types}"
+            )
         
-        if not session.components:
-            raise HTTPException(status_code=404, detail="No PKI components found in session")
+        # Parse optional JSON parameters
+        parsed_formats = {}
+        parsed_components = []
         
-        # Find primary certificate
-        primary_cert = _find_primary_certificate_component(session)
-        if not primary_cert:
-            raise HTTPException(status_code=404, detail="No end-entity certificate found")
+        if formats:
+            try:
+                parsed_formats = json.loads(formats)
+            except json.JSONDecodeError:
+                raise HTTPException(status_code=400, detail="Invalid formats JSON")
         
-        # Extract certificate data for IIS
-        try:
-            certificate_data = _extract_certificate_data_for_iis(primary_cert, session, session_id)
-        except ValueError as e:
-            raise HTTPException(status_code=404, detail=f"Certificate data incomplete: {e}")
+        if components:
+            try:
+                parsed_components = json.loads(components)
+            except json.JSONDecodeError:
+                raise HTTPException(status_code=400, detail="Invalid components JSON")
         
-        # Get standardized filename for IIS PKCS#12 bundle
-        from services.file_naming_service import get_standard_filename
-        p12_filename = get_standard_filename(PKIComponentType.CERTIFICATE, "PKCS12")
+        # Handle special bundle types that need component auto-selection
+        if bundle_type in ["private_key", "certificate", "ca_chain"]:
+            parsed_components, parsed_formats = _auto_select_components_for_bundle_type(
+                bundle_type, session_id, parsed_formats
+            )
+            # For individual component downloads, instructions don't make sense
+            include_instructions = False
         
-        # Add standardized filename to certificate data for instruction generator
-        certificate_data['filenames'] = {
-            'pkcs12': p12_filename
+        # Map bundle_type to BundleType enum
+        bundle_type_mapping = {
+            "apache": BundleType.APACHE,
+            "iis": BundleType.IIS,
+            "nginx": BundleType.NGINX,
+            "private_key": BundleType.CUSTOM,
+            "certificate": BundleType.CUSTOM,
+            "ca_chain": BundleType.CUSTOM,
+            "custom": BundleType.CUSTOM
         }
         
-        # FIXED: Generate P12 password
-        p12_password = secure_zip_creator.generate_secure_password()
-        
-        # Create PKCS#12 bundle with password
-        p12_bundle = _create_pkcs12_bundle(
-            certificate_data['certificate'],
-            certificate_data['private_key'],
-            certificate_data['ca_bundle'],
-            p12_password=p12_password
+        # Create bundle configuration
+        config = BundleConfig(
+            bundle_type=bundle_type_mapping[bundle_type],
+            format_selections=parsed_formats,
+            component_selection=parsed_components
         )
         
-        # Generate installation guide
-        instruction_generator = InstructionGenerator()
-        iis_guide = instruction_generator.generate_instructions(
-            server_type="iis",
-            certificate_data=certificate_data,
-            zip_password=None,  # Will be generated by secure_zip_creator
-            bundle_password=p12_password
-        )
-        
-        # Generate ZIP password
-        zip_password = secure_zip_creator.generate_secure_password()
-        
-        # Create password-protected ZIP bundle using secure_zip_creator WITH MANIFEST
-        selected_components = list(session.components.values())
-
-        # Create password-protected ZIP bundle using secure_zip_creator
-        zip_data, actual_zip_password = secure_zip_creator.create_iis_bundle(
-            p12_bundle=p12_bundle,
-            iis_guide=iis_guide,
+        # Use unified download service
+        zip_data, zip_password, bundle_password = await download_service.create_bundle(
             session_id=session_id,
-            selected_components=selected_components,
-            bundle_password=p12_password
+            config=config,
+            include_instructions=include_instructions
         )
         
-        logger.info(f"IIS bundle created successfully for session: {session_id}")
+        logger.info(f"Bundle created successfully - type: {bundle_type}, session: {session_id}")
+        
+        # Create appropriate filename based on bundle type
+        filename = _get_bundle_filename(bundle_type, session_id)
+        
+        # Prepare response headers
+        headers = {
+            "Content-Disposition": f"attachment; filename={filename}",
+            "X-Zip-Password": zip_password,
+            "Content-Length": str(len(zip_data))
+        }
+        
+        # Add bundle password for encrypted bundles
+        if bundle_password:
+            headers["X-Encryption-Password"] = bundle_password
         
         return Response(
             content=zip_data,
             media_type="application/zip",
-            headers={
-                "Content-Disposition": f"attachment; filename=iis-bundle-{session_id}.zip",
-                "X-Zip-Password": actual_zip_password,  # Use the ACTUAL password from create_iis_bundle
-                "X-Encryption-Password": p12_password,
-                "Content-Length": str(len(zip_data))
-            }
+            headers=headers
         )
         
     except HTTPException as http_exc:
         raise http_exc
+    
+    except ValueError as e:
+        logger.error(f"Value error creating {bundle_type} bundle for session {session_id}: {e}")
+        raise HTTPException(status_code=404, detail=str(e))
+    
     except Exception as e:
-        logger.error(f"Unexpected error creating IIS bundle for session {session_id}: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error while creating bundle")
+        logger.error(f"Unexpected error creating {bundle_type} bundle for session {session_id}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error while creating bundle"
+        )
 
-# Helper functions for session PKI storage
+def _auto_select_components_for_bundle_type(bundle_type: str, session_id: str, formats: dict) -> tuple[list, dict]:
+    """Auto-select components based on bundle type"""
+    from certificates.storage.session_pki_storage import session_pki_storage, PKIComponentType
+    
+    session = session_pki_storage.get_or_create_session(session_id)
+    components = []
+    updated_formats = formats.copy()
+    
+    if bundle_type == "private_key":
+        # Find private key component
+        for comp_id, component in session.components.items():
+            if component.type == PKIComponentType.PRIVATE_KEY:
+                components.append(comp_id)
+                # Set default format if not specified
+                format_key = f"privatekey_{comp_id}"
+                if format_key not in updated_formats:
+                    updated_formats[format_key] = "pem"
+                break
+                
+    elif bundle_type == "certificate":
+        # Find end-entity certificate
+        for comp_id, component in session.components.items():
+            if component.type == PKIComponentType.CERTIFICATE:
+                # Prefer non-CA certificates
+                if not component.metadata.get('is_ca', False):
+                    components.append(comp_id)
+                    format_key = f"certificate_{comp_id}"
+                    if format_key not in updated_formats:
+                        updated_formats[format_key] = "pem"
+                    break
+        # If no end-entity cert found, use any certificate
+        if not components:
+            for comp_id, component in session.components.items():
+                if component.type == PKIComponentType.CERTIFICATE:
+                    components.append(comp_id)
+                    format_key = f"certificate_{comp_id}"
+                    if format_key not in updated_formats:
+                        updated_formats[format_key] = "pem"
+                    break
+                    
+    elif bundle_type == "ca_chain":
+        # Find all CA certificates
+        for comp_id, component in session.components.items():
+            if component.type in [PKIComponentType.ROOT_CA, PKIComponentType.INTERMEDIATE_CA, PKIComponentType.ISSUING_CA]:
+                components.append(comp_id)
+                format_key = f"{component.type.type_name.lower()}_{comp_id}"
+                if format_key not in updated_formats:
+                    updated_formats[format_key] = "pem"
+    
+    return components, updated_formats
 
-def _find_primary_certificate_component(session):
-    """Find the primary end-entity certificate component"""
-    
-    # Look for end-entity certificates first (non-CA certificates)
-    for component in session.components.values():
-        if component.type == PKIComponentType.CERTIFICATE:
-            # Check if it's actually an end-entity cert (not CA)
-            if not component.metadata.get('is_ca', False):
-                return component
-    
-    # If no clear end-entity, look for any certificate component
-    for component in session.components.values():
-        if component.type == PKIComponentType.CERTIFICATE:
-            return component
-    
-    # Fallback: any certificate-like component
-    for component in session.components.values():
-        if component.type in [PKIComponentType.ROOT_CA, PKIComponentType.INTERMEDIATE_CA, PKIComponentType.ISSUING_CA]:
-            return component
-    
-    return None
-
-
-def _extract_certificate_data_for_apache(primary_cert, session, session_id):
-    """
-    Extract certificate data for Apache bundle from session PKI storage
-    
-    Args:
-        primary_cert: Primary certificate component
-        session: PKI session object
-        session_id: Session identifier
-        
-    Returns:
-        Dictionary containing certificate, private_key, ca_bundle, and metadata
-    """
-    logger.debug(f"Extracting certificate data for Apache bundle")
-    
-    # Extract certificate PEM
-    certificate_pem = primary_cert.content
-    if not certificate_pem:
-        raise ValueError("Certificate PEM not found")
-    
-    # Find private key component
-    private_key_pem = None
-    for component in session.components.values():
-        if component.type == PKIComponentType.PRIVATE_KEY:
-            private_key_pem = component.content
-            logger.debug("Found private key in session")
-            break
-    
-    if not private_key_pem:
-        raise ValueError("No private key found. Apache requires a private key.")
-    
-    # Build CA bundle from CA components
-    ca_bundle_parts = []
-    for component in session.components.values():
-        if component.type in [PKIComponentType.ROOT_CA, PKIComponentType.INTERMEDIATE_CA, PKIComponentType.ISSUING_CA]:
-            if component.id != primary_cert.id:  # Don't include the primary cert in CA bundle
-                ca_bundle_parts.append(component.content)
-    
-    ca_bundle = '\n'.join(ca_bundle_parts) if ca_bundle_parts else None
-    
-    # Extract metadata from certificate component
-    cert_metadata = primary_cert.metadata or {}
-    domain_name = _extract_domain_name_from_metadata(cert_metadata)
-    
-    # FIXED: Return proper dictionary format for instruction_generator
-    return {
-        'certificate': certificate_pem,
-        'private_key': private_key_pem,
-        'ca_bundle': ca_bundle,
-        'domain_name': domain_name,
-        'subject': cert_metadata.get('subject', ''),
-        'issuer': cert_metadata.get('issuer', ''),
-        'expiry_date': cert_metadata.get('not_valid_after', ''),
-        'filename': primary_cert.filename
+def _get_bundle_filename(bundle_type: str, session_id: str) -> str:
+    """Generate appropriate filename for bundle type"""
+    filename_mapping = {
+        "apache": f"apache-bundle-{session_id}.zip",
+        "iis": f"iis-bundle-{session_id}.zip",
+        "nginx": f"nginx-bundle-{session_id}.zip",
+        "private_key": f"private-key-{session_id}.zip",
+        "certificate": f"certificate-{session_id}.zip",
+        "ca_chain": f"ca-chain-{session_id}.zip",
+        "custom": f"custom-bundle-{session_id}.zip"
     }
+    return filename_mapping.get(bundle_type, f"{bundle_type}-bundle-{session_id}.zip")
 
-
-def _extract_certificate_data_for_iis(primary_cert, session, session_id):
+@router.get("/bundle-types/{session_id}")
+async def get_available_bundle_types(
+    session_id: str,
+    session_id_validated: str = Depends(get_session_id)
+):
     """
-    Extract certificate data for IIS PKCS#12 bundle from session PKI storage
+    Get available bundle types for a session based on components present.
     
-    Args:
-        primary_cert: Primary certificate component
-        session: PKI session object
-        session_id: Session identifier
-        
-    Returns:
-        Dictionary containing certificate, private_key, ca_bundle, and metadata
+    This helps the frontend know which bundle types are possible to create.
     """
-    logger.debug("Extracting certificate data for IIS bundle")
-    
-    # Extract certificate PEM
-    certificate_pem = primary_cert.content
-    if not certificate_pem:
-        raise ValueError("Certificate PEM not found")
-    
-    # Find private key component - IIS requires private key
-    private_key_pem = None
-    for component in session.components.values():
-        if component.type == PKIComponentType.PRIVATE_KEY:
-            private_key_pem = component.content
-            break
-    
-    if not private_key_pem:
-        raise ValueError("No private key found. IIS requires a private key for PKCS#12 bundle.")
-    
-    # Build CA bundle from CA components
-    ca_bundle_parts = []
-    for component in session.components.values():
-        if component.type in [PKIComponentType.ROOT_CA, PKIComponentType.INTERMEDIATE_CA, PKIComponentType.ISSUING_CA]:
-            if component.id != primary_cert.id:  # Don't include the primary cert
-                ca_bundle_parts.append(component.content)
-    
-    ca_bundle = '\n'.join(ca_bundle_parts) if ca_bundle_parts else None
-    
-    # FIXED: Handle metadata properly - make sure it's a dict
-    cert_metadata = primary_cert.metadata or {}
-    
-    # Ensure metadata is a dictionary, not a string
-    if isinstance(cert_metadata, str):
-        logger.warning(f"Certificate metadata is a string, not a dict: {cert_metadata}")
-        cert_metadata = {}
-    
-    domain_name = _extract_domain_name_from_metadata(cert_metadata)
-    
-    return {
-        'certificate': certificate_pem,
-        'private_key': private_key_pem,
-        'ca_bundle': ca_bundle,
-        'domain_name': domain_name,
-        'subject': cert_metadata.get('subject', ''),
-        'issuer': cert_metadata.get('issuer', ''),
-        'filename': primary_cert.filename
-    }
-
-
-def _extract_domain_name_from_metadata(cert_metadata):
-    """Extract domain name from certificate metadata - FIXED"""
-    # FIXED: Add type checking for cert_metadata
-    if not isinstance(cert_metadata, dict):
-        logger.warning(f"cert_metadata is not a dict: {type(cert_metadata)} - {cert_metadata}")
-        return "example.com"
-    
-    # Try Subject Alternative Names first
-    if 'subject_alt_name' in cert_metadata:
-        sans = cert_metadata['subject_alt_name']
-        if isinstance(sans, list) and len(sans) > 0:
-            # Look for DNS entries in SAN
-            for san in sans:
-                if isinstance(san, str) and san.startswith('DNS:'):
-                    return san[4:]  # Remove 'DNS:' prefix
-    
-    # Try common name from subject
-    if 'subject_common_name' in cert_metadata:
-        cn = cert_metadata['subject_common_name']
-        if cn:
-            return cn
-    
-    # Fall back to extracting CN from full subject
-    subject = cert_metadata.get('subject', '')
-    if 'CN=' in subject:
-        for part in subject.split(','):
-            if 'CN=' in part:
-                return part.split('CN=')[1].strip()
-    
-    return "example.com"  # Default fallback
-
-
-def _create_pkcs12_bundle(certificate_pem: str, private_key_pem: str, ca_bundle_pem: Optional[str] = None, p12_password: Optional[str] = None) -> bytes:
-    """
-    Create PKCS#12 bundle from PEM content
-    FIXED: Now uses Password Entry Service for PEM private key loading
-    """
-    from cryptography.hazmat.primitives import serialization
-    from cryptography.hazmat.primitives.serialization import pkcs12
-    from cryptography import x509
-    import re
-    
-    # Import the Password Entry Service
-    from services.password_entry_service import (
-        handle_encrypted_content,
-        PasswordResult
-    )
-    
-    logger = logging.getLogger(__name__)
-    
-    # Load certificate (unchanged)
-    cert = x509.load_pem_x509_certificate(certificate_pem.encode())
-    logger.debug("Certificate loaded successfully for PKCS#12 bundle")
-    
-    # FIXED: Load private key using Password Entry Service
-    logger.debug("Loading PEM private key using Password Entry Service")
     try:
-        result, loaded_key, error, content_type = handle_encrypted_content(
-            private_key_pem.encode(), 
-            password=None,  # The PEM is already decrypted in storage
-            filename="bundle_private_key.pem"
-        )
+        # Validate session_id
+        if session_id != session_id_validated:
+            raise HTTPException(status_code=400, detail="Session ID validation failed")
         
-        if result in [PasswordResult.SUCCESS, PasswordResult.NO_PASSWORD_NEEDED]:
-            if loaded_key is None:
-                raise ValueError("Password Entry Service returned None private key")
-            
-            # Validate private key type for PKCS#12 compatibility BEFORE assignment
-            from cryptography.hazmat.primitives.asymmetric import rsa, ec, ed25519, ed448, dsa
-            if not isinstance(loaded_key, (rsa.RSAPrivateKey, ec.EllipticCurvePrivateKey, ed25519.Ed25519PrivateKey, ed448.Ed448PrivateKey, dsa.DSAPrivateKey)):
-                raise ValueError(f"Unsupported private key type for PKCS#12: {type(loaded_key)}. PKCS#12 only supports RSA, EC, Ed25519, Ed448, and DSA keys.")
-            
-            # Type is validated, safe to assign
-            private_key = loaded_key
-            logger.debug(f"Private key loaded successfully via Password Entry Service: {type(private_key).__name__}")
-        else:
-            # If Password Entry Service fails, fall back to direct loading
-            # This handles the case where the PEM is already decrypted
-            logger.debug("Password Entry Service failed, trying direct PEM loading")
-            loaded_key = serialization.load_pem_private_key(private_key_pem.encode(), password=None)
-            
-            # Validate type for fallback as well
-            from cryptography.hazmat.primitives.asymmetric import rsa, ec, ed25519, ed448, dsa
-            if not isinstance(loaded_key, (rsa.RSAPrivateKey, ec.EllipticCurvePrivateKey, ed25519.Ed25519PrivateKey, ed448.Ed448PrivateKey, dsa.DSAPrivateKey)):
-                raise ValueError(f"Unsupported private key type for PKCS#12: {type(loaded_key)}. PKCS#12 only supports RSA, EC, Ed25519, Ed448, and DSA keys.")
-            
-            private_key = loaded_key
-            logger.debug(f"Private key loaded successfully via direct PEM loading: {type(private_key).__name__}")
-            
-    except Exception as e:
-        logger.error(f"Failed to load private key for PKCS#12 bundle: {e}")
-        raise ValueError(f"Cannot load private key for PKCS#12 bundle: {e}")
-    
-    # Remove redundant validation since we already validated above
-    logger.debug(f"Private key type confirmed compatible: {type(private_key).__name__}")
-    
-    # Load additional certificates if provided (unchanged)
-    additional_certs = []
-    if ca_bundle_pem:
-        # Split CA bundle into individual certificates
-        cert_blocks = re.findall(
-            r'-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----',
-            ca_bundle_pem,
-            re.DOTALL
-        )
-        for cert_block in cert_blocks:
-            try:
-                ca_cert = x509.load_pem_x509_certificate(cert_block.encode())
-                additional_certs.append(ca_cert)
-            except Exception as e:
-                logger.warning(f"Failed to load CA certificate: {e}")
+        # Use download service to analyze what's available
+        available_info = download_service.get_available_bundle_types(session_id)
         
-        logger.debug(f"Loaded {len(additional_certs)} additional certificates")
-    
-    # Use password if provided, otherwise no encryption (unchanged)
-    if p12_password:
-        encryption_algorithm = serialization.BestAvailableEncryption(p12_password.encode('utf-8'))
-        logger.debug("PKCS#12 bundle will be encrypted with provided password")
-    else:
-        encryption_algorithm = serialization.NoEncryption()
-        logger.debug("PKCS#12 bundle will be unencrypted")
-    
-    # Create PKCS#12 bundle (unchanged)
-    try:
-        p12_data = pkcs12.serialize_key_and_certificates(
-            name=b"certificate",
-            key=private_key,
-            cert=cert,
-            cas=additional_certs if additional_certs else None,
-            encryption_algorithm=encryption_algorithm
-        )
+        # Add our individual component bundle types
+        from certificates.storage.session_pki_storage import session_pki_storage, PKIComponentType
+        session = session_pki_storage.get_or_create_session(session_id)
         
-        logger.info(f"PKCS#12 bundle created successfully: {len(p12_data)} bytes")
-        return p12_data
+        individual_bundles = []
         
-    except Exception as e:
-        logger.error(f"Failed to create PKCS#12 bundle: {e}")
-        raise ValueError(f"PKCS#12 bundle creation failed: {e}")
-
-
-def _create_certificate_info_text(certificate_data: Dict[str, Any], zip_password: str, p12_password: str) -> str:
-    """Create certificate information text using enhanced instruction generator"""
-    
-    from services.instruction_generator import InstructionGenerator
-    instruction_generator = InstructionGenerator()
-    
-    return instruction_generator.generate_certificate_info(
-        certificate_data=certificate_data,
-        zip_password=zip_password, 
-        p12_password=p12_password
-    )
-
-
-def _get_private_key_encryption_info(private_key_pem: str) -> Dict[str, Any]:
-    """
-    Get information about PEM private key encryption status
-    This helps with debugging PEM private key issues
-    """
-    logger = logging.getLogger(__name__)
-    
-    # Check for encryption markers in the PEM content
-    encryption_markers = [
-        '-----BEGIN ENCRYPTED PRIVATE KEY-----',
-        'Proc-Type: 4,ENCRYPTED',
-        'DEK-Info:'
-    ]
-    
-    is_encrypted_format = any(marker in private_key_pem for marker in encryption_markers)
-    
-    # Try to load and get actual encryption status
-    try:
-        from services.password_entry_service import handle_encrypted_content, PasswordResult
+        # Check for private key
+        if any(c.type == PKIComponentType.PRIVATE_KEY for c in session.components.values()):
+            individual_bundles.append({
+                "type": "private_key",
+                "name": "Private Key",
+                "description": "Download just the private key in selected format"
+            })
         
-        result, private_key, error, content_type = handle_encrypted_content(
-            private_key_pem.encode(), 
-            password=None, 
-            filename="test_key.pem"
-        )
+        # Check for certificate
+        if any(c.type == PKIComponentType.CERTIFICATE for c in session.components.values()):
+            individual_bundles.append({
+                "type": "certificate", 
+                "name": "Certificate",
+                "description": "Download just the certificate in selected format"
+            })
         
-        actual_encrypted = result == PasswordResult.PASSWORD_REQUIRED
-        successfully_loaded = result in [PasswordResult.SUCCESS, PasswordResult.NO_PASSWORD_NEEDED]
+        # Check for CA certificates
+        if any(c.type in [PKIComponentType.ROOT_CA, PKIComponentType.INTERMEDIATE_CA, PKIComponentType.ISSUING_CA] 
+               for c in session.components.values()):
+            individual_bundles.append({
+                "type": "ca_chain",
+                "name": "CA Certificate Chain", 
+                "description": "Download CA certificates as a chain"
+            })
         
-        logger.debug(f"Private key encryption analysis:")
-        logger.debug(f"  Has encryption markers: {is_encrypted_format}")
-        logger.debug(f"  Actually encrypted: {actual_encrypted}")
-        logger.debug(f"  Successfully loaded: {successfully_loaded}")
-        logger.debug(f"  Content type: {content_type}")
+        # Always available if we have components
+        if session.components:
+            individual_bundles.append({
+                "type": "custom",
+                "name": "Custom Selection",
+                "description": "Select specific components and formats"
+            })
         
         return {
-            "has_encryption_markers": is_encrypted_format,
-            "actually_encrypted": actual_encrypted,
-            "successfully_loaded": successfully_loaded,
-            "content_type": str(content_type),
-            "password_service_result": str(result)
+            "session_id": session_id,
+            "server_bundles": available_info["available_types"],
+            "individual_bundles": individual_bundles,
+            "requirements_met": available_info["requirements_met"],
+            "component_summary": available_info["component_summary"]
         }
         
+    except HTTPException as http_exc:
+        raise http_exc
     except Exception as e:
-        logger.warning(f"Could not analyze private key encryption: {e}")
-        return {
-            "has_encryption_markers": is_encrypted_format,
-            "actually_encrypted": "unknown",
-            "successfully_loaded": False,
-            "error": str(e)
-        }
-
-# Enhanced error handling for PKCS#12 bundle creation
-def _create_pkcs12_bundle_with_fallback(certificate_pem: str, private_key_pem: str, ca_bundle_pem: Optional[str] = None, p12_password: Optional[str] = None) -> bytes:
-    """
-    Create PKCS#12 bundle with enhanced error handling and fallback methods
-    This function provides better debugging and multiple approaches to handle PEM private keys
-    """
-    logger = logging.getLogger(__name__)
-    
-    logger.info("Creating PKCS#12 bundle with enhanced error handling")
-    
-    # First, analyze the private key to understand potential issues
-    key_info = _get_private_key_encryption_info(private_key_pem)
-    logger.debug(f"Private key analysis: {key_info}")
-    
-    # Try the main method first
-    try:
-        return _create_pkcs12_bundle(certificate_pem, private_key_pem, ca_bundle_pem, p12_password)
-    
-    except Exception as primary_error:
-        logger.warning(f"Primary PKCS#12 creation method failed: {primary_error}")
-        
-        # If the primary method fails, try fallback approaches
-        fallback_methods = [
-            ("Direct PEM loading with no password", _try_direct_pem_loading),
-            ("Password Entry Service with empty password", _try_service_with_empty_password),
-            ("Raw PEM parsing", _try_raw_pem_parsing)
-        ]
-        
-        for method_name, method_func in fallback_methods:
-            try:
-                logger.debug(f"Trying fallback method: {method_name}")
-                return method_func(certificate_pem, private_key_pem, ca_bundle_pem, p12_password)
-            
-            except Exception as fallback_error:
-                logger.debug(f"Fallback method '{method_name}' failed: {fallback_error}")
-                continue
-        
-        # If all methods fail, raise the original error with enhanced information
-        enhanced_error = (
-            f"PKCS#12 bundle creation failed. "
-            f"Primary error: {primary_error}. "
-            f"Private key info: {key_info}. "
-            f"All fallback methods also failed."
-        )
-        logger.error(enhanced_error)
-        raise ValueError(enhanced_error)
-
-
-def _try_direct_pem_loading(certificate_pem: str, private_key_pem: str, ca_bundle_pem: Optional[str] = None, p12_password: Optional[str] = None) -> bytes:
-    """Fallback method 1: Direct PEM loading with type validation"""
-    from cryptography.hazmat.primitives import serialization
-    from cryptography.hazmat.primitives.serialization import pkcs12
-    from cryptography import x509
-    from cryptography.hazmat.primitives.asymmetric import rsa, ec, ed25519, ed448, dsa
-    import re
-    
-    cert = x509.load_pem_x509_certificate(certificate_pem.encode())
-    loaded_key = serialization.load_pem_private_key(private_key_pem.encode(), password=None)
-    
-    # Validate private key type for PKCS#12 compatibility
-    if not isinstance(loaded_key, (rsa.RSAPrivateKey, ec.EllipticCurvePrivateKey, ed25519.Ed25519PrivateKey, ed448.Ed448PrivateKey, dsa.DSAPrivateKey)):
-        raise ValueError(f"Unsupported private key type for PKCS#12: {type(loaded_key)}. PKCS#12 only supports RSA, EC, Ed25519, Ed448, and DSA keys.")
-    
-    # Type validated, safe to use
-    private_key = loaded_key
-    
-    additional_certs = []
-    if ca_bundle_pem:
-        cert_blocks = re.findall(r'-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----', ca_bundle_pem, re.DOTALL)
-        for cert_block in cert_blocks:
-            try:
-                ca_cert = x509.load_pem_x509_certificate(cert_block.encode())
-                additional_certs.append(ca_cert)
-            except Exception:
-                continue
-    
-    encryption_algorithm = serialization.BestAvailableEncryption(p12_password.encode('utf-8')) if p12_password else serialization.NoEncryption()
-    
-    return pkcs12.serialize_key_and_certificates(
-        name=b"certificate",
-        key=private_key,
-        cert=cert,
-        cas=additional_certs if additional_certs else None,
-        encryption_algorithm=encryption_algorithm
-    )
-
-
-def _try_service_with_empty_password(certificate_pem: str, private_key_pem: str, ca_bundle_pem: Optional[str] = None, p12_password: Optional[str] = None) -> bytes:
-    """Fallback method 2: Try Password Entry Service with empty password"""
-    from services.password_entry_service import handle_encrypted_content, PasswordResult
-    from cryptography.hazmat.primitives.asymmetric import rsa, ec, ed25519, ed448, dsa
-    
-    result, loaded_key, error, content_type = handle_encrypted_content(
-        private_key_pem.encode(), 
-        password="",  # Try empty password
-        filename="fallback_key.pem"
-    )
-    
-    if result not in [PasswordResult.SUCCESS, PasswordResult.NO_PASSWORD_NEEDED]:
-        raise ValueError(f"Password Entry Service with empty password failed: {error}")
-    
-    if loaded_key is None:
-        raise ValueError("Password Entry Service returned None key")
-    
-    # Validate private key type for PKCS#12 compatibility
-    if not isinstance(loaded_key, (rsa.RSAPrivateKey, ec.EllipticCurvePrivateKey, ed25519.Ed25519PrivateKey, ed448.Ed448PrivateKey, dsa.DSAPrivateKey)):
-        raise ValueError(f"Unsupported private key type for PKCS#12: {type(loaded_key)}. PKCS#12 only supports RSA, EC, Ed25519, Ed448, and DSA keys.")
-    
-    # Use the direct loading method with the validated key type info
-    return _try_direct_pem_loading(certificate_pem, private_key_pem, ca_bundle_pem, p12_password)
-
-
-def _try_raw_pem_parsing(certificate_pem: str, private_key_pem: str, ca_bundle_pem: Optional[str] = None, p12_password: Optional[str] = None) -> bytes:
-    """Fallback method 3: Raw PEM parsing with multiple password attempts"""
-    from cryptography.hazmat.primitives import serialization
-    from cryptography.hazmat.primitives.asymmetric import rsa, ec, ed25519, ed448, dsa
-    
-    # Try common passwords for testing/development keys
-    password_attempts = [None, b"", b"password", b"test", b"default"]
-    
-    loaded_key = None
-    for pwd in password_attempts:
-        try:
-            loaded_key = serialization.load_pem_private_key(private_key_pem.encode(), password=pwd)
-            break
-        except Exception:
-            continue
-    
-    if loaded_key is None:
-        raise ValueError("Could not load private key with any attempted password")
-    
-    # Validate private key type for PKCS#12 compatibility
-    if not isinstance(loaded_key, (rsa.RSAPrivateKey, ec.EllipticCurvePrivateKey, ed25519.Ed25519PrivateKey, ed448.Ed448PrivateKey, dsa.DSAPrivateKey)):
-        raise ValueError(f"Unsupported private key type for PKCS#12: {type(loaded_key)}. PKCS#12 only supports RSA, EC, Ed25519, Ed448, and DSA keys.")
-    
-    # Use the direct loading method since we've validated the key type
-    return _try_direct_pem_loading(certificate_pem, private_key_pem, ca_bundle_pem, p12_password)
+        logger.error(f"Error getting bundle types for session {session_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to analyze available bundle types")

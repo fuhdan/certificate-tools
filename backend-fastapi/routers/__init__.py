@@ -7,7 +7,6 @@ from .downloads import router as downloads_router
 from .health import router as health_router
 from .pki import router as pki_router
 from .stats import router as stats_router
-from .advanced_downloads import router as advanced_downloads_router
 
 __all__ = [
     'auth_router',
@@ -15,6 +14,5 @@ __all__ = [
     'downloads_router',
     'health_router',
     'pki_router',
-    'stats_router',
-    'advanced_downloads_router'  # 🆕 ADD
+    'stats_router'
 ]

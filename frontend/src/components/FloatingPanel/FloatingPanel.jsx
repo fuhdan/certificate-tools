@@ -22,7 +22,7 @@ import SecurePasswordModal from './SecurePasswordModal'
 import NotificationToast from '../common/NotificationToast'
 import { useCertificates } from '../../contexts/CertificateContext'
 import { sessionManager } from '../../services/sessionManager'
-import api from '../../services/api'
+import { downloadAPI } from '../../services/api'
 
 const FloatingPanel = ({ isAuthenticated }) => {
   const { certificates, clearAllFiles } = useCertificates()
@@ -92,43 +92,51 @@ const FloatingPanel = ({ isAuthenticated }) => {
   
     // 🔍 DEBUG: Log the certificates array structure
     console.log("📦 Full certificates array:", certificates)
+    console.log("📦 Array length:", certificates.length)
+    console.log("📦 Array type:", typeof certificates)
     
-    // 🔍 DEBUG: Print each type, with index and fallback info
+    // 🔍 DEBUG: Print each certificate in detail
     console.log("🧪 Certificate types detected:")
     certificates.forEach((cert, index) => {
       if (cert) {
-        console.log(`  [${index}] Type:`, cert.type, "| Raw cert:", cert)
+        console.log(`  [${index}] Full cert object:`, cert)
+        console.log(`  [${index}] Type:`, cert.type, "| Typeof:", typeof cert.type)
+        console.log(`  [${index}] Has type property:`, 'type' in cert)
+        console.log(`  [${index}] Object keys:`, Object.keys(cert))
       } else {
         console.log(`  [${index}] ❌ Invalid or empty certificate`)
       }
     })
-
-    // Use cert.type directly - no need for analysis mapping
+  
+    // FIXED: More robust type checking with fallbacks
     const hasEndEntityCert = certificates.some(cert => {
-      const type = cert?.type
-      return type === 'Certificate' // Standardized end-entity certificate type only
+      if (!cert) return false
+      
+      const type = cert.type || cert.fileType || cert.componentType
+      console.log(`🔍 Checking cert for end-entity: type="${type}"`)
+      
+      return type === 'Certificate' // End-entity certificate
     })
   
-    const hasPrivateKey = certificates.some(cert => 
-      cert.type === 'PrivateKey' // Use cert.type directly
-    )
-  
-    const hasCACertificates = certificates.some(cert => {
-      const type = cert?.type
-      return type === 'IssuingCA' || type === 'IntermediateCA' // Standardized CA types only
+    const hasPrivateKey = certificates.some(cert => {
+      if (!cert) return false
+      
+      const type = cert.type || cert.fileType || cert.componentType
+      console.log(`🔍 Checking cert for private key: type="${type}"`)
+      
+      return type === 'PrivateKey'
     })
   
-    const hasRootCA = certificates.some(cert => {
-      const type = cert?.type
-      return type === 'RootCA' // Standardized root CA type only
-    })
+    console.log("🎯 Detection results:")
+    console.log("  - hasEndEntityCert:", hasEndEntityCert)
+    console.log("  - hasPrivateKey:", hasPrivateKey)
   
-    setHasRequiredForLinux(hasEndEntityCert && hasPrivateKey)
-    setHasRequiredForWindows(hasEndEntityCert && hasPrivateKey && hasCACertificates && hasRootCA)
-    setHasAnyFiles(certificates.length > 0)
+    setHasRequiredForLinux(hasEndEntityCert)
+    setHasRequiredForWindows(hasEndEntityCert && hasPrivateKey)
+    setHasAnyFiles(true)
   }, [certificates])
 
-  // NEW: Download handlers
+  // ONLY CHANGED: Download handlers - using unified API
   const handleLinuxApacheDownload = async () => {
     if (!hasRequiredForLinux || isDownloading) return
 
@@ -136,36 +144,14 @@ const FloatingPanel = ({ isAuthenticated }) => {
     setDownloadError(null)
 
     try {
-      const sessionId = sessionManager.getSessionId()
+      console.log('Using unified API for Apache download...')
       
-      console.log('Making API call to:', `/downloads/apache/${sessionId}`)
-      
-      // Make API call to download Apache bundle - compensate for proxy stripping /api
-      const response = await api.post(`/downloads/apache/${sessionId}`, {}, {
-        responseType: 'blob', // Important for binary data
-        timeout: 30000 // 30 second timeout for large files
-      })
-
-      // Extract password from response headers
-      const password = response.headers['x-zip-password']
-      
-      if (!password) {
-        throw new Error('ZIP password not found in response headers')
-      }
-
-      // Create blob URL and trigger download
-      const blob = new Blob([response.data], { type: 'application/zip' })
-      const url = window.URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = `apache-bundle-${sessionId.substring(0, 8)}.zip`
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
-      window.URL.revokeObjectURL(url)
+      // Use unified download API
+      const result = await downloadAPI.downloadApacheBundle(true)
 
       // Show password modal
-      setZipPassword(password)
+      setZipPassword(result.zipPassword)
+      setP12Password(result.encryptionPassword || '')
       setShowPasswordModal(true)
 
       // Show success notification
@@ -175,11 +161,11 @@ const FloatingPanel = ({ isAuthenticated }) => {
     } catch (error) {
       console.error('Apache download failed:', error)
       
-      if (error.response?.status === 404) {
+      if (error.message.includes('404')) {
         setDownloadError('No certificates found. Please upload required certificates first.')
-      } else if (error.response?.status === 400) {
+      } else if (error.message.includes('400')) {
         setDownloadError('Invalid session or missing required certificates.')
-      } else if (error.code === 'ECONNABORTED') {
+      } else if (error.message.includes('timeout')) {
         setDownloadError('Download timeout. Please try again.')
       } else {
         setDownloadError('Download failed. Please try again.')
@@ -189,7 +175,7 @@ const FloatingPanel = ({ isAuthenticated }) => {
     }
   }
 
-  // NEW: Windows IIS download handler
+  // ONLY CHANGED: Windows IIS download handler - using unified API
   const handleWindowsIISDownload = async () => {
     if (!hasRequiredForWindows || isDownloading) return
 
@@ -197,40 +183,18 @@ const FloatingPanel = ({ isAuthenticated }) => {
     setDownloadError(null)
 
     try {
-      const sessionId = sessionManager.getSessionId()
+      console.log('Using unified API for IIS download...')
       
-      console.log('Making API call to:', `/downloads/iis/${sessionId}`)
-      
-      // Make API call to download IIS bundle
-      const response = await api.post(`/downloads/iis/${sessionId}`, {}, {
-        responseType: 'blob', // Important for binary data
-        timeout: 30000 // 30 second timeout for large files
-      })
+      // Use unified download API
+      const result = await downloadAPI.downloadIISBundle(true)
 
-      // ADD THESE DEBUG LINES:
-      console.log('🔍 All headers:', Object.fromEntries(Object.entries(response.headers)))
-      console.log('🔍 x-zip-password:', response.headers['x-zip-password'])
-      console.log('🔍 x-encryption-password:', response.headers['x-encryption-password'])
-      console.log('🔍 x-p12-password:', response.headers['x-p12-password'])
-
-      // Extract both passwords from response headers
-      const zipPassword = response.headers['x-zip-password']
-      const encryptionPassword = response.headers['x-encryption-password']
+      // Extract both passwords from response
+      const zipPassword = result.zipPassword
+      const encryptionPassword = result.encryptionPassword
       
       if (!zipPassword || !encryptionPassword) {
-        throw new Error('Required passwords not found in response headers')
+        throw new Error('Required passwords not found in response')
       }
-
-      // Create blob URL and trigger download
-      const blob = new Blob([response.data], { type: 'application/zip' })
-      const url = window.URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = `iis-bundle-${sessionId.substring(0, 8)}.zip`
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
-      window.URL.revokeObjectURL(url)
 
       // Show dual password modal
       setZipPassword(zipPassword)
@@ -244,11 +208,11 @@ const FloatingPanel = ({ isAuthenticated }) => {
     } catch (error) {
       console.error('Windows IIS download failed:', error)
       
-      if (error.response?.status === 404) {
+      if (error.message.includes('404')) {
         setDownloadError('No certificates found. Please upload required certificates first.')
-      } else if (error.response?.status === 400) {
+      } else if (error.message.includes('400')) {
         setDownloadError('Invalid session or missing required certificate chain.')
-      } else if (error.code === 'ECONNABORTED') {
+      } else if (error.message.includes('timeout')) {
         setDownloadError('Download timeout. Please try again.')
       } else {
         setDownloadError('Download failed. Please try again.')

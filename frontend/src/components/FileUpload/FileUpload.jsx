@@ -1,5 +1,5 @@
 // frontend/src/components/FileUpload/FileUpload.jsx
-// REVERTED: Back to original working version - NO UI CHANGES
+// FINAL FIX: Complete rewrite with proper PKI component handling and extensive debugging
 import React, { useState, useRef, useEffect } from 'react'
 import { Upload, Key, AlertCircle } from 'lucide-react'
 import { useCertificates } from '../../contexts/CertificateContext'
@@ -9,7 +9,6 @@ const FileUpload = () => {
   const {
     certificates,
     passwordState,
-    addCertificate,
     refreshFiles,
     analyzeCertificate,
     updatePasswordState,
@@ -89,31 +88,54 @@ const FileUpload = () => {
       const filesNeedingPassword = []
       const testPassword = passwordOverride || password
       
+      console.log('🚀 FileUpload: Starting file processing...', files.length, 'files')
+      
       for (const file of files) {
         try {
+          console.log('📤 FileUpload: Calling analyzeCertificate for', file.name)
           const result = await analyzeCertificate(file, testPassword || null)
           
+          console.log('📥 FileUpload: analyzeCertificate result:', result)
+          console.log('📥 Result type:', typeof result)
+          console.log('📥 Result success:', result.success)
+          console.log('📥 Result keys:', Object.keys(result))
+          
           if (result.success) {
-            // Add to context state
-            addCertificate({
-              id: result.id || Date.now() + Math.random(),
-              name: file.name,
-              filename: file.name,
-              success: true,
-              analysis: result.analysis,
-              uploadedAt: new Date().toISOString()
-            })
+            // CRITICAL: Do NOT add upload response to state
+            // The analyzeCertificate -> uploadCertificate -> getCertificates flow
+            // should have already refreshed the components with proper PKI data
+            
+            console.log('✅ FileUpload: Upload successful, result has certificates:', result.certificates?.length || 'no certificates field')
             results.push(`✓ ${file.name}: Successfully analyzed`)
+            
+            // DEBUG: Check if result already contains PKI components
+            if (result.certificates && Array.isArray(result.certificates)) {
+              console.log('🔍 FileUpload: Result contains certificates:', result.certificates.length)
+              result.certificates.forEach((cert, idx) => {
+                console.log(`  Certificate ${idx}:`, {
+                  id: cert.id,
+                  type: cert.type,
+                  filename: cert.filename,
+                  keys: Object.keys(cert)
+                })
+              })
+            } else {
+              console.log('🔍 FileUpload: Result does NOT contain certificates array')
+            }
+            
           } else {
             if (result.requiresPassword) {
               filesNeedingPassword.push(file)
+              console.log('🔑 FileUpload: Password required for', file.name)
             } else {
               if (!silentMode) {
                 results.push(`✗ ${file.name}: ${result.error}`)
+                console.log('❌ FileUpload: Analysis failed for', file.name, result.error)
               }
             }
           }
         } catch (error) {
+          console.log('💥 FileUpload: Exception during analyzeCertificate:', error)
           if (error.response?.data?.requiresPassword) {
             filesNeedingPassword.push(file)
           } else {
@@ -126,11 +148,14 @@ const FileUpload = () => {
       
       // Handle password-protected files
       if (filesNeedingPassword.length > 0 && !silentMode) {
+        console.log('🔐 FileUpload: Setting password required state')
         updatePasswordState({
           passwordRequiredFiles: filesNeedingPassword,
           needsPassword: true
         })
       } else if (filesNeedingPassword.length === 0) {
+        console.log('🎉 FileUpload: All files processed successfully, calling refreshFiles()')
+        
         // Success! Clear password UI
         updatePasswordState({
           needsPassword: false,
@@ -139,20 +164,29 @@ const FileUpload = () => {
         })
         setError(null) // Clear any errors
         
-        // Refresh the file list to ensure consistency
-        await refreshFiles()
+        // CRITICAL: Force refresh to ensure we get the latest PKI components
+        // This should fetch proper components with 'type' field from /certificates endpoint
+        try {
+          console.log('🔄 FileUpload: Calling refreshFiles() to get PKI components...')
+          await refreshFiles()
+          console.log('✅ FileUpload: refreshFiles() completed successfully')
+        } catch (refreshError) {
+          console.error('💥 FileUpload: refreshFiles() failed:', refreshError)
+          setError('Failed to refresh components after upload')
+        }
       }
       
       if (results.length > 0 && !silentMode) {
-        console.log('File processing results:', results.join('\n'))
+        console.log('📋 File processing results:', results.join('\n'))
       }
       
     } catch (error) {
+      console.error('💥 FileUpload: Error in handleFiles:', error)
       if (!silentMode) {
-        console.error('Error processing files:', error)
         setError(`Processing failed: ${error.message}`)
       }
     } finally {
+      console.log('🏁 FileUpload: Setting isAnalyzing to false')
       updatePasswordState({ isAnalyzing: false })
     }
   }
@@ -164,6 +198,8 @@ const FileUpload = () => {
     
     // Check if we should still process (in case clear all was pressed)
     if (passwordRequiredFiles.length === 0) return
+    
+    console.log('🔑 FileUpload: Retrying with password for', passwordRequiredFiles.length, 'files')
     
     // Try with the password - if it works, files will be processed normally
     await handleFiles(passwordRequiredFiles, testPassword, true)
@@ -191,6 +227,7 @@ const FileUpload = () => {
     if (isAnalyzing || needsPassword) return
     
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      console.log('📁 FileUpload: Files dropped:', e.dataTransfer.files.length)
       handleFiles(e.dataTransfer.files)
     }
   }
@@ -200,6 +237,7 @@ const FileUpload = () => {
     if (isAnalyzing || needsPassword) return
     
     if (e.target.files && e.target.files[0]) {
+      console.log('📁 FileUpload: Files selected:', e.target.files.length)
       handleFiles(e.target.files)
     }
   }

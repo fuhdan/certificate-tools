@@ -1,5 +1,6 @@
 // frontend/src/services/api.js
-// FIXED: Updated to use sha256_fingerprint and correct endpoints + ADDED advanced downloads
+// STEP 4: Updated to use unified download endpoint
+// All downloads now use /downloads/download/{bundle_type}/{session_id}
 
 import axios from 'axios'
 import { sessionManager } from './sessionManager'
@@ -58,186 +59,383 @@ api.interceptors.response.use(
 
 /**
  * Map backend PKI component to frontend certificate object
- * FIXED: Use sha256_fingerprint instead of public_key_fingerprint
  */
 function mapPKIComponentToCertificate(component) {
-  const metadata = component.metadata || {}
+  console.log('🗺️ Mapping component:', component)
   
-  // Base certificate object
-  const certificate = {
-    id: component.id,
-    filename: component.filename,
-    uploaded_at: component.uploaded_at,
-    content: component.content,
-    type: component.type,
-    order: component.order,
-    original_format: metadata.original_format,
-    file_size: metadata.file_size,
-    used_password: metadata.used_password,
-    is_valid: true,
-    validation_errors: [],
-    metadata: metadata,
+  try {
+    const metadata = component.metadata || {}
+    console.log('🗺️ Component metadata:', metadata)
     
-    // Component type flags
-    has_certificate: false,
-    has_private_key: false,
-    has_csr: false
-  }
-
-  // Map certificate data if it's a certificate component
-  if (component.type === 'Certificate' || component.type === 'RootCA' || 
-      component.type === 'IntermediateCA' || component.type === 'IssuingCA') {
+    // Base certificate object
+    const certificate = {
+      id: component.id,
+      filename: component.filename,
+      uploaded_at: component.uploaded_at,
+      content: component.content,
+      type: component.type,
+      order: component.order,
+      original_format: metadata.original_format,
+      file_size: metadata.file_size,
+      used_password: metadata.used_password,
+      is_valid: true,
+      validation_errors: [],
+      metadata: metadata,
+      
+      // Component type flags
+      has_certificate: component.type === 'Certificate',
+      has_private_key: component.type === 'PrivateKey',
+      has_csr: component.type === 'CSR',
+      has_ca: ['IssuingCA', 'IntermediateCA', 'RootCA'].includes(component.type)
+    }
     
-    certificate.has_certificate = true
-    certificate.certificate_info = {
-      subject: metadata.subject,
-      issuer: metadata.issuer,
-      serial_number: metadata.serial_number,
-      is_ca: metadata.is_ca,
-      is_self_signed: metadata.is_self_signed,
-      fingerprint_sha256: metadata.fingerprint_sha256,
-      
-      // Detailed subject fields
-      subject_common_name: metadata.subject_common_name,
-      subject_organization: metadata.subject_organization,
-      subject_organizational_unit: metadata.subject_organizational_unit,
-      subject_country: metadata.subject_country,
-      subject_state: metadata.subject_state,
-      subject_locality: metadata.subject_locality,
-      subject_email: metadata.subject_email,
-      
-      // Detailed issuer fields
-      issuer_common_name: metadata.issuer_common_name,
-      issuer_organization: metadata.issuer_organization,
-      issuer_organizational_unit: metadata.issuer_organizational_unit,
-      issuer_country: metadata.issuer_country,
-      issuer_state: metadata.issuer_state,
-      issuer_locality: metadata.issuer_locality,
-      issuer_email: metadata.issuer_email,
-      
-      // Validity information
-      not_valid_before: metadata.not_valid_before,
-      not_valid_after: metadata.not_valid_after,
-      is_expired: metadata.is_expired,
-      days_until_expiry: metadata.days_until_expiry,
-      
-      // Signature and public key info
-      signature_algorithm: metadata.signature_algorithm,
-      signature_algorithm_oid: metadata.signature_algorithm_oid,
-      public_key_algorithm: metadata.public_key_algorithm,
-      public_key_size: metadata.public_key_size,
-      public_key_exponent: metadata.public_key_exponent,
-      public_key_curve: metadata.public_key_curve,
-      
-      // Extensions
-      subject_alt_name: metadata.subject_alt_name || [],
-      key_usage: metadata.key_usage || {},
-      extended_key_usage: metadata.extended_key_usage || [],
-      basic_constraints: metadata.basic_constraints || {},
-      authority_key_identifier: metadata.authority_key_identifier,
-      subject_key_identifier: metadata.subject_key_identifier
+    // Add type-specific data based on component type
+    if (component.type === 'Certificate' || ['IssuingCA', 'IntermediateCA', 'RootCA'].includes(component.type)) {
+      certificate.certificate_info = {
+        subject: metadata.subject || 'N/A',
+        issuer: metadata.issuer || 'N/A',
+        serial_number: metadata.serial_number || 'N/A',
+        not_valid_before: metadata.not_valid_before,
+        not_valid_after: metadata.not_valid_after,
+        is_expired: metadata.is_expired || false,
+        days_until_expiry: metadata.days_until_expiry,
+        is_ca: metadata.is_ca || false,
+        is_self_signed: metadata.is_self_signed || false,
+        fingerprint_sha256: metadata.fingerprint_sha256 || metadata.sha256_fingerprint,
+        
+        // Public key info
+        public_key_algorithm: metadata.public_key_algorithm,
+        public_key_size: metadata.public_key_size,
+        public_key_size_detailed: metadata.public_key_size_detailed,
+        public_key_exponent: metadata.public_key_exponent,
+        public_key_curve: metadata.public_key_curve,
+        
+        // Extensions
+        subject_alt_name: metadata.subject_alt_name || [],
+        key_usage: metadata.key_usage || {},
+        extended_key_usage: metadata.extended_key_usage || [],
+        basic_constraints: metadata.basic_constraints || {}
+      }
     }
-  }
-
-  // Map private key data
-  if (component.type === 'PrivateKey') {
-    certificate.has_private_key = true
-    certificate.private_key_info = {
-      algorithm: metadata.algorithm,
-      key_size: metadata.key_size,
-      is_encrypted: metadata.is_encrypted,
-      // FIXED: Use sha256_fingerprint instead of public_key_fingerprint
-      public_key_fingerprint: metadata.sha256_fingerprint,
-      
-      // Algorithm-specific fields
-      rsa_exponent: metadata.rsa_exponent,
-      rsa_modulus_bits: metadata.rsa_modulus_bits,
-      ec_curve: metadata.ec_curve,
-      ec_curve_oid: metadata.ec_curve_oid,
-      ec_private_value_bits: metadata.ec_private_value_bits,
-      ec_x_coord_bits: metadata.ec_x_coord_bits,
-      ec_y_coord_bits: metadata.ec_y_coord_bits,
-      dsa_p_bits: metadata.dsa_p_bits,
-      dsa_q_bits: metadata.dsa_q_bits,
-      dsa_g_bits: metadata.dsa_g_bits,
-      dsa_y_bits: metadata.dsa_y_bits,
-      curve: metadata.curve
+    
+    if (component.type === 'PrivateKey') {
+      certificate.private_key_info = {
+        algorithm: metadata.algorithm,
+        key_size: metadata.key_size,
+        is_encrypted: metadata.is_encrypted || false,
+        fingerprint_sha256: metadata.fingerprint_sha256 || metadata.sha256_fingerprint
+      }
     }
-  }
-
-  // Map CSR data
-  if (component.type === 'CSR') {
-    certificate.has_csr = true
-    certificate.csr_info = {
-      subject: metadata.subject,
-      signature_algorithm: metadata.signature_algorithm,
-      public_key_algorithm: metadata.public_key_algorithm,
-      public_key_size: metadata.public_key_size,
-      // FIXED: Use sha256_fingerprint instead of public_key_fingerprint
-      public_key_fingerprint: metadata.sha256_fingerprint,
-      
-      // Detailed subject fields
-      subject_common_name: metadata.subject_common_name,
-      subject_organization: metadata.subject_organization,
-      subject_organizational_unit: metadata.subject_organizational_unit,
-      subject_country: metadata.subject_country,
-      subject_state: metadata.subject_state,
-      subject_locality: metadata.subject_locality,
-      subject_email: metadata.subject_email,
-      
-      // Signature info
-      signature_algorithm_oid: metadata.signature_algorithm_oid,
-      
-      // Public key details
-      public_key_algorithm_detailed: metadata.public_key_algorithm_detailed,
-      public_key_size_detailed: metadata.public_key_size_detailed,
-      public_key_exponent: metadata.public_key_exponent,
-      public_key_curve: metadata.public_key_curve,
-      
-      // Extensions
-      subject_alt_name: metadata.subject_alt_name || [],
-      key_usage: metadata.key_usage || {},
-      extended_key_usage: metadata.extended_key_usage || [],
-      basic_constraints: metadata.basic_constraints || {}
+    
+    if (component.type === 'CSR') {
+      certificate.csr_info = {
+        subject: metadata.subject || 'N/A',
+        public_key_algorithm: metadata.public_key_algorithm,
+        public_key_size: metadata.public_key_size,
+        fingerprint_sha256: metadata.fingerprint_sha256 || metadata.sha256_fingerprint
+      }
     }
+    
+    console.log('✅ Mapped certificate:', certificate)
+    return certificate
+    
+  } catch (error) {
+    console.error('💥 Error in mapPKIComponentToCertificate:', error)
+    console.error('💥 Component that failed:', component)
+    throw error
   }
-
-  return certificate
 }
 
-// Certificate API methods
-export const certificateAPI = {
-  async getCertificates() {
+// ===== UNIFIED DOWNLOAD API =====
+// All downloads now use the unified endpoint
+
+export const downloadAPI = {
+  /**
+   * Download Apache server bundle
+   * @param {boolean} includeInstructions - Whether to include installation guides
+   */
+  async downloadApacheBundle(includeInstructions = true) {
     try {
-      const response = await api.get('/certificates')
+      const sessionId = sessionManager.getSessionId()
+      const result = await this.downloadBundle('apache', {
+        includeInstructions
+      })
       
-      if (response.data.success && response.data.components) {
-        const certificates = response.data.components.map(component => 
-          mapPKIComponentToCertificate(component)
-        )
-        
-        return {
-          success: true,
-          certificates: certificates,
-          total: certificates.length
-        }
-      } else {
-        return {
-          success: true,
-          certificates: [],
-          total: 0
-        }
-      }
+      console.log('Apache bundle downloaded successfully')
+      return result
     } catch (error) {
-      console.error('Error fetching certificates:', error)
-      throw new Error(error.response?.data?.message || 'Failed to fetch certificates')
+      console.error('Error downloading Apache bundle:', error)
+      throw new Error(error.response?.data?.detail || 'Apache download failed')
     }
   },
 
+  /**
+   * Download IIS server bundle
+   * @param {boolean} includeInstructions - Whether to include installation guides
+   */
+  async downloadIISBundle(includeInstructions = true) {
+    try {
+      const sessionId = sessionManager.getSessionId()
+      const result = await this.downloadBundle('iis', {
+        includeInstructions
+      })
+      
+      console.log('IIS bundle downloaded successfully')
+      return result
+    } catch (error) {
+      console.error('Error downloading IIS bundle:', error)
+      throw new Error(error.response?.data?.detail || 'IIS download failed')
+    }
+  },
+
+  /**
+   * Download Nginx server bundle
+   * @param {boolean} includeInstructions - Whether to include installation guides
+   */
+  async downloadNginxBundle(includeInstructions = true) {
+    try {
+      const sessionId = sessionManager.getSessionId()
+      const result = await this.downloadBundle('nginx', {
+        includeInstructions
+      })
+      
+      console.log('Nginx bundle downloaded successfully')
+      return result
+    } catch (error) {
+      console.error('Error downloading Nginx bundle:', error)
+      throw new Error(error.response?.data?.detail || 'Nginx download failed')
+    }
+  },
+
+  /**
+   * Download private key only
+   * @param {string} format - Format for private key (pem, der, pkcs8, pkcs8_encrypted, pem_encrypted)
+   */
+  async downloadPrivateKey(format = 'pem') {
+    try {
+      const sessionId = sessionManager.getSessionId()
+      const result = await this.downloadBundle('private_key', {
+        formats: { private_key: format }
+      })
+      
+      console.log('Private key downloaded successfully')
+      return result
+    } catch (error) {
+      console.error('Error downloading private key:', error)
+      throw new Error(error.response?.data?.detail || 'Private key download failed')
+    }
+  },
+
+  /**
+   * Download certificate only
+   * @param {string} format - Format for certificate (pem, der)
+   */
+  async downloadCertificate(format = 'pem') {
+    try {
+      const sessionId = sessionManager.getSessionId()
+      const result = await this.downloadBundle('certificate', {
+        formats: { certificate: format }
+      })
+      
+      console.log('Certificate downloaded successfully')
+      return result
+    } catch (error) {
+      console.error('Error downloading certificate:', error)
+      throw new Error(error.response?.data?.detail || 'Certificate download failed')
+    }
+  },
+
+  /**
+   * Download CA certificate chain
+   * @param {string} format - Format for CA certificates (pem, der)
+   */
+  async downloadCAChain(format = 'pem') {
+    try {
+      const sessionId = sessionManager.getSessionId()
+      const result = await this.downloadBundle('ca_chain', {
+        formats: { ca_chain: format }
+      })
+      
+      console.log('CA chain downloaded successfully')
+      return result
+    } catch (error) {
+      console.error('Error downloading CA chain:', error)
+      throw new Error(error.response?.data?.detail || 'CA chain download failed')
+    }
+  },
+
+  /**
+   * Download custom bundle with specific components and formats
+   * @param {Object} config - Download configuration
+   * @param {string[]} config.components - Array of component IDs
+   * @param {Object} config.formats - Format selections for components
+   * @param {boolean} config.includeInstructions - Whether to include instructions
+   */
+  async downloadCustomBundle(config) {
+    try {
+      const sessionId = sessionManager.getSessionId()
+      const result = await this.downloadBundle('custom', config)
+      
+      console.log('Custom bundle downloaded successfully')
+      return result
+    } catch (error) {
+      console.error('Error downloading custom bundle:', error)
+      throw new Error(error.response?.data?.detail || 'Custom download failed')
+    }
+  },
+
+  /**
+   * Core download method - handles all bundle types
+   * @param {string} bundleType - Type of bundle to download
+   * @param {Object} options - Download options
+   */
+  async downloadBundle(bundleType, options = {}) {
+    try {
+      const sessionId = sessionManager.getSessionId()
+      
+      // Build query parameters
+      const params = new URLSearchParams()
+      
+      if (options.includeInstructions !== undefined) {
+        params.append('include_instructions', options.includeInstructions)
+      }
+      
+      if (options.formats) {
+        params.append('formats', JSON.stringify(options.formats))
+      }
+      
+      if (options.components) {
+        params.append('components', JSON.stringify(options.components))
+      }
+      
+      const queryString = params.toString()
+      const url = `/downloads/download/${bundleType}/${sessionId}${queryString ? '?' + queryString : ''}`
+      
+      console.log(`Downloading ${bundleType} bundle from:`, url)
+      
+      // Make API call
+      const response = await api.post(url, {}, {
+        responseType: 'blob',
+        timeout: 60000, // 60 seconds for large downloads
+      })
+
+      console.log(`${bundleType} bundle response received:`, response.status, response.headers)
+
+      // Extract passwords from response headers
+      const zipPassword = response.headers['x-zip-password']
+      const encryptionPassword = response.headers['x-encryption-password']
+      
+      // Create download filename from Content-Disposition header
+      const contentDisposition = response.headers['content-disposition']
+      let filename = `${bundleType}-bundle-${sessionId.substring(0, 8)}.zip`
+      if (contentDisposition) {
+        const filenameMatch = contentDisposition.match(/filename=([^;]+)/)
+        if (filenameMatch) {
+          filename = filenameMatch[1].replace(/"/g, '')
+        }
+      }
+
+      // Trigger download
+      const blob = new Blob([response.data], { type: 'application/zip' })
+      const downloadUrl = window.URL.createObjectURL(blob)
+      
+      const link = document.createElement('a')
+      link.href = downloadUrl
+      link.download = filename
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      
+      // Clean up
+      window.URL.revokeObjectURL(downloadUrl)
+
+      return {
+        success: true,
+        filename,
+        zipPassword,
+        encryptionPassword,
+        bundleType
+      }
+
+    } catch (error) {
+      console.error(`Error downloading ${bundleType} bundle:`, error)
+      console.error('Error response:', error.response?.data)
+      console.error('Error status:', error.response?.status)
+      throw error
+    }
+  },
+
+  /**
+   * Get available bundle types for current session
+   */
+  async getAvailableBundleTypes() {
+    try {
+      const sessionId = sessionManager.getSessionId()
+      const response = await api.get(`/downloads/bundle-types/${sessionId}`)
+      return response.data
+    } catch (error) {
+      console.error('Error getting available bundle types:', error)
+      throw new Error(error.response?.data?.detail || 'Failed to get available bundle types')
+    }
+  }
+}
+
+// ===== BACKWARD COMPATIBILITY WRAPPERS =====
+// These maintain compatibility with existing frontend code
+
+export const advancedDownloadAPI = {
+  /**
+   * Get available download formats for session components
+   * @deprecated Use downloadAPI.getAvailableBundleTypes() instead
+   */
+  async getAvailableFormats() {
+    try {
+      const bundleTypes = await downloadAPI.getAvailableBundleTypes()
+      
+      // Convert new format to old format for compatibility
+      return {
+        success: true,
+        session_id: bundleTypes.session_id,
+        components: [], // Would need to be populated from session data
+        bundle_options: bundleTypes.individual_bundles,
+        message: "Use downloadAPI.getAvailableBundleTypes() for full information"
+      }
+    } catch (error) {
+      console.error('Error getting available formats:', error)
+      throw new Error(error.response?.data?.detail || 'Failed to get available formats')
+    }
+  },
+
+  /**
+   * Download advanced bundle with custom format selections
+   * @deprecated Use downloadAPI.downloadCustomBundle() instead
+   */
+  async downloadAdvancedBundle(downloadConfig) {
+    try {
+      console.log('🔥 Advanced download (legacy) with config:', downloadConfig)
+      
+      // Convert legacy format to new format
+      const config = {
+        components: downloadConfig.component_ids || [],
+        formats: downloadConfig.format_selections || {},
+        includeInstructions: false // Advanced downloads typically don't include instructions
+      }
+      
+      return await downloadAPI.downloadCustomBundle(config)
+    } catch (error) {
+      console.error('❌ Error in legacy advanced download:', error)
+      throw error
+    }
+  }
+}
+
+// ===== CERTIFICATE API =====
+
+export const certificateAPI = {
   async uploadCertificate(file, password = null) {
     try {
       const formData = new FormData()
-      formData.append('file', file)
+      formData.append('file', file)  // Backend expects 'file' field name
       if (password) {
         formData.append('password', password)
       }
@@ -249,7 +447,7 @@ export const certificateAPI = {
       })
 
       if (response.data.success) {
-        return await this.getCertificates()
+        return response.data
       }
 
       return response.data
@@ -261,7 +459,58 @@ export const certificateAPI = {
       }
       
       console.error('Error uploading certificate:', error)
-      throw new Error(error.response?.data?.message || 'Upload failed')
+      throw new Error(error.response?.data?.detail || error.response?.data?.message || 'Upload failed')
+    }
+  },
+
+  async getCertificates() {
+    try {
+      console.log('🔄 API: Getting certificates from /certificates endpoint...')
+      const response = await api.get('/certificates')
+
+      console.log('📥 API: Raw /certificates response:', response.data)
+      console.log('📥 API: Components array:', response.data.components)
+      console.log('📥 API: Components length:', response.data.components?.length)
+
+      if (response.data.success && response.data.components) {
+        console.log('🔄 API: Starting component mapping...')
+
+        const certificates = response.data.components.map((component, index) => {
+          console.log(`🔍 API: Mapping component ${index}:`, component)
+          console.log(`🔍 API: Component keys:`, Object.keys(component))
+          console.log(`🔍 API: Component type:`, component.type)
+          console.log(`🔍 API: Component metadata:`, component.metadata)
+
+          try {
+            const mapped = mapPKIComponentToCertificate(component)
+            console.log(`✅ API: Mapped component ${index}:`, mapped)
+            console.log(`✅ API: Mapped component type:`, mapped?.type)
+            return mapped
+          } catch (mapError) {
+            console.error(`💥 API: Mapping failed for component ${index}:`, mapError)
+            return null
+          }
+        }).filter(cert => cert !== null) // Remove any failed mappings
+
+        console.log('🎯 API: Final mapped certificates:', certificates)
+        console.log('🎯 API: Final certificates count:', certificates.length)
+
+        return {
+          success: true,
+          certificates: certificates,
+          total: certificates.length
+        }
+      } else {
+        console.log('❌ API: No components found or response unsuccessful')
+        return {
+          success: true,
+          certificates: [],
+          total: 0
+        }
+      }
+    } catch (error) {
+      console.error('💥 API: Error fetching certificates:', error)
+      throw new Error(error.response?.data?.message || 'Failed to fetch certificates')
     }
   },
 
@@ -292,157 +541,6 @@ export const certificateAPI = {
     } catch (error) {
       console.error('Error fetching validation results:', error)
       throw new Error(error.response?.data?.message || 'Failed to fetch validation results')
-    }
-  }
-}
-
-// 🆕 Advanced Downloads API - ADDED TO EXISTING API
-export const advancedDownloadAPI = {
-  /**
-   * Get available download formats for session components
-   */
-  async getAvailableFormats() {
-    try {
-      const sessionId = sessionManager.getSessionId()
-      const response = await api.get(`/downloads/advanced/formats/${sessionId}`)
-      return response.data
-    } catch (error) {
-      console.error('Error getting available formats:', error)
-      throw new Error(error.response?.data?.detail || 'Failed to get available formats')
-    }
-  },
-
-  /**
-   * Download advanced bundle with custom format selections
-   * @param {Object} downloadConfig - Download configuration
-   * @param {string[]} downloadConfig.component_ids - Selected component IDs  
-   * @param {Object} downloadConfig.format_selections - Format selections for components
-   * @param {Object} downloadConfig.bundles - Bundle selections
-   */
-  async downloadAdvancedBundle(downloadConfig) {
-    try {
-      const sessionId = sessionManager.getSessionId()
-      
-      console.log('🔥 Downloading advanced bundle with config:', downloadConfig)
-      console.log('🔥 Session ID:', sessionId)
-      console.log('🔥 API URL:', `/downloads/advanced/download/${sessionId}`)
-      
-      const response = await api.post(
-        `/downloads/advanced/download/${sessionId}`,
-        downloadConfig,
-        {
-          responseType: 'blob', // Important for binary data
-          timeout: 60000, // 60 seconds for large downloads
-        }
-      )
-
-      console.log('🔥 Response received:', response.status, response.headers)
-
-      // Extract password from response headers
-      const zipPassword = response.headers['x-zip-password']
-      const encryptionPassword = response.headers['x-encryption-password'] || response.headers['X-Encryption-Password']
-
-      // ADD THESE DEBUG LINES:
-      console.log('🔍 Raw header access:', response.headers['x-encryption-password'])
-      console.log('🔍 Lowercase header access:', response.headers['x-encryption-password'.toLowerCase()])
-      console.log('🔍 Header keys:', Object.keys(response.headers))
-      
-      // Create download filename
-      const contentDisposition = response.headers['content-disposition']
-      let filename = 'advanced-bundle.zip'
-      if (contentDisposition) {
-        const filenameMatch = contentDisposition.match(/filename=([^;]+)/)
-        if (filenameMatch) {
-          filename = filenameMatch[1].replace(/"/g, '')
-        }
-      }
-
-      // Trigger download
-      const blob = new Blob([response.data], { type: 'application/zip' })
-      const downloadUrl = window.URL.createObjectURL(blob)
-      
-      const link = document.createElement('a')
-      link.href = downloadUrl
-      link.download = filename
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
-      
-      // Clean up
-      window.URL.revokeObjectURL(downloadUrl)
-
-      return {
-        success: true,
-        filename,
-        zipPassword,
-        encryptionPassword
-      }
-
-    } catch (error) {
-      console.error('❌ Error downloading advanced bundle:', error)
-      console.error('❌ Error response:', error.response?.data)
-      console.error('❌ Error status:', error.response?.status)
-      throw new Error(error.response?.data?.detail || 'Download failed')
-    }
-  }
-}
-
-// Enhanced Download API methods - EXISTING + ENHANCED
-export const downloadAPI = {
-  async downloadApacheBundle() {
-    try {
-      const sessionId = sessionManager.getSessionId()
-      const response = await api.post(`/downloads/apache/${sessionId}`, {}, {
-        responseType: 'blob',
-        timeout: 60000,
-      })
-
-      const zipPassword = response.headers['x-zip-password']
-      const blob = new Blob([response.data], { type: 'application/zip' })
-      
-      // Trigger download
-      const downloadUrl = window.URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = downloadUrl
-      link.download = `apache-bundle-${sessionId}.zip`
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
-      window.URL.revokeObjectURL(downloadUrl)
-
-      return { success: true, zipPassword }
-    } catch (error) {
-      console.error('Error downloading Apache bundle:', error)
-      throw new Error(error.response?.data?.detail || 'Apache download failed')
-    }
-  },
-
-  async downloadIISBundle() {
-    try {
-      const sessionId = sessionManager.getSessionId()
-      const response = await api.post(`/downloads/iis/${sessionId}`, {}, {
-        responseType: 'blob',
-        timeout: 60000,
-      })
-
-      const zipPassword = response.headers['x-zip-password']
-      const encryptionPassword = response.headers['x-encryption-password']
-      const blob = new Blob([response.data], { type: 'application/zip' })
-      
-      // Trigger download
-      const downloadUrl = window.URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = downloadUrl
-      link.download = `iis-bundle-${sessionId}.zip`
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
-      window.URL.revokeObjectURL(downloadUrl)
-
-      return { success: true, zipPassword, encryptionPassword }
-    } catch (error) {
-      console.error('Error downloading IIS bundle:', error)
-      throw new Error(error.response?.data?.detail || 'IIS download failed')
     }
   }
 }

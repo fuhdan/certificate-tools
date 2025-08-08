@@ -12,8 +12,7 @@ from routers import (
     downloads_router,
     health_router,
     pki_router,
-    stats_router,
-    advanced_downloads_router  # 🆕 ADD
+    stats_router
 )
 
 # Configure logging
@@ -53,7 +52,6 @@ app.include_router(certificates_router)
 app.include_router(downloads_router)
 app.include_router(pki_router)
 app.include_router(stats_router)
-app.include_router(advanced_downloads_router)
 
 # ============================================================================
 # ROOT ENDPOINT
@@ -71,7 +69,6 @@ def read_root():
             "login": "/token",
             "certificates": "/api/certificates",
             "downloads": "/api/downloads",
-            "advanced_downloads": "/api/downloads/advanced",  # 🆕 ADD
             "docs": "/docs"
         }
     }

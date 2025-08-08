@@ -315,6 +315,10 @@ class SecureZipCreator:
             'NGINX_INSTALLATION_GUIDE.txt': nginx_guide
         }
         
+        # Generate password FIRST if not provided
+        if password is None:
+            password = self.generate_secure_password()
+        
         # Generate manifest using ACTUAL ZIP FILES instead of original components
         if session_id:
             # Ensure strings for manifest generation
@@ -330,7 +334,7 @@ class SecureZipCreator:
                 manifest_components, 
                 "Apache/Nginx", 
                 session_id, 
-                password
+                password  # Now has actual password!
             )
             files['CONTENT_MANIFEST.txt'] = manifest
         

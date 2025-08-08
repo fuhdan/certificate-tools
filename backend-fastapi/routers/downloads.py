@@ -221,9 +221,6 @@ async def download_iis_bundle(
         # Generate ZIP password
         zip_password = secure_zip_creator.generate_secure_password()
         
-        # Create certificate info text with both passwords
-        cert_info = _create_certificate_info_text(certificate_data, "WILL_BE_GENERATED", p12_password)
-        
         # Create password-protected ZIP bundle using secure_zip_creator WITH MANIFEST
         selected_components = list(session.components.values())
 
@@ -231,7 +228,6 @@ async def download_iis_bundle(
         zip_data, actual_zip_password = secure_zip_creator.create_iis_bundle(
             p12_bundle=p12_bundle,
             iis_guide=iis_guide,
-            cert_info=cert_info,
             session_id=session_id,
             selected_components=selected_components,
             bundle_password=p12_password

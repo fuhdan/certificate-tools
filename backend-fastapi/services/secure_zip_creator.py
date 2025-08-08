@@ -341,7 +341,6 @@ class SecureZipCreator:
         self,
         p12_bundle: bytes,
         iis_guide: str, 
-        cert_info: str,
         password: Optional[str] = None,
         session_id: Optional[str] = None,
         selected_components: Optional[List] = None,
@@ -359,14 +358,13 @@ class SecureZipCreator:
         
         files = {
             p12_filename: p12_bundle,
-            'IIS_INSTALLATION_GUIDE.txt': iis_guide,
-            'CERTIFICATE_INFO.txt': cert_info
+            'IIS_INSTALLATION_GUIDE.txt': iis_guide
         }
         
         # Generate manifest using ACTUAL ZIP FILES instead of original components
         if session_id:
             manifest_components = self._create_iis_manifest_components(
-                p12_bundle, iis_guide, cert_info, selected_components, bundle_password, p12_filename
+                p12_bundle, iis_guide, selected_components, bundle_password, p12_filename
             )
             manifest = self._generate_content_manifest(
                 manifest_components, 
@@ -604,7 +602,7 @@ class SecureZipCreator:
         
         return manifest_components
 
-    def _create_iis_manifest_components(self, p12_bundle: bytes, iis_guide: str, cert_info: str, 
+    def _create_iis_manifest_components(self, p12_bundle: bytes, iis_guide: str,
                                       original_components: Optional[List], bundle_password: Optional[str],
                                       p12_filename: str) -> List:
         """Create virtual PKI components representing the actual files in IIS ZIP with standardized filenames"""
@@ -659,23 +657,7 @@ class SecureZipCreator:
             uploaded_at=current_time
         )
         manifest_components.append(iis_guide_component)
-        
-        # Certificate info - use PRIVATE_KEY type with special metadata
-        cert_info_component = PKIComponent(
-            id="cert_info",
-            filename="CERTIFICATE_INFO.txt", 
-            content=cert_info,
-            type=PKIComponentType.PRIVATE_KEY,  # Use as placeholder type
-            metadata={
-                "description": "Certificate information and passwords",
-                "file_type": "text",
-                "content_type": "certificate_info"
-            },
-            order=3,
-            uploaded_at=current_time
-        )
-        manifest_components.append(cert_info_component)
-        
+
         return manifest_components
 
 # Global service instance

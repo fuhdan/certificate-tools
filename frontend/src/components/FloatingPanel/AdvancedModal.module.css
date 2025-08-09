@@ -754,3 +754,36 @@
     font-size: 0.85rem;
   }
 }
+
+.splitButtonContainer {
+  display: flex;
+  align-items: stretch;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.splitButtonMain {
+  flex: 1;
+  border-top-right-radius: 0 !important;
+  border-bottom-right-radius: 0 !important;
+  border-right: none !important;
+}
+
+.splitButtonDropdown {
+  border-left: 1px solid #d1d5db;
+  background: inherit;
+  border-radius: 0 8px 8px 0;
+}
+
+.splitButtonContainer:hover .splitButtonDropdown {
+  background: #f3f4f6; /* Match hover state */
+}
+
+.inlineDropdown {
+  border: none;
+  background: transparent;
+  padding: 0.75rem 0.5rem;
+  cursor: pointer;
+  font-size: 0.75rem;
+  height: 100%;
+}

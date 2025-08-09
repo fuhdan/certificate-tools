@@ -21,6 +21,8 @@ const AdvancedModal = ({ onClose }) => {
   const [showPasswordModal, setShowPasswordModal] = useState(false)
   const [downloadResult, setDownloadResult] = useState(null)
 
+  const [pkcs7Format, setPkcs7Format] = useState('pem')
+
   // Get format options for component types
   const getFormatOptions = (componentType) => {
     if (componentType === 'PrivateKey') {
@@ -390,15 +392,36 @@ const AdvancedModal = ({ onClose }) => {
                   IIS Bundle
                 </button>
 
-                <button 
-                  className={`${styles.quickActionButton} ${!bundleReqs.pkcs7.enabled ? styles.disabled : ''}`}
-                  onClick={() => bundleReqs.pkcs7.enabled && downloadAPI.downloadPKCS7Bundle()}
-                  disabled={!bundleReqs.pkcs7.enabled}
-                  title={bundleReqs.pkcs7.tooltip}
-                >
-                  <Package size={16} />
-                  PKCS7 Bundle
-                </button>
+                {/* PKCS7 Bundle with dropdown */}
+                <div className={styles.splitButtonContainer}>
+                  <button 
+                    className={`${styles.quickActionButton} ${styles.splitButtonMain} ${!bundleReqs.pkcs7.enabled ? styles.disabled : ''}`}
+                    onClick={() => {
+                      if (bundleReqs.pkcs7.enabled) {
+                        downloadAPI.downloadPKCS7Bundle(pkcs7Format) // Use selected format
+                      }
+                    }}
+                    disabled={!bundleReqs.pkcs7.enabled}
+                    title={bundleReqs.pkcs7.tooltip}
+                  >
+                    <Package size={16} />
+                    PKCS7 Bundle ({pkcs7Format.toUpperCase()}) {/* Shows selected format */}
+                  </button>
+                  
+                  <div className={styles.splitButtonDropdown}>
+                    <select 
+                      className={styles.inlineDropdown}
+                      value={pkcs7Format}
+                      onChange={(e) => {
+                        setPkcs7Format(e.target.value) // Just update the format, don't download
+                      }}
+                      disabled={!bundleReqs.pkcs7.enabled}
+                    >
+                      <option value="pem">PEM</option>
+                      <option value="der">DER</option>
+                    </select>
+                  </div>
+                </div>
 
                 <button 
                   className={`${styles.quickActionButton} ${!bundleReqs.privateKey.enabled ? styles.disabled : ''}`}

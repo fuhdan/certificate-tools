@@ -1,8 +1,7 @@
 // frontend/src/components/FloatingPanel/AdvancedModal.jsx
-// STEP 6.2: Complete rewrite using unified download API
-// Fixed structure and complete implementation
+// Complete rewrite - Advanced download functionality with component selection
 
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useMemo } from 'react'
 import { X, Download, FileText, Key, Package, AlertCircle, CheckSquare, Square } from 'lucide-react'
 import styles from './AdvancedModal.module.css'
 import SecurePasswordModal from './SecurePasswordModal'
@@ -21,28 +20,6 @@ const AdvancedModal = ({ onClose }) => {
   const [downloadError, setDownloadError] = useState(null)
   const [showPasswordModal, setShowPasswordModal] = useState(false)
   const [downloadResult, setDownloadResult] = useState(null)
-  
-  // State for available bundle types (loaded from API)
-  const [availableBundleTypes, setAvailableBundleTypes] = useState(null)
-  const [isLoadingBundleTypes, setIsLoadingBundleTypes] = useState(true)
-
-  // Load available bundle types on mount
-  useEffect(() => {
-    loadAvailableBundleTypes()
-  }, [])
-
-  const loadAvailableBundleTypes = async () => {
-    try {
-      setIsLoadingBundleTypes(true)
-      const bundleTypes = await downloadAPI.getAvailableBundleTypes()
-      setAvailableBundleTypes(bundleTypes)
-    } catch (error) {
-      console.error('Error loading bundle types:', error)
-      setDownloadError('Failed to load available download options')
-    } finally {
-      setIsLoadingBundleTypes(false)
-    }
-  }
 
   // Get format options for component types
   const getFormatOptions = (componentType) => {
@@ -85,16 +62,24 @@ const AdvancedModal = ({ onClose }) => {
     }
   }
 
-  // Get component display name
+  // Get component display name - Return component type names instead of filenames
   const getComponentDisplayName = (component) => {
-    if (component.metadata?.subject_common_name) {
-      return component.metadata.subject_common_name
+    switch (component.type) {
+      case 'Certificate':
+        return 'Certificate'
+      case 'CSR':
+        return 'Certificate Signing Request'  
+      case 'PrivateKey':
+        return 'Private Key'
+      case 'IssuingCA':
+        return 'Issuing CA'
+      case 'IntermediateCA':
+        return 'Intermediate CA'
+      case 'RootCA':
+        return 'Root CA'
+      default:
+        return component.type
     }
-    if (component.metadata?.subject) {
-      const cnMatch = component.metadata.subject.match(/CN=([^,]+)/)
-      if (cnMatch) return cnMatch[1]
-    }
-    return component.filename
   }
 
   // Handle component selection toggle
@@ -148,6 +133,49 @@ const AdvancedModal = ({ onClose }) => {
     }
   }
 
+  // Check bundle requirements
+  const getBundleRequirements = () => {
+    const hasEndEntityCert = certificates.some(c => c.type === 'Certificate')
+    const hasPrivateKey = certificates.some(c => c.type === 'PrivateKey')
+    const hasCACerts = certificates.some(c => 
+      c.type === 'RootCA' || c.type === 'IntermediateCA' || c.type === 'IssuingCA'
+    )
+    
+    return {
+      apache: {
+        enabled: hasEndEntityCert && hasPrivateKey,
+        tooltip: hasEndEntityCert && hasPrivateKey 
+          ? "Download Apache/NGINX bundle" 
+          : `Missing: ${!hasEndEntityCert ? 'End-entity Certificate' : ''} ${!hasPrivateKey ? 'Private Key' : ''}`.trim()
+      },
+      iis: {
+        enabled: hasEndEntityCert && hasPrivateKey && hasCACerts,
+        tooltip: hasEndEntityCert && hasPrivateKey && hasCACerts
+          ? "Download IIS PKCS#12 bundle"
+          : `Missing: ${!hasEndEntityCert ? 'End-entity Certificate' : ''} ${!hasPrivateKey ? 'Private Key' : ''} ${!hasCACerts ? 'CA Certificate Chain' : ''}`.trim()
+      },
+      pkcs7: {
+        enabled: hasEndEntityCert && hasCACerts,
+        tooltip: hasEndEntityCert && hasCACerts
+          ? "Download PKCS#7 certificate chain"
+          : `Missing: ${!hasEndEntityCert ? 'End-entity Certificate' : ''} ${!hasCACerts ? 'CA Certificates' : ''}`.trim()
+      },
+      privateKey: {
+        enabled: hasPrivateKey,
+        tooltip: hasPrivateKey ? "Download private key" : "Missing: Private Key"
+      },
+      certificate: {
+        enabled: hasEndEntityCert,
+        tooltip: hasEndEntityCert ? "Download end-entity certificate" : "Missing: End-entity Certificate"
+      },
+      chain: {
+        enabled: hasCACerts,
+        tooltip: hasCACerts ? "Download CA certificate chain" : "Missing: CA Certificates"
+      }
+    }
+  }
+
+  const bundleReqs = getBundleRequirements()
   // Check if all selected components have format selections
   const allFormatsSelected = useMemo(() => {
     return Array.from(selectedComponents).every(componentId => 
@@ -235,27 +263,6 @@ const AdvancedModal = ({ onClose }) => {
     )
   }
 
-  // Loading state
-  if (isLoadingBundleTypes) {
-    return (
-      <div className={styles.overlay} onClick={handleOverlayClick}>
-        <div className={styles.modal}>
-          <div className={styles.header}>
-            <h2>Advanced Downloads</h2>
-            <button onClick={onClose} className={styles.closeButton}>
-              <X size={20} />
-            </button>
-          </div>
-          <div className={styles.content}>
-            <div className={styles.loadingState}>
-              <p>Loading download options...</p>
-            </div>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
   return (
     <>
       <div className={styles.overlay} onClick={handleOverlayClick}>
@@ -321,7 +328,6 @@ const AdvancedModal = ({ onClose }) => {
                           </div>
                           <div className={styles.componentDetails}>
                             <span className={styles.componentType}>{component.type}</span>
-                            <span className={styles.componentFilename}>{component.filename}</span>
                           </div>
                         </div>
                       </div>
@@ -357,55 +363,74 @@ const AdvancedModal = ({ onClose }) => {
             </div>
 
             {/* Quick Actions Section */}
-            {availableBundleTypes && (
-              <div className={styles.section}>
-                <h3>Quick Actions</h3>
-                <p className={styles.sectionDescription}>
-                  Pre-configured downloads for common use cases.
-                </p>
+            <div className={styles.section}>
+              <h3>Quick Actions</h3>
+              <p className={styles.sectionDescription}>
+                Pre-configured downloads for common use cases.
+              </p>
 
-                <div className={styles.quickActions}>
-                  {availableBundleTypes.server_bundles.includes('apache') && (
-                    <button 
-                      className={styles.quickActionButton}
-                      onClick={() => downloadAPI.downloadApacheBundle(true)}
-                    >
-                      <Package size={16} />
-                      Apache Bundle
-                    </button>
-                  )}
-                  
-                  {availableBundleTypes.server_bundles.includes('iis') && (
-                    <button 
-                      className={styles.quickActionButton}
-                      onClick={() => downloadAPI.downloadIISBundle(true)}
-                    >
-                      <Package size={16} />
-                      IIS Bundle
-                    </button>
-                  )}
+              <div className={styles.quickActions}>
+                <button 
+                  className={`${styles.quickActionButton} ${!bundleReqs.apache.enabled ? styles.disabled : ''}`}
+                  onClick={() => bundleReqs.apache.enabled && downloadAPI.downloadApacheBundle(true)}
+                  disabled={!bundleReqs.apache.enabled}
+                  title={bundleReqs.apache.tooltip}
+                >
+                  <Package size={16} />
+                  Apache/NGINX Bundle
+                </button>
+                
+                <button 
+                  className={`${styles.quickActionButton} ${!bundleReqs.iis.enabled ? styles.disabled : ''}`}
+                  onClick={() => bundleReqs.iis.enabled && downloadAPI.downloadIISBundle(true)}
+                  disabled={!bundleReqs.iis.enabled}
+                  title={bundleReqs.iis.tooltip}
+                >
+                  <Package size={16} />
+                  IIS Bundle
+                </button>
 
-                  {availableBundleTypes.individual_bundles.map(bundle => (
-                    <button 
-                      key={bundle.type}
-                      className={styles.quickActionButton}
-                      onClick={() => {
-                        if (bundle.type === 'private_key') {
-                          downloadAPI.downloadPrivateKey()
-                        } else if (bundle.type === 'certificate') {
-                          downloadAPI.downloadCertificate()
-                        } else if (bundle.type === 'ca_chain') {
-                          downloadAPI.downloadCAChain()
-                        }
-                      }}
-                    >
-                      <FileText size={16} />
-                      {bundle.name}
-                    </button>
-                  ))}
-                </div>
+                <button 
+                  className={`${styles.quickActionButton} ${!bundleReqs.pkcs7.enabled ? styles.disabled : ''}`}
+                  onClick={() => bundleReqs.pkcs7.enabled && downloadAPI.downloadPKCS7Bundle()}
+                  disabled={!bundleReqs.pkcs7.enabled}
+                  title={bundleReqs.pkcs7.tooltip}
+                >
+                  <Package size={16} />
+                  PKCS7 Bundle
+                </button>
+
+                <button 
+                  className={`${styles.quickActionButton} ${!bundleReqs.privateKey.enabled ? styles.disabled : ''}`}
+                  onClick={() => bundleReqs.privateKey.enabled && downloadAPI.downloadPrivateKey()}
+                  disabled={!bundleReqs.privateKey.enabled}
+                  title={bundleReqs.privateKey.tooltip}
+                >
+                  <FileText size={16} />
+                  Private Key
+                </button>
+
+                <button 
+                  className={`${styles.quickActionButton} ${!bundleReqs.certificate.enabled ? styles.disabled : ''}`}
+                  onClick={() => bundleReqs.certificate.enabled && downloadAPI.downloadCertificate()}
+                  disabled={!bundleReqs.certificate.enabled}
+                  title={bundleReqs.certificate.tooltip}
+                >
+                  <FileText size={16} />
+                  Certificate
+                </button>
+
+                <button 
+                  className={`${styles.quickActionButton} ${!bundleReqs.chain.enabled ? styles.disabled : ''}`}
+                  onClick={() => bundleReqs.chain.enabled && downloadAPI.downloadCAChain()}
+                  disabled={!bundleReqs.chain.enabled}
+                  title={bundleReqs.chain.tooltip}
+                >
+                  <FileText size={16} />
+                  Chain
+                </button>
               </div>
-            )}
+            </div>
 
             {/* Selection Summary */}
             <div className={styles.summary}>
@@ -414,11 +439,10 @@ const AdvancedModal = ({ onClose }) => {
                 <ul className={styles.summaryList}>
                   {Array.from(selectedComponents).map(componentId => {
                     const component = certificates.find(c => c.id === componentId)
-                    const format = formatSelections[componentId]
                     return (
                       <li key={componentId} className={styles.summaryItem}>
                         {getComponentIcon(component.type)}
-                        {component.filename} ({format || 'No format selected'})
+                        {getComponentDisplayName(component)} ({formatSelections[componentId] || 'No format selected'})
                       </li>
                     )
                   })}

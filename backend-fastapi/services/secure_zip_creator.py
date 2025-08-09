@@ -5,11 +5,8 @@ Provides AES-256 encrypted ZIP file generation with cryptographically secure pas
 UPDATED VERSION: Integrated with File Naming Service for standardized filenames
 """
 
-import os
-import io
 import secrets
 import string
-import zipfile
 import logging
 from typing import Tuple, Optional, Union, Mapping, Dict, List
 from datetime import datetime
@@ -17,6 +14,9 @@ from pathlib import Path
 import tempfile
 import shutil
 from contextlib import contextmanager
+
+from .file_naming_service import get_standard_filename
+from certificates.storage.session_pki_storage import PKIComponentType
 
 logger = logging.getLogger(__name__)
 
@@ -285,8 +285,6 @@ class SecureZipCreator:
         Create password-protected ZIP file for Apache with installation guides and manifest.
         Uses File Naming Service for standardized filenames.
         """
-        from .file_naming_service import get_standard_filename
-        from certificates.storage.session_pki_storage import PKIComponentType
         
         # Convert bytes to strings if needed
         if isinstance(certificate, bytes):
@@ -354,9 +352,7 @@ class SecureZipCreator:
         Create password-protected ZIP file for IIS with PKCS#12 bundle and manifest.
         Uses File Naming Service for standardized filenames.
         """
-        from .file_naming_service import get_standard_filename
-        from certificates.storage.session_pki_storage import PKIComponentType
-        
+
         # Use File Naming Service for standardized PKCS#12 filename
         p12_filename = get_standard_filename(PKIComponentType.CERTIFICATE, "PKCS12")
         
@@ -364,6 +360,10 @@ class SecureZipCreator:
             p12_filename: p12_bundle,
             'IIS_INSTALLATION_GUIDE.txt': iis_guide
         }
+
+        # Generate password FIRST if not provided
+        if password is None:
+            password = self.generate_secure_password()
         
         # Generate manifest using ACTUAL ZIP FILES instead of original components
         if session_id:
@@ -430,7 +430,6 @@ class SecureZipCreator:
         Returns:
             Tuple of (zip_data, password)
         """
-        from .file_naming_service import get_standard_filename
 
         zip_files = {}
 

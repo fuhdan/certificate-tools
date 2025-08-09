@@ -71,12 +71,16 @@ class DownloadService:
         # Prepare download package
         files = {}
         bundle_password = None
+
+        logger.debug(f"Preparing bundle of type: {config.bundle_type}")
         
         if config.bundle_type in [BundleType.APACHE, BundleType.NGINX]:
+            logger.debug("Taking Apache/Nginx path")
             files, selected_components = self._prepare_apache_nginx_bundle(
                 certificate_data, session, config, include_instructions
             )
         elif config.bundle_type == BundleType.IIS:
+            logger.debug("Taking IIS path")
             files, selected_components, bundle_password = self._prepare_p12_bundle(
                 certificate_data, session, config, include_instructions
             )
@@ -203,6 +207,8 @@ class DownloadService:
         
         # Generate PKCS#12 password
         bundle_password = secure_zip_creator.generate_secure_password()
+
+        logger.debug(f"Creating PKCS#12 with cert: {bool(certificate_data['certificate'])}, key: {bool(certificate_data['private_key'])}")
         
         # Create PKCS#12 bundle
         p12_bundle = self._create_pkcs12_bundle(
@@ -211,6 +217,7 @@ class DownloadService:
             certificate_data['ca_bundle'],
             bundle_password
         )
+        logger.debug(f"PKCS#12 bundle created successfully, size: {len(p12_bundle)}")
         
         # Choose filename extension based on whether IIS instructions are included
         if config.bundle_type == BundleType.IIS and include_instructions:
@@ -221,6 +228,8 @@ class DownloadService:
             p12_filename = get_standard_filename(PKIComponentType.CERTIFICATE, "PKCS12")
         
         files[p12_filename] = p12_bundle
+
+        logger.debug(f"P12 bundle files created: {list(files.keys())}")
         
         # Add instructions if requested
         if include_instructions:
@@ -356,7 +365,7 @@ class DownloadService:
                 p12_filename = None
                 p12_content = None
                 for filename, content in files.items():
-                    if filename.endswith(('.pfx', '.p12')):
+                    if filename.lower().endswith(('.pfx', '.p12')):
                         p12_filename = filename
                         p12_content = content
                         break
@@ -367,6 +376,7 @@ class DownloadService:
                 zip_data, password = secure_zip_creator.create_iis_bundle(
                     p12_bundle=p12_content,
                     iis_guide=files.get('IIS_INSTALLATION_GUIDE.txt', ''),
+                    password=None,
                     session_id=session_id,
                     selected_components=selected_components,
                     bundle_password=bundle_password

@@ -5,6 +5,7 @@ import logging
 from typing import Dict, List, Any, Optional, Tuple
 from enum import Enum
 from pydantic import BaseModel, Field
+from datetime import datetime
 
 from certificates.storage.session_pki_storage import session_pki_storage, PKIComponentType
 from services.secure_zip_creator import secure_zip_creator, SecureZipCreatorError
@@ -85,7 +86,7 @@ class DownloadService:
                 certificate_data, session, config, include_instructions
             )
         elif config.bundle_type == BundleType.CUSTOM:
-            files, selected_components = self._prepare_custom_bundle(
+            files, selected_components, bundle_password = self._prepare_custom_bundle(
                 session, config, include_instructions
             )
         else:
@@ -202,7 +203,7 @@ class DownloadService:
         return files, selected_components
     
     def _prepare_p12_bundle(self, certificate_data, session, config, include_instructions):
-        """Prepare PKCS#12 bundle (used for IIS and advanced downloads)"""
+        """Prepare PKCS#12 bundle using enhanced format_converter"""
         files = {}
         
         # Generate PKCS#12 password
@@ -210,8 +211,8 @@ class DownloadService:
 
         logger.debug(f"Creating PKCS#12 with cert: {bool(certificate_data['certificate'])}, key: {bool(certificate_data['private_key'])}")
         
-        # Create PKCS#12 bundle
-        p12_bundle = self._create_pkcs12_bundle(
+        # Use enhanced format_converter for PKCS#12 creation
+        p12_bundle = format_converter.create_pkcs12_bundle(
             certificate_data['certificate'],
             certificate_data['private_key'],
             certificate_data['ca_bundle'],
@@ -221,131 +222,148 @@ class DownloadService:
         
         # Choose filename extension based on whether IIS instructions are included
         if config.bundle_type == BundleType.IIS and include_instructions:
-            # Use Windows .pfx extension when IIS instructions are included
             p12_filename = get_standard_filename(PKIComponentType.CERTIFICATE, "PFX")
         else:
-            # Use OpenSSL .p12 extension by default
             p12_filename = get_standard_filename(PKIComponentType.CERTIFICATE, "PKCS12")
         
         files[p12_filename] = p12_bundle
 
-        logger.debug(f"P12 bundle files created: {list(files.keys())}")
-        
         # Add instructions if requested
         if include_instructions:
-            # Update certificate data with PKCS#12 filename for instructions
             certificate_data['filenames'] = {'pkcs12': p12_filename}
-            
-            iis_guide = self.instruction_generator.generate_instructions(
-                'iis', certificate_data
-            )
+            iis_guide = self.instruction_generator.generate_instructions('iis', certificate_data)
             if iis_guide:
                 files['IIS_INSTALLATION_GUIDE.txt'] = iis_guide
         
-        # Get selected components for manifest
         selected_components = list(session.components.values())
-        
         return files, selected_components, bundle_password
     
     def _prepare_custom_bundle(self, session, config, include_instructions):
-        """Prepare custom bundle with selected components and formats"""
+        """Prepare custom bundle using enhanced format_converter service"""
         files = {}
         selected_components = []
+        bundle_password = None  # For encrypted formats
         
         # Determine which components to include
         if config.component_selection:
-            # Use specified components
             component_ids = config.component_selection
         else:
-            # Use all components
             component_ids = list(session.components.keys())
         
-        # Process each selected component
+        # Process each selected component using format_converter
         for component_id in component_ids:
             if component_id not in session.components:
                 continue
                 
             component = session.components[component_id]
-            selected_components.append(component)
             
-            # Get format selection for this component
-            format_key = f"{component.type.type_name.lower()}_{component_id}"
-            selected_format = config.format_selections.get(format_key, 'pem')
+            # Get format selection for this component - try both formats
+            # Frontend might send just component_id as key
+            selected_format = config.format_selections.get(component_id, 'pem')
+            if selected_format == 'pem':  # If not found, try with type prefix
+                format_key = f"{component.type.type_name.lower()}_{component_id}"
+                selected_format = config.format_selections.get(format_key, 'pem')
             
-            # Use standardized filename
+            logger.debug(f"Component {component_id}: format={selected_format}")
+            
+            # Use standardized filename for selected format
             standard_filename = get_standard_filename(component.type, selected_format)
             
-            # Convert content to requested format
+            # Use existing format_converter for format conversion
             try:
                 if component.type.type_name == 'PrivateKey':
-                    # Use bundle_password for private key encryption if specified
                     converted_content = format_converter.convert_private_key(
                         component.content, selected_format, password=None
                     )
-                else:
+                    
+                    # Check if encryption password was generated
+                    if selected_format in ['pkcs8_encrypted', 'pem_encrypted']:
+                        # Get the generated password from format_converter
+                        from services.format_converter import get_last_encryption_password, get_last_password_type
+                        encryption_password = get_last_encryption_password()
+                        password_type = get_last_password_type()
+                        
+                        if encryption_password:
+                            bundle_password = encryption_password
+                            logger.info(f"🔐 Captured encryption password for {selected_format}: {encryption_password}")
+                            
+                            # Create password info file like IIS does
+                            password_filename = f"{standard_filename.replace('.p8', '_password.txt').replace('.pem', '_password.txt')}"
+                            password_content = f"Private Key Password: {encryption_password}\n\nFormat: {selected_format.upper()}\nPassword Type: {password_type}\nGenerated: {datetime.now().isoformat()}\n"
+                            files[password_filename] = password_content
+                            
+                            # Store password type for manifest
+                            self._bundle_password_type = password_type
+                            
+                elif component.type.type_name == 'Certificate':
                     converted_content = format_converter.convert_certificate(
                         component.content, selected_format
                     )
+                elif component.type in [PKIComponentType.ROOT_CA, PKIComponentType.INTERMEDIATE_CA]:
+                    converted_content = format_converter.convert_certificate(
+                        component.content, selected_format
+                    )
+                else:
+                    # CSR or other types
+                    converted_content = format_converter.convert_csr(
+                        component.content, selected_format
+                    )
                 
-                files[standard_filename] = converted_content
+                # Handle bytes/string conversion for ZIP storage
+                if selected_format.lower() in ['pem', 'pem_encrypted']:
+                    # PEM formats should be stored as strings
+                    if isinstance(converted_content, bytes):
+                        file_content = converted_content.decode('utf-8')
+                    else:
+                        file_content = converted_content
+                else:
+                    # DER, PKCS8, etc. should be stored as bytes
+                    file_content = converted_content
+                
+                files[standard_filename] = file_content
+                
+                # For manifest, always use string representation
+                if isinstance(file_content, bytes):
+                    # For binary formats, create a description for manifest
+                    manifest_content = f"Binary {selected_format.upper()} file ({len(file_content)} bytes)"
+                else:
+                    manifest_content = file_content
+                
+                # Create virtual component for manifest with actual ZIP filename
+                virtual_component = self._create_virtual_component(
+                    component, standard_filename, manifest_content, selected_format
+                )
+                selected_components.append(virtual_component)
                 
             except Exception as e:
                 logger.warning(f"Failed to convert component {component_id} to {selected_format}: {e}")
-                # Fall back to original content
+                # Fall back to original content and filename
                 files[component.filename] = component.content
+                selected_components.append(component)
         
-        return files, selected_components
+        # Handle special bundle formats using enhanced format_converter
+        bundle_files = format_converter.process_bundle_requests(session, config.format_selections)
+        files.update(bundle_files)
+        
+        return files, selected_components, bundle_password
     
-    def _create_pkcs12_bundle(self, cert_pem, key_pem, ca_bundle, password):
-        """Create PKCS#12 bundle from PEM components with proper type checking"""
-        from cryptography.hazmat.primitives import serialization
-        from cryptography.hazmat.primitives.serialization import pkcs12
-        from cryptography import x509
+    def _create_virtual_component(self, original_component, zip_filename, converted_content, format_type):
+        """Create virtual component with ZIP filename for manifest"""
+        import copy
+        from datetime import datetime
         
-        # Parse certificate
-        cert = x509.load_pem_x509_certificate(cert_pem.encode())
+        virtual_component = copy.deepcopy(original_component)
+        virtual_component.filename = zip_filename  # Use actual ZIP filename
+        virtual_component.content = converted_content
+        virtual_component.uploaded_at = datetime.now().isoformat()
         
-        # Parse private key
-        private_key = serialization.load_pem_private_key(
-            key_pem.encode(), password=None
-        )
+        # Update metadata with format information
+        if not virtual_component.metadata:
+            virtual_component.metadata = {}
+        virtual_component.metadata['converted_format'] = format_type
+        virtual_component.metadata['original_filename'] = original_component.filename
         
-        # Check if private key type is supported by PKCS#12
-        from cryptography.hazmat.primitives.asymmetric import rsa, dsa, ec, ed25519, ed448
-        
-        supported_key_types = (
-            rsa.RSAPrivateKey,
-            dsa.DSAPrivateKey, 
-            ec.EllipticCurvePrivateKey,
-            ed25519.Ed25519PrivateKey,
-            ed448.Ed448PrivateKey
-        )
-        
-        if not isinstance(private_key, supported_key_types):
-            raise ValueError(f"Private key type {type(private_key).__name__} is not supported for PKCS#12 bundles")
-        
-        # Parse CA certificates
-        ca_certs = []
-        if ca_bundle:
-            for ca_cert_pem in ca_bundle.split('-----END CERTIFICATE-----'):
-                if '-----BEGIN CERTIFICATE-----' in ca_cert_pem:
-                    ca_cert_full = ca_cert_pem + '-----END CERTIFICATE-----'
-                    try:
-                        ca_cert = x509.load_pem_x509_certificate(ca_cert_full.encode())
-                        ca_certs.append(ca_cert)
-                    except Exception as e:
-                        logger.warning(f"Failed to parse CA certificate: {e}")
-        
-        # Create PKCS#12 bundle 
-        p12_data = pkcs12.serialize_key_and_certificates(
-            name=b"certificate-bundle",
-            key=private_key,  # Now type-checked as supported
-            cert=cert,
-            cas=ca_certs if ca_certs else None,
-            encryption_algorithm=serialization.BestAvailableEncryption(password.encode())
-        )
-        
-        return p12_data
+        return virtual_component
     
     def _create_zip_bundle(self, files, session_id, bundle_type, selected_components, bundle_password=None):
         """Create password-protected ZIP bundle"""
@@ -382,8 +400,16 @@ class DownloadService:
                     bundle_password=bundle_password
                 )
             else:
-                # Custom bundle or other types - use a simple file-based approach
-                zip_data, password = secure_zip_creator.create_protected_zip(files)
+                # CUSTOM bundle - dedicated clean implementation
+                bundle_password_type = getattr(self, '_bundle_password_type', None)
+                zip_data, password = secure_zip_creator.create_custom_bundle(
+                    files=files,
+                    bundles={},  # No sub-bundles for custom downloads
+                    session_id=session_id,
+                    selected_components=selected_components,
+                    bundle_password=bundle_password,
+                    bundle_password_type=bundle_password_type
+                )
             
             return zip_data, password
             

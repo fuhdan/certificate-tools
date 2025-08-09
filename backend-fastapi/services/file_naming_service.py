@@ -43,8 +43,12 @@ def get_standard_filename(component_type, file_format: str) -> str:
         logger.debug("Matched component type: PRIVATE_KEY")
         if format_lower == 'der':
             filename = "private-key.der"
-        elif format_lower in ['p8', 'pkcs8']:
+        elif format_lower in ['p8', 'pkcs8', 'pkcs8_encrypted']:
+            # All PKCS#8 variants use .p8 extension
             filename = "private-key.p8"
+        elif format_lower in ['pem_encrypted']:
+            # Encrypted PEM still uses .pem extension
+            filename = "private-key.pem"
         else:
             filename = "private-key.pem"
         logger.debug(f"Returning filename: {filename}")

@@ -21,7 +21,6 @@ import AdvancedModal from './AdvancedModal'
 import SecurePasswordModal from './SecurePasswordModal'
 import NotificationToast from '../common/NotificationToast'
 import { useCertificates } from '../../contexts/CertificateContext'
-import { sessionManager } from '../../services/sessionManager'
 import { downloadAPI } from '../../services/api'
 import api from '../../services/api'
 
@@ -74,12 +73,6 @@ const FloatingPanel = ({ isAuthenticated }) => {
         console.log('🔍 Starting connection check...')
         const response = await api.get('/health')
         
-        console.log('✅ Connection check SUCCESS:')
-        console.log('  - Status:', response.status)
-        console.log('  - Data:', response.data)
-        console.log('  - response.data.status:', response.data.status)
-        console.log('  - Type of response.data.status:', typeof response.data.status)
-        
         // Ensure exact string matching
         if (response.data.status === 'online') {
           setConnectionStatus('connected')
@@ -89,13 +82,6 @@ const FloatingPanel = ({ isAuthenticated }) => {
           console.log('⚠️ Status set to: disconnected (unexpected response.data.status)')
         }
       } catch (error) {
-        console.log('❌ Connection check FAILED:')
-        console.log('  - Error type:', error.constructor.name)
-        console.log('  - Error message:', error.message)
-        console.log('  - Error response:', error.response)
-        console.log('  - Error status:', error.response?.status)
-        console.log('  - Error data:', error.response?.data)
-        
         setConnectionStatus('disconnected')
         console.log('❌ Status set to: disconnected (due to error)')
       }
@@ -399,13 +385,6 @@ const FloatingPanel = ({ isAuthenticated }) => {
         width: `${panelSize.width}px`,
         height: `${panelSize.height}px`
       }
-
-    // Put this debug code right here, just before the return statement
-    console.log('🎨 Rendering header with:')
-    console.log('  - isMinimized:', isMinimized)
-    console.log('  - connectionStatus:', connectionStatus)
-    console.log('  - Should be connected class:', isMinimized && connectionStatus === 'connected')
-    console.log('  - Should be disconnected class:', isMinimized && connectionStatus === 'disconnected')
   return (
     <>
       <div

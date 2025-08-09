@@ -405,88 +405,73 @@ class SecureZipCreator:
         logger.debug(f"Estimated memory usage: {estimated_memory:.0f} bytes")
         return int(estimated_memory)
 
-    def create_advanced_bundle(
+    def create_custom_bundle(
         self,
-        files: Dict[str, Union[bytes, str]],
-        bundles: Dict[str, Union[bytes, str]],
-        password: Optional[str] = None,
+        files: Dict[str, Union[bytes, str]], 
+        bundles: Optional[Dict[str, Union[bytes, str]]] = None,
         session_id: Optional[str] = None,
         selected_components: Optional[List] = None,
-        readme: Optional[str] = None,
-        bundle_password: Optional[str] = None  # NEW: Accept encryption password
+        password: Optional[str] = None,
+        bundle_password: Optional[str] = None,
+        bundle_password_type: Optional[str] = None
     ) -> Tuple[bytes, str]:
         """
-        Create password-protected ZIP file for advanced downloads with manifest.
-
+        Create password-protected ZIP file for custom downloads with manifest.
+        Uses File Naming Service for standardized filenames.
+        
         Args:
-            files: Dictionary of filename -> content for individual files
-            bundles: Dictionary of bundle_name -> bundle_data for bundled files
-            password: Optional password
-            session_id: Session identifier for manifest
-            selected_components: List of PKI components for manifest generation
-            readme: Optional README content (DEPRECATED - not used)
-            bundle_password: Optional encryption password for encrypted files (NEW)
-
+            files: Dictionary of filename -> content for the ZIP
+            bundles: Dictionary of bundle_name -> bundle_data (optional)
+            session_id: Session identifier for manifest generation
+            selected_components: List of virtual PKI components (with ZIP filenames)
+            password: Optional ZIP password (generated if None)
+            bundle_password: Optional bundle password (for encrypted components)
+            bundle_password_type: Type of bundle password (PKCS#8, PEM, P12)
+            
         Returns:
             Tuple of (zip_data, password)
         """
-
-        zip_files = {}
-
-        # Generate password FIRST so it's available for manifest
+        
+        if bundles is None:
+            bundles = {}
+        
+        # Combine files and bundles
+        all_files = dict(files)
+        all_files.update(bundles)
+        
+        # Generate password FIRST if not provided
         if password is None:
             password = self.generate_secure_password()
-
-        logger.debug(f"🔐 DEBUG: ZIP password for manifest: {password}")
-        if bundle_password:
-            logger.debug(f"🔐 DEBUG: Bundle password for manifest: {bundle_password}")
-
-        # Add individual files using standard naming service
-        for original_filename, content in files.items():
-            zip_files[original_filename] = content
-
-        # Add bundles - can be password-protected sub-files
-        for bundle_name, bundle_data in bundles.items():
-            if bundle_name.endswith('.zip'):
-                # Bundle is a ZIP file - add password info
-                password_filename = bundle_name.replace('.zip', '_password.txt')
-                password_info = f"Password for {bundle_name}: BUNDLE_PASSWORD_HERE\n\nGenerated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}"
-                zip_files[password_filename] = password_info
-                zip_files[bundle_name] = bundle_data
-            else:
-                # Add directly to root
-                zip_files[bundle_name] = bundle_data
-
-        # Generate manifest if components provided - NOW with correct passwords
-        if selected_components and session_id:
-            logger.debug(f"🔐 DEBUG: Passing ZIP password to manifest: {password}")
-            logger.debug(f"🔐 DEBUG: Passing bundle password to manifest: {bundle_password}")
-            manifest = self._generate_content_manifest(
-                selected_components, 
-                "Advanced Selection", 
+        
+        # Generate manifest using virtual components with actual ZIP filenames
+        if session_id and selected_components:
+            # Create a custom manifest generator call that handles different password types
+            manifest = self._generate_custom_content_manifest(
+                selected_components,  # Already have ZIP filenames from _prepare_custom_bundle
+                "Custom Selection", 
                 session_id, 
-                password,  # Pass the actual ZIP password
-                bundle_password  # Pass the encryption password as bundle_password (NEW)
+                password,
+                bundle_password,
+                bundle_password_type
             )
-            zip_files['CONTENT_MANIFEST.txt'] = manifest
+            all_files['CONTENT_MANIFEST.txt'] = manifest
+        
+        logger.info(f"Creating custom bundle with {len(all_files)} files")
+        return self.create_protected_zip(all_files, password)
 
-        # Use the SAME create_protected_zip method as Apache/IIS (with pyzipper AES-256)
-        logger.info("Creating AES-256 encrypted advanced bundle with manifest")
-        return self.create_protected_zip(zip_files, password)
+        def _create_advanced_download_info(self, zip_password: str) -> str:
+            """Create advanced download information file using instruction generator"""
 
-    def _create_advanced_download_info(self, zip_password: str) -> str:
-        """Create advanced download information file using instruction generator"""
+            # Use the instruction generator for consistent formatting
+            from services.instruction_generator import InstructionGenerator
+            instruction_generator = InstructionGenerator()
 
-        # Use the instruction generator for consistent formatting
-        from services.instruction_generator import InstructionGenerator
-        instruction_generator = InstructionGenerator()
-
-        # We don't have session_id or component_count here, so use fallback
-        return instruction_generator.generate_advanced_download_info(
-            session_id="SESSION", 
-            component_count=1, 
-            zip_password=zip_password
-        )
+            # We don't have session_id or component_count here, so use fallback
+            return instruction_generator.generate_advanced_download_info(
+                session_id="SESSION", 
+                component_count=1, 
+                zip_password=zip_password
+            )
 
     def _generate_content_manifest(
         self, 
@@ -662,6 +647,58 @@ class SecureZipCreator:
         manifest_components.append(iis_guide_component)
 
         return manifest_components
+
+    def _generate_custom_content_manifest(
+        self, 
+        selected_components: List, 
+        bundle_type: str, 
+        session_id: str, 
+        zip_password: Optional[str] = None,
+        bundle_password: Optional[str] = None,
+        bundle_password_type: Optional[str] = None
+    ) -> str:
+        """Generate content manifest with custom password type handling"""
+        from services.content_manifest_generator import ContentManifestGenerator
+        
+        manifest_generator = ContentManifestGenerator()
+        
+        # Generate actual password if not provided
+        actual_zip_password = zip_password or "WILL_BE_GENERATED"
+        
+        # Create custom manifest with proper password type
+        if bundle_password and bundle_password_type:
+            # Temporarily monkey-patch the manifest generator to handle custom password types
+            original_prepare = manifest_generator._prepare_template_variables
+            
+            def custom_prepare_template_variables(selected_components, bundle_type, session_id, zip_password, bundle_password):
+                variables = original_prepare(selected_components, bundle_type, session_id, zip_password, bundle_password)
+                
+                # Override the bundle password line for custom types
+                if bundle_password:
+                    if bundle_password_type == "PKCS#8":
+                        variables['bundle_password_line'] = f"- PKCS#8 Private Key Password: {bundle_password}"
+                        variables['bundle_password_security'] = "- Store the PKCS#8 password securely for private key decryption"
+                    elif bundle_password_type == "PEM":
+                        variables['bundle_password_line'] = f"- PEM Private Key Password: {bundle_password}"
+                        variables['bundle_password_security'] = "- Store the PEM password securely for private key decryption"
+                    else:
+                        variables['bundle_password_line'] = f"- Private Key Password: {bundle_password}"
+                        variables['bundle_password_security'] = "- Store the private key password securely"
+                
+                return variables
+            
+            manifest_generator._prepare_template_variables = custom_prepare_template_variables
+        
+        manifest = manifest_generator.generate_manifest(
+            selected_components=selected_components,
+            bundle_type=bundle_type,
+            session_id=session_id,
+            zip_password=actual_zip_password,
+            bundle_password=bundle_password
+        )
+        
+        logger.info(f"Generated custom content manifest for {bundle_type} bundle")
+        return manifest
 
 # Global service instance
 secure_zip_creator = SecureZipCreator()

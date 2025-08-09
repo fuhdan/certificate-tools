@@ -488,6 +488,7 @@ const AdvancedModal = ({ onClose }) => {
         <SecurePasswordModal
           password={downloadResult.zipPassword}
           encryptionPassword={downloadResult.encryptionPassword}
+          bundleType={downloadResult.bundleType}  // ← ADD THIS LINE
           onClose={handlePasswordModalClose}
           onCopyComplete={() => {
             console.log('Password copied from advanced download')

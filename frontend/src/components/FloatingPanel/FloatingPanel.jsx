@@ -524,6 +524,7 @@ const FloatingPanel = ({ isAuthenticated }) => {
         <SecurePasswordModal
           password={zipPassword}
           encryptionPassword={encryptionPassword}
+          bundleType="iis"  // ← ADD THIS LINE
           onClose={handlePasswordModalClose}
           onCopyComplete={handlePasswordCopyComplete}
         />

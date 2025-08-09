@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { X, Lock, Copy, Check, Eye, EyeOff, AlertCircle, Shield, Key } from 'lucide-react'
 import styles from './SecurePasswordModal.module.css'
 
-const SecurePasswordModal = ({ password, encryptionPassword, onClose, onCopyComplete }) => {
+const SecurePasswordModal = ({ password, encryptionPassword, onClose, onCopyComplete, bundleType }) => {
   const [copiedZip, setCopiedZip] = useState(false)
   const [copiedP12, setCopiedP12] = useState(false)
   const [showZipPassword, setShowZipPassword] = useState(false)
@@ -15,6 +15,33 @@ const SecurePasswordModal = ({ password, encryptionPassword, onClose, onCopyComp
 
   // Determine if this is dual password mode (both ZIP and P12)
   const isDualMode = !!(password && encryptionPassword)
+
+  // Helper function to determine instruction content based on bundle type
+  const getInstructionContent = (isDualMode, bundleType) => {
+    // Server bundles with installation guides
+    const serverBundles = ['apache', 'nginx', 'iis']
+    const hasInstallationGuides = bundleType && serverBundles.includes(bundleType.toLowerCase())
+    
+    if (isDualMode) {
+      return (
+        <ol>
+          <li>Use ZIP password to extract the downloaded file</li>
+          <li>Use encryption password when importing or using the encrypted content</li>
+          <li>Keep both passwords secure!</li>
+          <li>The archive contains your {hasInstallationGuides ? 'certificate bundle and installation guides' : 'selected files'}</li>
+        </ol>
+      )
+    } else {
+      return (
+        <ol>
+          <li>Copy the password above to your clipboard</li>
+          <li>Extract the downloaded ZIP file using your preferred tool</li>
+          <li>When prompted for a password, paste the copied password</li>
+          <li>The archive contains your {hasInstallationGuides ? 'certificates and installation guides' : 'selected files'}</li>
+        </ol>
+      )
+    }
+  }
 
   useEffect(() => {
     // Auto-close timer
@@ -244,21 +271,7 @@ const SecurePasswordModal = ({ password, encryptionPassword, onClose, onCopyComp
 
             <div className={styles.instructions}>
               <h3>Instructions:</h3>
-              {isDualMode ? (
-                <ol>
-                  <li>Use ZIP password to extract the downloaded file</li>
-                  <li>Use P12 password when importing certificate in IIS</li>
-                  <li>Keep both passwords secure!</li>
-                  <li>The archive contains your certificate bundle and installation guides</li>
-                </ol>
-              ) : (
-                <ol>
-                  <li>Copy the password above to your clipboard</li>
-                  <li>Extract the downloaded ZIP file using your preferred tool</li>
-                  <li>When prompted for a password, paste the copied password</li>
-                  <li>The archive contains your certificates and installation guides</li>
-                </ol>
-              )}
+              {getInstructionContent(isDualMode, bundleType)}
             </div>
           </div>
 

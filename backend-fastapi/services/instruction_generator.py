@@ -151,7 +151,6 @@ class InstructionGenerator:
             "- This ZIP file is password-protected using AES-256 encryption",
             "- Store the password securely and separately from the ZIP file",
             "- Individual PKCS#12 bundles may have additional passwords",
-            "- Check for *_password.txt files for bundle-specific passwords",
             "",
             "PACKAGE CONTENTS:",
             "- Individual PKI components in requested formats",

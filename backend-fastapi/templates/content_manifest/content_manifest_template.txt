@@ -46,18 +46,6 @@ FILE VERIFICATION & HASH CHECKING
 - Always verify hashes in a secure environment
 
 ================================================================================
-FILE VERIFICATION & HASH CHECKING
-================================================================================
-
-🔒 VERIFY FILE INTEGRITY BEFORE USE:
-
-LINUX / UNIX / macOS Verification:
-[Linux commands here]
-
-WINDOWS PowerShell Verification:
-[Windows commands here]
-
-================================================================================
 FILE DESCRIPTIONS
 ================================================================================
 

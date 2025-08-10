@@ -1,6 +1,6 @@
 // frontend/src/services/api.js
-// STEP 4: Updated to use unified download endpoint
-// All downloads now use /downloads/download/{bundle_type}/{session_id}
+// STEP 3: Frontend Migration Complete - Individual components now use custom endpoint
+// Removed individual component endpoints, replaced with custom endpoint calls
 
 import axios from 'axios'
 import { sessionManager } from './sessionManager'
@@ -146,6 +146,38 @@ function mapPKIComponentToCertificate(component) {
   }
 }
 
+// ===== HELPER FUNCTIONS FOR CUSTOM DOWNLOADS =====
+
+/**
+ * Get component ID by type from current session
+ */
+async function getComponentIdByType(targetType) {
+  try {
+    const certificates = await certificateAPI.getCertificates()
+    const component = certificates.certificates.find(cert => cert.type === targetType)
+    return component?.id || null
+  } catch (error) {
+    console.error(`Error finding ${targetType} component:`, error)
+    return null
+  }
+}
+
+/**
+ * Get CA component IDs from current session
+ */
+async function getCAComponentIds() {
+  try {
+    const certificates = await certificateAPI.getCertificates()
+    const caComponents = certificates.certificates.filter(cert => 
+      ['IssuingCA', 'IntermediateCA', 'RootCA'].includes(cert.type)
+    )
+    return caComponents.map(cert => cert.id)
+  } catch (error) {
+    console.error('Error finding CA components:', error)
+    return []
+  }
+}
+
 // ===== UNIFIED DOWNLOAD API =====
 // All downloads now use the unified endpoint
 
@@ -208,55 +240,24 @@ export const downloadAPI = {
   },
 
   /**
-   * Download PKCS7 bundle
-   * @param {string} format - Format for PKCS7 (pem, der)
-   */
-  async downloadPKCS7Bundle(format = 'pem') {
-    try {
-      const sessionId = sessionManager.getSessionId()
-      const result = await this.downloadBundle('pkcs7', {
-        formats: { pkcs7: format },
-        includeInstructions: false
-      })
-      
-      console.log('PKCS7 bundle downloaded successfully')
-      return result
-    } catch (error) {
-      console.error('Error downloading PKCS7 bundle:', error)
-      throw new Error(error.response?.data?.detail || 'PKCS7 download failed')
-    }
-  },
-
-  /**
-   * Download PKCS12 bundle
-   * @param {string} encryption - Encryption type (encrypted, unencrypted)
-   */
-  async downloadPKCS12Bundle(encryption = 'encrypted') {
-    try {
-      const sessionId = sessionManager.getSessionId()
-      const result = await this.downloadBundle('pkcs12', {
-        formats: { pkcs12: encryption },
-        includeInstructions: false
-      })
-      
-      console.log('PKCS12 bundle downloaded successfully')
-      return result
-    } catch (error) {
-      console.error('Error downloading PKCS12 bundle:', error)
-      throw new Error(error.response?.data?.detail || 'PKCS12 download failed')
-    }
-  },
-
-  /**
-   * Download private key only
+   * Download private key only - UPDATED: Now uses custom endpoint
    * @param {string} format - Format for private key (pem, der, pkcs8, pkcs8_encrypted, pem_encrypted)
    */
   async downloadPrivateKey(format = 'pem') {
     try {
-      const sessionId = sessionManager.getSessionId()
-      const result = await this.downloadBundle('private_key', {
-        formats: { private_key: format }
-      })
+      const componentId = await getComponentIdByType('PrivateKey')
+      if (!componentId) {
+        throw new Error('No private key found in session')
+      }
+
+      const config = {
+        components: [componentId],
+        formats: { [componentId]: format },
+        includeInstructions: false
+      }
+      
+      console.log('Downloading private key with custom endpoint:', config)
+      const result = await this.downloadCustomBundle(config)
       
       console.log('Private key downloaded successfully')
       return result
@@ -267,15 +268,24 @@ export const downloadAPI = {
   },
 
   /**
-   * Download certificate only
+   * Download certificate only - UPDATED: Now uses custom endpoint
    * @param {string} format - Format for certificate (pem, der)
    */
   async downloadCertificate(format = 'pem') {
     try {
-      const sessionId = sessionManager.getSessionId()
-      const result = await this.downloadBundle('certificate', {
-        formats: { certificate: format }
-      })
+      const componentId = await getComponentIdByType('Certificate')
+      if (!componentId) {
+        throw new Error('No certificate found in session')
+      }
+
+      const config = {
+        components: [componentId],
+        formats: { [componentId]: format },
+        includeInstructions: false
+      }
+      
+      console.log('Downloading certificate with custom endpoint:', config)
+      const result = await this.downloadCustomBundle(config)
       
       console.log('Certificate downloaded successfully')
       return result
@@ -286,21 +296,119 @@ export const downloadAPI = {
   },
 
   /**
-   * Download CA certificate chain
+   * Download CA certificate chain - UPDATED: Now uses custom endpoint
    * @param {string} format - Format for CA certificates (pem, der)
    */
   async downloadCAChain(format = 'pem') {
     try {
-      const sessionId = sessionManager.getSessionId()
-      const result = await this.downloadBundle('ca_chain', {
-        formats: { ca_chain: format }
+      const componentIds = await getCAComponentIds()
+      if (componentIds.length === 0) {
+        throw new Error('No CA certificates found in session')
+      }
+
+      // Create format mapping for all CA components
+      const formats = {}
+      componentIds.forEach(id => {
+        formats[id] = format
       })
+
+      const config = {
+        components: componentIds,
+        formats: formats,
+        includeInstructions: false
+      }
+      
+      console.log('Downloading CA chain with custom endpoint:', config)
+      const result = await this.downloadCustomBundle(config)
       
       console.log('CA chain downloaded successfully')
       return result
     } catch (error) {
       console.error('Error downloading CA chain:', error)
       throw new Error(error.response?.data?.detail || 'CA chain download failed')
+    }
+  },
+
+  /**
+   * Download PKCS7 bundle - UPDATED: Now uses custom endpoint with chain creation
+   * @param {string} format - Format for PKCS7 (pem, der)
+   */
+  async downloadPKCS7Bundle(format = 'pem') {
+    try {
+      // Get all certificate components (end-entity + CA certificates)
+      const certificates = await certificateAPI.getCertificates()
+      const certComponents = certificates.certificates.filter(cert => 
+        cert.type === 'Certificate' || ['IssuingCA', 'IntermediateCA', 'RootCA'].includes(cert.type)
+      )
+      
+      if (certComponents.length === 0) {
+        throw new Error('No certificates found for PKCS7 bundle')
+      }
+
+      // Create format mapping for all certificates
+      const formats = {}
+      certComponents.forEach(cert => {
+        formats[cert.id] = format
+      })
+
+      // Use special bundle format key for PKCS7
+      formats['bundle_pkcs7'] = format
+
+      const config = {
+        components: certComponents.map(cert => cert.id),
+        formats: formats,
+        includeInstructions: false
+      }
+      
+      console.log('PKCS7 bundle downloaded successfully with custom endpoint')
+      return await this.downloadCustomBundle(config)
+    } catch (error) {
+      console.error('Error downloading PKCS7 bundle:', error)
+      throw new Error(error.response?.data?.detail || 'PKCS7 download failed')
+    }
+  },
+
+  /**
+   * Download PKCS12 bundle - UPDATED: Now uses custom endpoint with bundle creation
+   * @param {string} encryption - Encryption type (encrypted, unencrypted)
+   */
+  async downloadPKCS12Bundle(encryption = 'encrypted') {
+    try {
+      // Get required components for PKCS12
+      const certificates = await certificateAPI.getCertificates()
+      const certificate = certificates.certificates.find(cert => cert.type === 'Certificate')
+      const privateKey = certificates.certificates.find(cert => cert.type === 'PrivateKey')
+      
+      if (!certificate) {
+        throw new Error('Certificate required for PKCS12 bundle')
+      }
+      if (!privateKey) {
+        throw new Error('Private key required for PKCS12 bundle')
+      }
+
+      // Find CA certificates
+      const caCerts = certificates.certificates.filter(cert => 
+        ['IssuingCA', 'IntermediateCA', 'RootCA'].includes(cert.type)
+      )
+
+      // Build component list and formats
+      const componentIds = [certificate.id, privateKey.id, ...caCerts.map(ca => ca.id)]
+      const formats = {}
+      
+      // Use special bundle format key for PKCS12
+      formats['bundle_pkcs12'] = encryption
+
+      const config = {
+        components: componentIds,
+        formats: formats,
+        includeInstructions: false
+      }
+      
+      console.log('PKCS12 bundle downloaded successfully with custom endpoint')
+      return await this.downloadCustomBundle(config)
+    } catch (error) {
+      console.error('Error downloading PKCS12 bundle:', error)
+      throw new Error(error.response?.data?.detail || 'PKCS12 download failed')
     }
   },
 
@@ -437,7 +545,9 @@ export const advancedDownloadAPI = {
         success: true,
         session_id: bundleTypes.session_id,
         components: [], // Would need to be populated from session data
-        bundle_options: bundleTypes.individual_bundles,
+        bundle_options: bundleTypes.custom_available ? [
+          { type: 'custom', name: 'Custom Selection', description: 'Select specific components and formats' }
+        ] : [],
         message: "Use downloadAPI.getAvailableBundleTypes() for full information"
       }
     } catch (error) {

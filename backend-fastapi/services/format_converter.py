@@ -324,7 +324,6 @@ class FormatConverter:
                     )
                     
                     bundle_files['certificate.p12'] = pkcs12_content
-                    bundle_files['certificate_p12_password.txt'] = f"PKCS#12 Password: {bundle_password}\n"
                     logger.info("Added PKCS#12 bundle to download")
                     
             except Exception as e:

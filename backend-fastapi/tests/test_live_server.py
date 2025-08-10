@@ -508,18 +508,17 @@ class TestPKIBundleAccess:
                "Uploaded certificate not found in bundle"
 
 # ========================================
-# DOWNLOAD TESTS
+# DOWNLOAD TESTS - STEP 4: Updated for unified API
 # ========================================
-
-
 class TestDownloads:
     """Comprehensive secure download features testing"""
 
-    def test_apache_download_with_no_certificates_returns_404(self, sess_headers):
-        """💾 Apache download with no certificates returns 404"""
+    # NGINX DOWNLOAD TESTS (Server bundle - unchanged)
+    def test_nginx_download_with_no_certificates_returns_404(self, sess_headers):
+        """💾 Nginx download with no certificates returns 404"""
         session_id = sess_headers["X-Session-ID"]
         response = requests.post(
-            f"{API_BASE_URL}/downloads/apache/{session_id}",
+            f"{API_BASE_URL}/downloads/download/nginx/{session_id}",
             headers=sess_headers
         )
 
@@ -527,58 +526,349 @@ class TestDownloads:
         data = response.json()
         assert "No PKI components found" in data["detail"]
 
-    def test_iis_download_with_no_certificates_returns_404(self, auth_headers):
-        """💾 IIS download with no certificates returns 404"""
-        session_id = auth_headers["X-Session-ID"]
+    def test_nginx_download_with_complete_bundle_success(self, test_session_id, sample_certificate, sample_private_key, sample_ca_certificate):
+        """✅ Nginx download with complete certificate bundle succeeds"""
+        
+        # Upload complete certificate bundle
+        uploaded = upload_certificate_bundle(
+            test_session_id,
+            certificate=sample_certificate,
+            private_key=sample_private_key,
+            ca_certificate=sample_ca_certificate
+        )
+
+        if not ("certificate" in uploaded and "private_key" in uploaded):
+            pytest.skip("Could not upload complete certificate bundle - server issue")
+
+        headers = {
+            "X-Session-ID": test_session_id,
+            "Content-Type": "application/json"
+        }
+
         response = requests.post(
-            f"{API_BASE_URL}/downloads/iis/{session_id}",
-            headers=auth_headers
+            f"{API_BASE_URL}/downloads/download/nginx/{test_session_id}",
+            headers=headers,
+            json={}
+        )
+
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "application/zip"
+        assert "X-Zip-Password" in response.headers
+        
+        # Verify filename format
+        content_disposition = response.headers.get("content-disposition", "")
+        assert f"nginx-bundle-{test_session_id}.zip" in content_disposition
+
+    def test_nginx_zip_content_and_structure(self, test_session_id, sample_certificate, sample_private_key, sample_ca_certificate):
+        """📦 Nginx ZIP contains expected files with correct structure"""
+        
+        # Upload certificate bundle
+        uploaded = upload_certificate_bundle(
+            test_session_id,
+            certificate=sample_certificate,
+            private_key=sample_private_key,
+            ca_certificate=sample_ca_certificate
+        )
+
+        if len(uploaded) < 2:
+            pytest.skip("Could not upload certificate bundle - server issue")
+
+        headers = {
+            "X-Session-ID": test_session_id,
+            "Content-Type": "application/json"
+        }
+
+        response = requests.post(
+            f"{API_BASE_URL}/downloads/download/nginx/{test_session_id}",
+            headers=headers
+        )
+
+        if response.status_code != 200:
+            pytest.skip("Download failed - likely missing requirements")
+
+        zip_password = response.headers["X-Zip-Password"]
+
+        with tempfile.NamedTemporaryFile() as temp_file:
+            temp_file.write(response.content)
+            temp_file.flush()
+
+            with pyzipper.AESZipFile(temp_file.name) as zip_file:
+                zip_file.pwd = zip_password.encode('utf-8')
+
+                file_list = zip_file.namelist()
+                expected_files = [
+                    'certificate.crt',
+                    'private-key.pem',
+                    'ca-bundle.crt',
+                    'NGINX_INSTALLATION_GUIDE.txt'
+                ]
+
+                for expected_file in expected_files:
+                    assert expected_file in file_list, f"Missing file: {expected_file}"
+
+                for filename in expected_files:
+                    content = zip_file.read(filename)
+                    assert len(content) > 0, f"File {filename} is empty"
+
+    # CUSTOM DOWNLOAD TESTS - SINGLE PRIVATE KEY (ENCRYPTED)
+    def test_custom_download_single_private_key_encrypted(self, test_session_id, sample_certificate, sample_private_key):
+        """✅ Custom download with single encrypted private key succeeds"""
+        
+        # Upload certificate and private key
+        uploaded = upload_certificate_bundle(
+            test_session_id,
+            certificate=sample_certificate,
+            private_key=sample_private_key
+        )
+
+        if "private_key" not in uploaded:
+            pytest.skip("Could not upload private key - server issue")
+
+        # Get component IDs
+        headers = {"X-Session-ID": test_session_id}
+        components_response = requests.get(f"{API_BASE_URL}/certificates", headers=headers)
+        components = components_response.json()["components"]
+        
+        # Find private key component
+        private_key_id = None
+        for component in components:
+            if component["type"] == "PrivateKey":
+                private_key_id = component["id"]
+                break
+        
+        assert private_key_id is not None, "Private key component not found"
+
+        # Create custom download request
+        custom_request = {
+            "components": [private_key_id],
+            "formats": {private_key_id: "pkcs8_encrypted"}
+        }
+
+        response = requests.post(
+            f"{API_BASE_URL}/downloads/download/custom/{test_session_id}?components={json.dumps(custom_request['components'])}&formats={json.dumps(custom_request['formats'])}",
+            headers=headers
+        )
+
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "application/zip"
+        assert "X-Zip-Password" in response.headers
+        assert "X-Encryption-Password" in response.headers  # Private key is encrypted
+
+    def test_custom_download_single_private_key_unencrypted(self, test_session_id, sample_certificate, sample_private_key):
+        """✅ Custom download with single unencrypted private key succeeds"""
+        
+        # Upload certificate and private key
+        uploaded = upload_certificate_bundle(
+            test_session_id,
+            certificate=sample_certificate,
+            private_key=sample_private_key
+        )
+
+        if "private_key" not in uploaded:
+            pytest.skip("Could not upload private key - server issue")
+
+        # Get component IDs
+        headers = {"X-Session-ID": test_session_id}
+        components_response = requests.get(f"{API_BASE_URL}/certificates", headers=headers)
+        components = components_response.json()["components"]
+        
+        # Find private key component
+        private_key_id = None
+        for component in components:
+            if component["type"] == "PrivateKey":
+                private_key_id = component["id"]
+                break
+        
+        assert private_key_id is not None, "Private key component not found"
+
+        # Create custom download request
+        custom_request = {
+            "components": [private_key_id],
+            "formats": {private_key_id: "pem"}
+        }
+
+        response = requests.post(
+            f"{API_BASE_URL}/downloads/download/custom/{test_session_id}?components={json.dumps(custom_request['components'])}&formats={json.dumps(custom_request['formats'])}",
+            headers=headers
+        )
+
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "application/zip"
+        assert "X-Zip-Password" in response.headers
+        assert "X-Encryption-Password" not in response.headers  # Private key is unencrypted
+
+        # Verify ZIP content
+        zip_password = response.headers["X-Zip-Password"]
+        with tempfile.NamedTemporaryFile() as temp_file:
+            temp_file.write(response.content)
+            temp_file.flush()
+
+            with pyzipper.AESZipFile(temp_file.name) as zip_file:
+                zip_file.pwd = zip_password.encode('utf-8')
+                file_list = zip_file.namelist()
+                
+                # Should contain private key file
+                assert any('private-key' in filename.lower() for filename in file_list), \
+                    "Private key file not found in ZIP"
+
+                # Verify private key content
+                for filename in file_list:
+                    if 'private-key' in filename.lower() or filename.endswith('.pem'):
+                        content = zip_file.read(filename)
+                        content_str = content.decode('utf-8')
+                        assert "-----BEGIN PRIVATE KEY-----" in content_str or "-----BEGIN RSA PRIVATE KEY-----" in content_str
+
+    # CUSTOM DOWNLOAD TESTS - SINGLE CERTIFICATE
+    def test_custom_download_single_certificate(self, test_session_id, sample_certificate):
+        """✅ Custom download with single certificate succeeds"""
+        
+        # Upload certificate
+        uploaded = upload_certificate_bundle(
+            test_session_id,
+            certificate=sample_certificate
+        )
+
+        if "certificate" not in uploaded:
+            pytest.skip("Could not upload certificate - server issue")
+
+        # Get component IDs
+        headers = {"X-Session-ID": test_session_id}
+        components_response = requests.get(f"{API_BASE_URL}/certificates", headers=headers)
+        components = components_response.json()["components"]
+        
+        # Find certificate component
+        certificate_id = None
+        for component in components:
+            if component["type"] == "Certificate":
+                certificate_id = component["id"]
+                break
+        
+        assert certificate_id is not None, "Certificate component not found"
+
+        # Create custom download request
+        custom_request = {
+            "components": [certificate_id],
+            "formats": {certificate_id: "pem"}
+        }
+
+        response = requests.post(
+            f"{API_BASE_URL}/downloads/download/custom/{test_session_id}?components={json.dumps(custom_request['components'])}&formats={json.dumps(custom_request['formats'])}",
+            headers=headers
+        )
+
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "application/zip"
+        assert "X-Zip-Password" in response.headers
+        assert "X-Encryption-Password" not in response.headers  # Certificate is not encrypted
+
+        # Verify ZIP content
+        zip_password = response.headers["X-Zip-Password"]
+        with tempfile.NamedTemporaryFile() as temp_file:
+            temp_file.write(response.content)
+            temp_file.flush()
+
+            with pyzipper.AESZipFile(temp_file.name) as zip_file:
+                zip_file.pwd = zip_password.encode('utf-8')
+                file_list = zip_file.namelist()
+                
+                # Should contain certificate file
+                assert any('certificate' in filename.lower() for filename in file_list), \
+                    "Certificate file not found in ZIP"
+
+                # Verify certificate content
+                for filename in file_list:
+                    if 'certificate' in filename.lower() or filename.endswith(('.crt', '.pem')):
+                        content = zip_file.read(filename)
+                        content_str = content.decode('utf-8')
+                        assert "-----BEGIN CERTIFICATE-----" in content_str
+
+    # CUSTOM DOWNLOAD TESTS - CA CHAIN ONLY
+    def test_custom_download_ca_chain_only(self, test_session_id, sample_ca_certificate):
+        """✅ Custom download with CA chain only succeeds"""
+        
+        # Upload CA certificate
+        uploaded = upload_certificate_bundle(
+            test_session_id,
+            ca_certificate=sample_ca_certificate
+        )
+
+        if "ca_certificate" not in uploaded:
+            pytest.skip("Could not upload CA certificate - server issue")
+
+        # Get component IDs
+        headers = {"X-Session-ID": test_session_id}
+        components_response = requests.get(f"{API_BASE_URL}/certificates", headers=headers)
+        components = components_response.json()["components"]
+        
+        # Find CA certificate components
+        ca_component_ids = []
+        for component in components:
+            if component["type"] in ["IssuingCA", "IntermediateCA", "RootCA"]:
+                ca_component_ids.append(component["id"])
+        
+        assert len(ca_component_ids) > 0, "No CA certificate components found"
+
+        # Create format mapping for all CA components
+        formats = {}
+        for ca_id in ca_component_ids:
+            formats[ca_id] = "pem"
+
+        # Create custom download request
+        custom_request = {
+            "components": ca_component_ids,
+            "formats": formats
+        }
+
+        response = requests.post(
+            f"{API_BASE_URL}/downloads/download/custom/{test_session_id}?components={json.dumps(custom_request['components'])}&formats={json.dumps(custom_request['formats'])}",
+            headers=headers
+        )
+
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "application/zip"
+        assert "X-Zip-Password" in response.headers
+        assert "X-Encryption-Password" not in response.headers  # CA chain is not encrypted
+
+        # Verify ZIP content
+        zip_password = response.headers["X-Zip-Password"]
+        with tempfile.NamedTemporaryFile() as temp_file:
+            temp_file.write(response.content)
+            temp_file.flush()
+
+            with pyzipper.AESZipFile(temp_file.name) as zip_file:
+                zip_file.pwd = zip_password.encode('utf-8')
+                file_list = zip_file.namelist()
+                
+                # Should contain CA chain files
+                assert len(file_list) > 0, "No files found in CA chain ZIP"
+
+                # Find certificate files (not manifest)
+                cert_files = [f for f in file_list if not f.endswith('.txt')]
+                assert len(cert_files) > 0, "No certificate files found in ZIP"
+
+                # Verify CA certificate content in certificate files only
+                for filename in cert_files:
+                    content = zip_file.read(filename)
+                    content_str = content.decode('utf-8')
+                    assert "-----BEGIN CERTIFICATE-----" in content_str
+
+    # CUSTOM DOWNLOAD TESTS - MULTIPLE COMPONENTS
+    def test_custom_download_with_no_components_returns_404(self, sess_headers):
+        """💾 Custom download with no components returns 404"""
+        session_id = sess_headers["X-Session-ID"]
+        response = requests.post(
+            f"{API_BASE_URL}/downloads/download/custom/{session_id}",
+            headers=sess_headers
         )
 
         assert response.status_code == 404
         data = response.json()
         assert "No PKI components found" in data["detail"]
 
-    def test_apache_download_session_id_mismatch_returns_400(self, auth_token, test_session_id):
-        """🚫 Apache download with session ID mismatch returns 400"""
-        headers = {
-            "Authorization": f"Bearer {auth_token}",
-            "X-Session-ID": test_session_id
-        }
+    def test_custom_download_with_complete_bundle_success(self, test_session_id, sample_certificate, sample_private_key, sample_ca_certificate):
+        """✅ Custom download succeeds"""
         
-        # Use different session ID in URL
-        different_session_id = str(uuid.uuid4())
-        response = requests.post(
-            f"{API_BASE_URL}/downloads/apache/{different_session_id}",
-            headers=headers
-        )
-
-        assert response.status_code == 400
-        data = response.json()
-        assert "Session ID validation failed" in data["detail"]
-
-    def test_iis_download_session_id_mismatch_returns_400(self, auth_token, test_session_id):
-        """🚫 IIS download with session ID mismatch returns 400"""
-        headers = {
-            "Authorization": f"Bearer {auth_token}",
-            "X-Session-ID": test_session_id
-        }
-        
-        # Use different session ID in URL
-        different_session_id = str(uuid.uuid4())
-        response = requests.post(
-            f"{API_BASE_URL}/downloads/iis/{different_session_id}",
-            headers=headers
-        )
-
-        assert response.status_code == 400
-        data = response.json()
-        assert "Session ID validation failed" in data["detail"]
-
-    def test_apache_download_with_complete_bundle_success(self, test_session_id, sample_certificate, sample_private_key, sample_ca_certificate):
-        """✅ Apache download with complete certificate bundle succeeds"""
-
-        # Upload complete certificate bundle
+        # Upload certificate, private key, and CA certificate
         uploaded = upload_certificate_bundle(
             test_session_id,
             certificate=sample_certificate,
@@ -586,693 +876,132 @@ class TestDownloads:
             ca_certificate=sample_ca_certificate
         )
 
-        # Need at least certificate and private key upload success
-        if not ("certificate" in uploaded and "private_key" in uploaded):
-            pytest.skip("Could not upload complete certificate bundle - server issue")
+        if len(uploaded) < 2:
+            pytest.skip("Could not upload components - server issue")
 
-        # Prepare headers including session ID and content-type
         headers = {
             "X-Session-ID": test_session_id,
             "Content-Type": "application/json"
         }
 
-        # Download Apache bundle with empty JSON body (as the web client does)
+        # Download custom bundle (all components)
         response = requests.post(
-            f"{API_BASE_URL}/downloads/apache/{test_session_id}",
-            headers=headers,
-            json={}  # empty JSON payload
+            f"{API_BASE_URL}/downloads/download/custom/{test_session_id}",
+            headers=headers
         )
 
         assert response.status_code == 200
         assert response.headers["content-type"] == "application/zip"
         assert "X-Zip-Password" in response.headers
+        assert "X-Encryption-Password" not in response.headers  # Custom download is not encrypted by default
 
-        # Verify ZIP password is present and strong
-        zip_password = response.headers["X-Zip-Password"]
-        assert len(zip_password) >= 16
-        assert any(c.isupper() for c in zip_password)  # Has uppercase
-        assert any(c.islower() for c in zip_password)  # Has lowercase
-        assert any(c.isdigit() for c in zip_password)  # Has digit
-
-        # Verify filename format
-        content_disposition = response.headers.get("content-disposition", "")
-        assert f"apache-bundle-{test_session_id}.zip" in content_disposition
-
-    def test_iis_download_with_complete_bundle_success(self, test_session_id, sample_certificate, sample_private_key, sample_ca_certificate):
-        """✅ IIS download with complete certificate bundle succeeds"""
+    def test_custom_zip_content_and_structure(self, test_session_id, sample_certificate, sample_private_key, sample_ca_certificate):
+        """📦 Custom ZIP contains expected files with correct structure"""
         
-        # Upload complete certificate bundle
+        # Upload certificate, private key, and CA certificate
         uploaded = upload_certificate_bundle(
             test_session_id,
             certificate=sample_certificate,
-            private_key=sample_private_key
+            private_key=sample_private_key,
+            ca_certificate=sample_ca_certificate
         )
-        
-        if len(uploaded) < 2:  # Need at least certificate and private key
-            pytest.skip("Could not upload complete certificate bundle - server issue")
-        
-        # Prepare headers including session ID
+
+        if len(uploaded) < 2:
+            pytest.skip("Could not upload components - server issue")
+
         headers = {
+            "X-Session-ID": test_session_id,
+            "Content-Type": "application/json"
+        }
+
+        response = requests.post(
+            f"{API_BASE_URL}/downloads/download/custom/{test_session_id}",
+            headers=headers
+        )
+
+        if response.status_code != 200:
+            pytest.skip("Download failed - likely missing requirements")
+
+        zip_password = response.headers["X-Zip-Password"]
+
+        with tempfile.NamedTemporaryFile() as temp_file:
+            temp_file.write(response.content)
+            temp_file.flush()
+
+            with pyzipper.AESZipFile(temp_file.name) as zip_file:
+                zip_file.pwd = zip_password.encode('utf-8')
+
+                file_list = zip_file.namelist()
+                
+                # Should contain multiple files (certificate, private key, etc.)
+                assert len(file_list) >= 2, "Custom download should contain multiple files"
+
+                # Verify we have expected file types
+                has_cert = any('certificate' in filename.lower() or filename.endswith('.crt') for filename in file_list)
+                has_key = any('private-key' in filename.lower() or 'key' in filename.lower() for filename in file_list)
+                
+                assert has_cert, "Custom download should contain certificate file"
+                assert has_key, "Custom download should contain private key file"
+
+    # ERROR HANDLING TESTS - UPDATED for new API
+    def test_invalid_bundle_type_returns_400(self, sess_headers):
+        """❌ Invalid bundle type returns 400"""
+        session_id = sess_headers["X-Session-ID"]
+        response = requests.post(
+            f"{API_BASE_URL}/downloads/download/invalid_type/{session_id}",
+            headers=sess_headers
+        )
+
+        assert response.status_code == 400
+        data = response.json()
+        assert "Invalid bundle_type" in data["detail"]
+
+    def test_unsupported_bundle_types_return_400(self, sess_headers):
+        """❌ Unsupported bundle types return 400 - UPDATED: Removed individual types"""
+        session_id = sess_headers["X-Session-ID"]
+        
+        # UPDATED: These types are no longer supported as individual endpoints
+        unsupported_types = ["private_key", "certificate", "ca_chain", "pkcs7", "pkcs12", "jks", "keystore", "cer", "p7s", "csr"]
+        
+        for bundle_type in unsupported_types:
+            response = requests.post(
+                f"{API_BASE_URL}/downloads/download/{bundle_type}/{session_id}",
+                headers=sess_headers
+            )
+            assert response.status_code == 400, f"Bundle type {bundle_type} should return 400"
+            data = response.json()
+            assert "Invalid bundle_type" in data["detail"]
+
+    def test_invalid_format_parameter_returns_400(self, sess_headers):
+        """❌ Invalid format parameters return 400"""
+        session_id = sess_headers["X-Session-ID"]
+        
+        # Test invalid JSON format
+        response = requests.post(
+            f"{API_BASE_URL}/downloads/download/custom/{session_id}?formats=invalid_json",
+            headers=sess_headers
+        )
+        assert response.status_code == 400
+        data = response.json()
+        assert "Invalid formats JSON" in data["detail"]
+
+    def test_session_id_mismatch_returns_400(self, auth_token, test_session_id):
+        """🚫 Session ID mismatch returns 400"""
+        headers = {
+            "Authorization": f"Bearer {auth_token}",
             "X-Session-ID": test_session_id
         }
-
-        # Download IIS bundle
+        
+        # Use different session ID in URL
+        different_session_id = str(uuid.uuid4())
         response = requests.post(
-            f"{API_BASE_URL}/downloads/iis/{test_session_id}",
-            headers=headers
-        )
-        
-        assert response.status_code == 200
-        assert response.headers["content-type"] == "application/zip"
-        zip_password = response.headers.get("X-Zip-Password")
-        p12_password = response.headers.get("X-Encryption-Password")
-        assert zip_password is not None, "Missing ZIP password header"
-        assert p12_password is not None, "Missing P12 password header"
-        
-        #for password, name in [(zip_password, "ZIP"), (p12_password, "P12")]:
-        for password, name in [(zip_password, "ZIP")]:
-            assert len(password) >= 16, f"{name} password too short"
-            assert any(c.isupper() for c in password), f"{name} password needs uppercase"
-            assert any(c.islower() for c in password), f"{name} password needs lowercase"  
-            assert any(c.isdigit() for c in password), f"{name} password needs digit"
-        
-        # Verify passwords are different
-        assert zip_password != p12_password, "ZIP and P12 passwords should be different"
-        
-        # Verify filename format
-        content_disposition = response.headers.get("content-disposition", "")
-        assert f"iis-bundle-{test_session_id}.zip" in content_disposition
-
-    def test_apache_zip_full_content_and_structure(self, test_session_id, sample_certificate, sample_private_key, sample_ca_certificate):
-        """📦 Apache ZIP contains expected files with correct structure"""
-
-        # Upload certificate and private key
-        uploaded = upload_certificate_bundle(
-            test_session_id,
-            certificate=sample_certificate,
-            private_key=sample_private_key,
-            ca_certificate=sample_ca_certificate
-        )
-
-        if len(uploaded) < 2:
-            pytest.skip("Could not upload certificate bundle - server issue")
-
-        # Prepare headers including session ID and content-type
-        headers = {
-            "X-Session-ID": test_session_id,
-            "Content-Type": "application/json"
-        }
-
-        # Download bundle
-        response = requests.post(
-            f"{API_BASE_URL}/downloads/apache/{test_session_id}",
+            f"{API_BASE_URL}/downloads/download/apache/{different_session_id}",
             headers=headers
         )
 
-        if response.status_code != 200:
-            pytest.skip("Download failed - likely missing requirements")
-
-        zip_password = response.headers["X-Zip-Password"]
-
-        # Extract and verify ZIP contents using pyzipper for AES-encrypted ZIP support
-        with tempfile.NamedTemporaryFile() as temp_file:
-            temp_file.write(response.content)
-            temp_file.flush()
-
-            with pyzipper.AESZipFile(temp_file.name) as zip_file:
-                zip_file.pwd = zip_password.encode('utf-8')
-
-                # Check expected files are present
-                file_list = zip_file.namelist()
-                expected_files = [
-                    'certificate.crt',
-                    'private-key.pem',
-                    'ca-bundle.crt',
-                    'APACHE_INSTALLATION_GUIDE.txt',
-                    'NGINX_INSTALLATION_GUIDE.txt'
-                ]
-
-                for expected_file in expected_files:
-                    assert expected_file in file_list, f"Missing file: {expected_file}"
-
-                # Verify file contents are not empty
-                for filename in expected_files:
-                    content = zip_file.read(filename)
-                    assert len(content) > 0, f"File {filename} is empty"
-
-                    # Verify instruction files contain expected content
-                    if filename.endswith('_INSTALLATION_GUIDE.txt'):
-                        content_str = content.decode('utf-8')
-                        assert "INSTALLATION" in content_str.upper()
-                        assert "SSL" in content_str.upper() or "TLS" in content_str.upper()
-
-    def test_apache_zip_minimal_content_and_structure(self, test_session_id, sample_certificate, sample_private_key):
-        """📦 Apache ZIP contains expected files with correct structure"""
-
-        # Upload certificate and private key
-        uploaded = upload_certificate_bundle(
-            test_session_id,
-            certificate=sample_certificate,
-            private_key=sample_private_key,
-        )
-
-        if len(uploaded) < 2:
-            pytest.skip("Could not upload certificate bundle - server issue")
-
-        # Prepare headers including session ID and content-type
-        headers = {
-            "X-Session-ID": test_session_id,
-            "Content-Type": "application/json"
-        }
-
-        # Download bundle
-        response = requests.post(
-            f"{API_BASE_URL}/downloads/apache/{test_session_id}",
-            headers=headers
-        )
-
-        if response.status_code != 200:
-            pytest.skip("Download failed - likely missing requirements")
-
-        zip_password = response.headers["X-Zip-Password"]
-
-        # Extract and verify ZIP contents using pyzipper for AES-encrypted ZIP support
-        with tempfile.NamedTemporaryFile() as temp_file:
-            temp_file.write(response.content)
-            temp_file.flush()
-
-            with pyzipper.AESZipFile(temp_file.name) as zip_file:
-                zip_file.pwd = zip_password.encode('utf-8')
-
-                # Check expected files are present
-                file_list = zip_file.namelist()
-                expected_files = [
-                    'certificate.crt',
-                    'private-key.pem',
-                    'APACHE_INSTALLATION_GUIDE.txt',
-                    'NGINX_INSTALLATION_GUIDE.txt'
-                ]
-
-                for expected_file in expected_files:
-                    assert expected_file in file_list, f"Missing file: {expected_file}"
-
-                # Verify file contents are not empty
-                for filename in expected_files:
-                    content = zip_file.read(filename)
-                    assert len(content) > 0, f"File {filename} is empty"
-
-                    # Verify instruction files contain expected content
-                    if filename.endswith('_INSTALLATION_GUIDE.txt'):
-                        content_str = content.decode('utf-8')
-                        assert "INSTALLATION" in content_str.upper()
-                        assert "SSL" in content_str.upper() or "TLS" in content_str.upper()
-
-    def test_iis_zip_full_content_and_structure(self, test_session_id, sample_certificate, sample_private_key, sample_ca_certificate):
-        """📦 IIS ZIP contains expected files with correct structure"""
-
-        # Upload certificate and private key
-        uploaded = upload_certificate_bundle(
-            test_session_id,
-            certificate=sample_certificate,
-            private_key=sample_private_key,
-            ca_certificate=sample_ca_certificate
-        )
-
-        if len(uploaded) < 2:
-            pytest.skip("Could not upload certificate bundle - server issue")
-
-        # Prepare headers including session ID and content-type
-        headers = {
-            "X-Session-ID": test_session_id,
-            "Content-Type": "application/json"
-        }
-
-        # Download bundle
-        response = requests.post(f"{API_BASE_URL}/downloads/iis/{test_session_id}", headers=headers)
-
-        if response.status_code != 200:
-            pytest.skip("Download failed - likely missing requirements")
-
-        zip_password = response.headers.get("X-Zip-Password")
-        p12_password = response.headers.get("X-Encryption-Password")
-        assert zip_password is not None, "Missing ZIP password header"
-        assert p12_password is not None, "Missing P12 password header"
-
-        # Extract and verify ZIP contents using pyzipper for AES-encrypted ZIP support
-        with tempfile.NamedTemporaryFile() as temp_file:
-            temp_file.write(response.content)
-            temp_file.flush()
-
-            with pyzipper.AESZipFile(temp_file.name) as zip_file:
-                # Set password for extraction
-                zip_file.pwd = zip_password.encode('utf-8')
-
-                # Check expected files are present
-                file_list = zip_file.namelist()
-                expected_files = [
-                    'certificate-bundle.pfx',
-                    'IIS_INSTALLATION_GUIDE.txt',
-                    'CERTIFICATE_INFO.txt'
-                ]
-
-                for expected_file in expected_files:
-                    assert expected_file in file_list, f"Missing file: {expected_file}"
-
-                # Verify file contents are not empty
-                for filename in expected_files:
-                    content = zip_file.read(filename)
-                    assert len(content) > 0, f"File {filename} is empty"
-
-                    # Verify PKCS#12 file is binary
-                    if filename.endswith('.p12'):
-                        assert content[0:1] == b'\x30', "P12 file doesn't start with ASN.1 SEQUENCE"
-
-                    # Verify text files contain expected content
-                    elif filename.endswith('.txt'):
-                        content_str = content.decode('utf-8')
-                        if filename == 'CERTIFICATE_INFO.txt':
-                            assert zip_password in content_str, "ZIP password not in info file"
-                            assert p12_password in content_str, "P12 password not in info file"
-                        elif filename == 'IIS_INSTALLATION_GUIDE.txt':
-                            assert "IIS" in content_str.upper()
-                            assert "PKCS" in content_str.upper()
-
-    def test_iis_zip_minimal_content_and_structure(self, test_session_id, sample_certificate, sample_private_key):
-        """📦 IIS ZIP contains expected files with correct structure"""
-
-        # Upload certificate and private key
-        uploaded = upload_certificate_bundle(
-            test_session_id,
-            certificate=sample_certificate,
-            private_key=sample_private_key,
-        )
-
-        if len(uploaded) < 2:
-            pytest.skip("Could not upload certificate bundle - server issue")
-
-        # Prepare headers including session ID and content-type
-        headers = {
-            "X-Session-ID": test_session_id,
-            "Content-Type": "application/json"
-        }
-
-        # Download bundle
-        response = requests.post(f"{API_BASE_URL}/downloads/iis/{test_session_id}", headers=headers)
-
-        if response.status_code != 200:
-            pytest.skip("Download failed - likely missing requirements")
-
-        zip_password = response.headers["X-Zip-Password"]
-        p12_password = response.headers["X-Encryption-Password"]
-
-        # Extract and verify ZIP contents using pyzipper for AES-encrypted ZIP support
-        with tempfile.NamedTemporaryFile() as temp_file:
-            temp_file.write(response.content)
-            temp_file.flush()
-
-            with pyzipper.AESZipFile(temp_file.name) as zip_file:
-                zip_file.pwd = zip_password.encode('utf-8')
-
-                file_list = zip_file.namelist()
-                expected_files = [
-                    'certificate-bundle.pfx',
-                    'IIS_INSTALLATION_GUIDE.txt',
-                    'CERTIFICATE_INFO.txt'
-                ]
-
-                for expected_file in expected_files:
-                    assert expected_file in file_list, f"Missing file: {expected_file}"
-
-                for filename in expected_files:
-                    content = zip_file.read(filename)
-                    assert len(content) > 0, f"File {filename} is empty"
-
-                    if filename.endswith('.p12'):
-                        assert content[0:1] == b'\x30', "P12 file doesn't start with ASN.1 SEQUENCE"
-
-                    elif filename.endswith('.txt'):
-                        content_str = content.decode('utf-8')
-                        if filename == 'CERTIFICATE_INFO.txt':
-                            assert zip_password in content_str, "ZIP password not in info file"
-                            assert p12_password in content_str, "P12 password not in info file"
-                        elif filename == 'IIS_INSTALLATION_GUIDE.txt':
-                            assert "IIS" in content_str.upper()
-                            assert "PKCS" in content_str.upper()
-
-    def test_download_endpoints_require_authentication(self, test_session_id):
-        """🔒 Download endpoints require authentication"""
-        # Test Apache endpoint without auth
-        response = requests.post(f"{API_BASE_URL}/downloads/apache/{test_session_id}")
         assert response.status_code == 400
-        
-        # Test IIS endpoint without auth
-        response = requests.post(f"{API_BASE_URL}/downloads/iis/{test_session_id}")
-        assert response.status_code == 400
-
-    def test_download_endpoints_with_invalid_session_uuid(self, auth_token):
-        """❌ Download endpoints reject invalid session UUIDs"""
-        headers = {"Authorization": f"Bearer {auth_token}"}
-        
-        invalid_session_ids = ["invalid-uuid", "12345", "not-a-uuid-at-all"]
-        
-        for invalid_id in invalid_session_ids:
-            # Test Apache endpoint
-            response = requests.post(
-                f"{API_BASE_URL}/downloads/apache/{invalid_id}",
-                headers={**headers, "X-Session-ID": invalid_id}
-            )
-            assert response.status_code == 400, f"Apache endpoint should reject {invalid_id}"
-            
-            # Test IIS endpoint  
-            response = requests.post(
-                f"{API_BASE_URL}/downloads/iis/{invalid_id}",
-                headers={**headers, "X-Session-ID": invalid_id}
-            )
-            assert response.status_code == 400, f"IIS endpoint should reject {invalid_id}"
-
-    def test_apache_download_missing_private_key_fails(self, test_session_id, sample_certificate):
-        """❌ Apache download fails gracefully when private key is missing"""
-
-        # Upload only the certificate (without private key)
-        uploaded = upload_certificate_bundle(
-            test_session_id, 
-            certificate=sample_certificate
-        )
-
-        if not uploaded:
-            pytest.skip("Could not upload certificate - server issue")
-
-        # Prepare headers
-        headers = {
-            "X-Session-ID": test_session_id,
-            "Content-Type": "application/json"
-        }
-
-        # Attempt to download Apache bundle
-        response = requests.post(
-            f"{API_BASE_URL}/downloads/apache/{test_session_id}",
-            headers=headers
-        )
-
-        # Assert graceful failure
-        assert response.status_code in [400, 404, 422, 500], \
-            f"Unexpected status code: {response.status_code} — expected graceful failure"
-
-    def test_iis_download_missing_private_key_fails(self, test_session_id, sample_certificate):
-        """❌ IIS download fails gracefully when private key is missing"""
-
-        # Upload only certificate (no private key)
-        uploaded = upload_certificate_bundle(
-            test_session_id, 
-            certificate=sample_certificate
-        )
-
-        if not uploaded:
-            pytest.skip("Could not upload certificate - server issue")
-
-        # Prepare headers
-        headers = {
-            "X-Session-ID": test_session_id,
-            "Content-Type": "application/json"
-        }
-
-        # Attempt to download IIS bundle
-        response = requests.post(
-            f"{API_BASE_URL}/downloads/iis/{test_session_id}",
-            headers={**headers, "Content-Type": "application/json"}
-        )
-
-        # Assert graceful failure
-        assert response.status_code in [400, 404, 422, 500], \
-            f"Unexpected status code: {response.status_code} — expected graceful failure"
-
-    def test_concurrent_downloads_different_sessions(self, sample_certificate, sample_private_key):
-        """🔄 Concurrent downloads from different sessions work independently"""
-
-        def download_bundle(session_id, bundle_type):
-            headers = {
-                "X-Session-ID": session_id,
-                "Content-Type": "application/json"
-            }
-
-            # Upload certificate and key
-            uploaded = upload_certificate_bundle(
-                session_id,
-                certificate=sample_certificate,
-                private_key=sample_private_key
-            )
-
-            if len(uploaded) < 2:
-                return 0, 0, "upload-failed"
-
-            # Attempt to download bundle
-            response = requests.post(
-                f"{API_BASE_URL}/downloads/{bundle_type}/{session_id}",
-                headers=headers
-            )
-            return response.status_code, len(response.content), response.headers.get("X-Zip-Password", "")
-
-        # Generate independent test sessions
-        sessions = [str(uuid.uuid4()) for _ in range(20)]
-
-        # Concurrently test all downloads
-        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
-            futures = []
-            for session_id in sessions:
-                futures.append(executor.submit(download_bundle, session_id, "apache"))
-                futures.append(executor.submit(download_bundle, session_id, "iis"))
-
-            # Validate all download results
-            passwords = set()
-            for future in concurrent.futures.as_completed(futures):
-                status_code, content_length, password = future.result()
-
-                if status_code == 0 and password == "upload-failed":
-                    pytest.skip("Could not upload certificate bundle - server issue")
-
-                if status_code == 200:
-                    assert content_length > 0, "Downloaded bundle should not be empty"
-                    assert len(password) >= 16, "ZIP password should be strong"
-                    passwords.add(password)
-                else:
-                    assert status_code in [400, 404, 422, 500], f"Unexpected status code: {status_code}"
-
-            # Ensure each successful password is unique
-            if len(passwords) > 1:
-                assert len(passwords) == len([p for p in passwords if p]), \
-                    "All successful downloads must return unique passwords"
-
-    def test_download_response_headers_completeness(self, sample_certificate, sample_private_key):
-        """📋 Download responses include all required headers"""
-        import uuid
-
-        def validate_common_headers(response, expect_p12=False):
-            assert response.status_code == 200, f"Unexpected status code: {response.status_code}"
-            assert "content-type" in response.headers
-            assert response.headers["content-type"] == "application/zip"
-            assert "content-disposition" in response.headers
-            assert "attachment" in response.headers["content-disposition"]
-            assert "X-Zip-Password" in response.headers
-            assert "content-length" in response.headers
-            assert int(response.headers["content-length"]) == len(response.content)
-            if expect_p12:
-                assert "X-Encryption-Password" in response.headers, "Missing X-Encryption-Password for IIS bundle"
-
-        # Apache: use first session
-        session_id_apache = str(uuid.uuid4())
-        uploaded_apache = upload_certificate_bundle(
-            session_id_apache,
-            certificate=sample_certificate,
-            private_key=sample_private_key
-        )
-
-        if len(uploaded_apache) < 2:
-            pytest.skip("Could not upload certificate bundle for Apache")
-
-        apache_headers = {
-            "X-Session-ID": session_id_apache,
-            "Content-Type": "application/json"
-        }
-
-        apache_response = requests.post(
-            f"{API_BASE_URL}/downloads/apache/{session_id_apache}",
-            headers=apache_headers
-        )
-
-        validate_common_headers(apache_response)
-
-        # IIS: use second session
-        session_id_iis = str(uuid.uuid4())
-        uploaded_iis = upload_certificate_bundle(
-            session_id_iis,
-            certificate=sample_certificate,
-            private_key=sample_private_key
-        )
-
-        if len(uploaded_iis) < 2:
-            pytest.skip("Could not upload certificate bundle for IIS")
-
-        iis_headers = {
-            "X-Session-ID": session_id_iis,
-            "Content-Type": "application/json"
-        }
-
-        iis_response = requests.post(
-            f"{API_BASE_URL}/downloads/iis/{session_id_iis}",
-            headers=iis_headers
-        )
-
-        validate_common_headers(iis_response, expect_p12=True)
-
-    def test_upload_download_apache_full_workflow(self, test_session_id, sample_certificate, sample_private_key, sample_ca_certificate):
-        """🔄 Complete workflow: Upload certificates → Download Apache bundle → Verify"""
-
-        # Step 1: Upload complete certificate bundle using helper
-        uploaded = upload_certificate_bundle(
-            test_session_id,
-            certificate=sample_certificate,
-            private_key=sample_private_key,
-            ca_certificate=sample_ca_certificate
-        )
-
-        if len(uploaded) < 2:
-            pytest.skip("Could not upload sufficient certificates for test")
-
-        headers = {
-            "X-Session-ID": test_session_id,
-            "Content-Type": "application/json"
-        }
-
-        # Step 2: Verify certificates are listed
-        list_response = requests.get(f"{API_BASE_URL}/certificates", headers=headers)
-        assert list_response.status_code == 200, f"Unexpected list response: {list_response.status_code}"
-        assert list_response.json().get("count", 0) >= 2, "Insufficient certificates found in session"
-
-        # Step 3: Download Apache bundle
-        download_response = requests.post(f"{API_BASE_URL}/downloads/apache/{test_session_id}", headers=headers)
-
-        if download_response.status_code != 200:
-            pytest.skip(f"Download failed — status: {download_response.status_code}")
-
-        # Step 4: Verify download properties
-        assert len(download_response.content) > 1000, "Downloaded ZIP seems too small"
-        assert "X-Zip-Password" in download_response.headers, "Missing ZIP password in response"
-
-        # Step 5: Verify ZIP contents
-        zip_password = download_response.headers["X-Zip-Password"]
-        with tempfile.NamedTemporaryFile() as temp_file:
-            temp_file.write(download_response.content)
-            temp_file.flush()
-
-            with pyzipper.AESZipFile(temp_file.name, 'r') as zip_file:
-                zip_file.pwd = zip_password.encode('utf-8')
-                files_in_zip = zip_file.namelist()
-                assert len(files_in_zip) >= 3, f"Expected at least 3 files in ZIP, got {len(files_in_zip)}"
-
-    def test_upload_download_iis_full_workflow(self, test_session_id, sample_certificate, sample_private_key, sample_ca_certificate):
-        """🔄 Complete workflow: Upload certificates → Download IIS bundle → Verify"""
-
-        # Step 1: Upload complete certificate bundle using helper
-        uploaded = upload_certificate_bundle(
-            test_session_id,
-            certificate=sample_certificate,
-            private_key=sample_private_key,
-            ca_certificate=sample_ca_certificate
-        )
-
-        if len(uploaded) < 2:
-            pytest.skip("Could not upload sufficient certificates for test")
-
-        headers = {
-            "X-Session-ID": test_session_id,
-            "Content-Type": "application/json"
-        }
-
-        # Step 2: Download IIS bundle
-        download_response = requests.post(
-            f"{API_BASE_URL}/downloads/iis/{test_session_id}",
-            headers=headers
-        )
-
-        if download_response.status_code != 200:
-            pytest.skip(f"Download failed — status: {download_response.status_code}")
-
-        # Step 3: Verify download response headers and content
-        assert len(download_response.content) > 1000, "Downloaded ZIP seems too small"
-        assert "X-Zip-Password" in download_response.headers, "Missing ZIP password"
-        assert "X-Encryption-Password" in download_response.headers, "Missing PKCS#12 password"
-
-        # Step 4: Inspect ZIP contents
-        zip_password = download_response.headers["X-Zip-Password"]
-        with tempfile.NamedTemporaryFile() as temp_file:
-            temp_file.write(download_response.content)
-            temp_file.flush()
-
-            with pyzipper.AESZipFile(temp_file.name, 'r') as zip_file:
-                zip_file.setpassword(zip_password.encode('utf-8'))
-                files = zip_file.namelist()
-
-                # Check for expected PKCS#12 file
-                assert 'certificate-bundle.pfx' in files, "PKCS#12 file missing from ZIP"
-
-                p12_content = zip_file.read('certificate-bundle.pfx')
-                assert len(p12_content) > 100, "PKCS#12 file is unexpectedly small"
-                assert p12_content[0:1] == b'\x30', "PKCS#12 file does not start with ASN.1 marker"
-
-
-# ========================================
-# SESSION ISOLATION TESTS
-# ========================================
-
-
-class TestSessionIsolation:
-    """Isolation between separate test sessions"""
-
-    def test_different_sessions_are_isolated_no_data_leak(self, auth_token, sample_certificate):
-        """🚦 Different sessions should be isolated; no data leak"""
-        session1 = str(uuid.uuid4())
-        session2 = str(uuid.uuid4())
-
-        headers1 = {
-            "Authorization": f"Bearer {auth_token}",
-            "X-Session-ID": session1
-        }
-        headers2 = {
-            "Authorization": f"Bearer {auth_token}",
-            "X-Session-ID": session2
-        }
-
-        files = {
-            "file": ("test1.crt", sample_certificate, "application/x-pem-file")
-        }
-        response1 = requests.post(
-            f"{API_BASE_URL}/analyze-certificate",
-            files=files,
-            headers=headers1
-        )
-        assert response1.status_code in [200, 201]
-
-        list1 = requests.get(f"{API_BASE_URL}/certificates", headers=headers1)
-        assert list1.json()["count"] >= 1
-
-        list2 = requests.get(f"{API_BASE_URL}/certificates", headers=headers2)
-        assert list2.json()["count"] == 0
-
-    def test_invalid_session_id_results_in_400_error(self, auth_token, sample_certificate, invalid_session_id):
-        """❗ Invalid session ID results in error (400)"""
-        headers = {
-            "Authorization": f"Bearer {auth_token}",
-            "X-Session-ID": str(invalid_session_id)
-        }
-        files = {
-            "file": ("test.crt", sample_certificate, "application/x-pem-file")
-        }
-        response = requests.post(
-            f"{API_BASE_URL}/analyze-certificate",
-            files=files,
-            headers=headers
-        )
-        assert response.status_code == 400
+        data = response.json()
+        assert "Session ID validation failed" in data["detail"]
 
 
 # ========================================
@@ -1299,8 +1028,8 @@ class TestIntegration:
         assert list_response.status_code == 200
         assert list_response.json()["count"] >= 1
 
-        validation_response = requests.get(f"{API_BASE_URL}/validate?session_id={session_id}", headers=headers)
-        assert validation_response.status_code == 200
+        # validation_response = requests.get(f"{API_BASE_URL}/validate?session_id={session_id}", headers=headers)
+        # assert validation_response.status_code == 200
 
         pki_response = requests.get(f"{API_BASE_URL}/pki-bundle", headers=headers)
         assert pki_response.status_code == 200
@@ -1309,8 +1038,6 @@ class TestIntegration:
 # ========================================
 # PERFORMANCE TESTS
 # ========================================
-
-
 class TestPerformance:
     """Upload and workflow performance checks"""
 

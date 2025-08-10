@@ -314,107 +314,216 @@ class DownloadService:
         selected_components = []
         bundle_password = None  # For encrypted formats
         
-        # Determine which components to include
-        if config.component_selection:
-            component_ids = config.component_selection
+        # Check if this is a special bundle request (PKCS7 or PKCS12)
+        is_bundle_request = 'bundle_pkcs7' in config.format_selections or 'bundle_pkcs12' in config.format_selections
+        
+        if is_bundle_request:
+            # For bundle requests, ONLY create the bundle file, not individual components
+            logger.info("Processing bundle request - skipping individual component processing")
+            bundle_files = self._process_bundle_requests(session, config.format_selections, selected_components)
+            files.update(bundle_files)
+            
+            # Check if bundle creation generated a password
+            if hasattr(self, '_bundle_password'):
+                bundle_password = self._bundle_password
+                delattr(self, '_bundle_password')  # Clean up
+            
+            # For bundle requests, use all session components for manifest but don't convert them
+            selected_components = list(session.components.values())
+            
         else:
-            component_ids = list(session.components.keys())
-        
-        # Process each selected component using format_converter
-        for component_id in component_ids:
-            if component_id not in session.components:
-                continue
-                
-            component = session.components[component_id]
+            # Regular custom download - process individual components
+            # Determine which components to include
+            if config.component_selection:
+                component_ids = config.component_selection
+            else:
+                component_ids = list(session.components.keys())
             
-            # Get format selection for this component
-            selected_format = config.format_selections.get(component_id, 'pem')
-            if selected_format == 'pem':  # If not found, try with type prefix
-                format_key = f"{component.type.type_name.lower()}_{component_id}"
-                selected_format = config.format_selections.get(format_key, 'pem')
-            
-            logger.debug(f"Component {component_id}: format={selected_format}")
-            
-            # Use standardized filename for selected format
-            standard_filename = get_standard_filename(component.type, selected_format)
-            
-            # Use existing format_converter for format conversion
-            try:
-                if component.type.type_name == 'PrivateKey':
-                    converted_content = format_converter.convert_private_key(
-                        component.content, selected_format, password=None
-                    )
+            # Process each selected component using format_converter
+            for component_id in component_ids:
+                if component_id not in session.components:
+                    continue
                     
-                    # Check if encryption password was generated
-                    if selected_format in ['pkcs8_encrypted', 'pem_encrypted']:
-                        # Get the generated password from format_converter
-                        from services.format_converter import get_last_encryption_password, get_last_password_type
-                        encryption_password = get_last_encryption_password()
-                        password_type = get_last_password_type()
+                component = session.components[component_id]
+                
+                # Get format selection for this component
+                selected_format = config.format_selections.get(component_id, 'pem')
+                if selected_format == 'pem':  # If not found, try with type prefix
+                    format_key = f"{component.type.type_name.lower()}_{component_id}"
+                    selected_format = config.format_selections.get(format_key, 'pem')
+                
+                logger.debug(f"Component {component_id}: format={selected_format}")
+                
+                # Use standardized filename for selected format
+                standard_filename = get_standard_filename(component.type, selected_format)
+                
+                # Use existing format_converter for format conversion
+                try:
+                    if component.type.type_name == 'PrivateKey':
+                        converted_content = format_converter.convert_private_key(
+                            component.content, selected_format, password=None
+                        )
                         
-                        if encryption_password:
-                            bundle_password = encryption_password
-                            logger.info(f"🔐 Captured encryption password for {selected_format}: {encryption_password}")
+                        # Check if encryption password was generated
+                        if selected_format in ['pkcs8_encrypted', 'pem_encrypted']:
+                            # Get the generated password from format_converter
+                            from services.format_converter import get_last_encryption_password, get_last_password_type
+                            encryption_password = get_last_encryption_password()
+                            password_type = get_last_password_type()
                             
-                            # Create password info file like IIS does
-                            password_filename = f"{standard_filename.replace('.p8', '_password.txt').replace('.pem', '_password.txt')}"
-                            password_content = f"Private Key Password: {encryption_password}\n\nFormat: {selected_format.upper()}\nPassword Type: {password_type}\nGenerated: {datetime.now().isoformat()}\n"
-                            files[password_filename] = password_content
-                            
-                            # Store password type for manifest
-                            self._bundle_password_type = password_type
-                            
-                elif component.type.type_name == 'Certificate':
-                    converted_content = format_converter.convert_certificate(
-                        component.content, selected_format
-                    )
-                elif component.type in [PKIComponentType.ROOT_CA, PKIComponentType.INTERMEDIATE_CA]:
-                    converted_content = format_converter.convert_certificate(
-                        component.content, selected_format
-                    )
-                else:
-                    # CSR or other types
-                    converted_content = format_converter.convert_csr(
-                        component.content, selected_format
-                    )
-                
-                # Handle bytes/string conversion for ZIP storage
-                if selected_format.lower() in ['pem', 'pem_encrypted']:
-                    # PEM formats should be stored as strings
-                    if isinstance(converted_content, bytes):
-                        file_content = converted_content.decode('utf-8')
+                            if encryption_password:
+                                bundle_password = encryption_password
+                                logger.info(f"🔐 Captured encryption password for {selected_format}: {encryption_password}")
+                                
+                                # Store password type for manifest
+                                self._bundle_password_type = password_type
+                                
+                    elif component.type.type_name == 'Certificate':
+                        converted_content = format_converter.convert_certificate(
+                            component.content, selected_format
+                        )
+                    elif component.type in [PKIComponentType.ROOT_CA, PKIComponentType.INTERMEDIATE_CA]:
+                        converted_content = format_converter.convert_certificate(
+                            component.content, selected_format
+                        )
                     else:
+                        # CSR or other types
+                        converted_content = format_converter.convert_csr(
+                            component.content, selected_format
+                        )
+                    
+                    # Handle bytes/string conversion for ZIP storage
+                    if selected_format.lower() in ['pem', 'pem_encrypted']:
+                        # PEM formats should be stored as strings
+                        if isinstance(converted_content, bytes):
+                            file_content = converted_content.decode('utf-8')
+                        else:
+                            file_content = converted_content
+                    else:
+                        # DER, PKCS8, etc. should be stored as bytes
                         file_content = converted_content
-                else:
-                    # DER, PKCS8, etc. should be stored as bytes
-                    file_content = converted_content
-                
-                files[standard_filename] = file_content
-                
-                # For manifest, always use string representation
-                if isinstance(file_content, bytes):
-                    # For binary formats, create a description for manifest
-                    manifest_content = f"Binary {selected_format.upper()} file ({len(file_content)} bytes)"
-                else:
-                    manifest_content = file_content
-                
-                # Create virtual component for manifest with actual ZIP filename
-                virtual_component = self._create_virtual_component(
-                    component, standard_filename, manifest_content, selected_format
-                )
-                selected_components.append(virtual_component)
-                
-            except Exception as e:
-                logger.warning(f"Failed to convert component {component_id} to {selected_format}: {e}")
-                # Fall back to original content and filename
-                files[component.filename] = component.content
-                selected_components.append(component)
-        
-        # Handle special bundle formats using enhanced format_converter
-        bundle_files = format_converter.process_bundle_requests(session, config.format_selections)
-        files.update(bundle_files)
+                    
+                    files[standard_filename] = file_content
+                    
+                    # For manifest, always use string representation
+                    if isinstance(file_content, bytes):
+                        # For binary formats, create a description for manifest
+                        manifest_content = f"Binary {selected_format.upper()} file ({len(file_content)} bytes)"
+                    else:
+                        manifest_content = file_content
+                    
+                    # Create virtual component for manifest with actual ZIP filename
+                    virtual_component = self._create_virtual_component(
+                        component, standard_filename, manifest_content, selected_format
+                    )
+                    selected_components.append(virtual_component)
+                    
+                except Exception as e:
+                    logger.warning(f"Failed to convert component {component_id} to {selected_format}: {e}")
+                    # Fall back to original content and filename
+                    files[component.filename] = component.content
+                    selected_components.append(component)
         
         return files, selected_components, bundle_password
+    
+    def _process_bundle_requests(self, session, format_selections, selected_components):
+        """Process special bundle format requests (PKCS7, PKCS12)"""
+        bundle_files = {}
+        
+        # Check for PKCS7 bundle request
+        if 'bundle_pkcs7' in format_selections:
+            format_type = format_selections['bundle_pkcs7']
+            logger.info(f"Creating PKCS7 bundle in {format_type} format")
+            
+            try:
+                # Find certificate and CA certificates for chain
+                certificate_components = []
+                for component in session.components.values():
+                    if component.type == PKIComponentType.CERTIFICATE:
+                        certificate_components.append(component)
+                    elif component.type in [PKIComponentType.ROOT_CA, PKIComponentType.INTERMEDIATE_CA, PKIComponentType.ISSUING_CA]:
+                        certificate_components.append(component)
+                
+                if not certificate_components:
+                    raise ValueError("No certificates found for PKCS7 bundle")
+                
+                # Create certificate chain content
+                chain_parts = []
+                for cert_component in certificate_components:
+                    chain_parts.append(cert_component.content.strip())
+                
+                chain_content = '\n'.join(chain_parts)
+                
+                if format_type == 'der':
+                    # Convert PEM chain to DER PKCS7
+                    chain_content = format_converter.convert_certificate(chain_content, 'der')
+                    filename = 'certificate-chain.p7b'
+                else:
+                    # PEM format - use concatenated PEM
+                    filename = 'certificate-chain.p7c'
+                
+                bundle_files[filename] = chain_content
+                logger.info(f"Created PKCS7 bundle: {filename}")
+                
+            except Exception as e:
+                logger.error(f"Failed to create PKCS7 bundle: {e}")
+                raise ValueError(f"PKCS7 bundle creation failed: {e}")
+        
+        # Check for PKCS12 bundle request
+        if 'bundle_pkcs12' in format_selections:
+            encryption = format_selections['bundle_pkcs12']
+            logger.info(f"Creating PKCS12 bundle with encryption: {encryption}")
+            
+            try:
+                # Find required components
+                certificate = None
+                private_key = None
+                ca_certs = []
+                
+                for component in session.components.values():
+                    if component.type == PKIComponentType.CERTIFICATE:
+                        certificate = component
+                    elif component.type == PKIComponentType.PRIVATE_KEY:
+                        private_key = component
+                    elif component.type in [PKIComponentType.ROOT_CA, PKIComponentType.INTERMEDIATE_CA, PKIComponentType.ISSUING_CA]:
+                        ca_certs.append(component)
+                
+                if not certificate:
+                    raise ValueError("Certificate required for PKCS12 bundle")
+                if not private_key:
+                    raise ValueError("Private key required for PKCS12 bundle")
+                
+                # Build CA bundle
+                ca_bundle = None
+                if ca_certs:
+                    ca_bundle = '\n'.join([ca.content.strip() for ca in ca_certs])
+                
+                # Generate password if encrypted
+                bundle_password = None
+                if encryption == 'encrypted':
+                    bundle_password = secure_zip_creator.generate_secure_password()
+                
+                # Create PKCS12 bundle
+                p12_bundle = format_converter.create_pkcs12_bundle(
+                    certificate.content,
+                    private_key.content,
+                    ca_bundle,
+                    bundle_password
+                )
+                
+                filename = get_standard_filename(PKIComponentType.CERTIFICATE, "PKCS12")
+                bundle_files[filename] = p12_bundle
+                logger.info(f"Created PKCS12 bundle: {filename}")
+                
+                # Update bundle password for main method to return
+                if bundle_password:
+                    self._bundle_password = bundle_password
+                
+            except Exception as e:
+                logger.error(f"Failed to create PKCS12 bundle: {e}")
+                raise ValueError(f"PKCS12 bundle creation failed: {e}")
+        
+        return bundle_files
     
     def _create_virtual_component(self, original_component, zip_filename, converted_content, format_type):
         """Create virtual component with ZIP filename for manifest"""
@@ -466,7 +575,8 @@ class DownloadService:
                     password=None,
                     session_id=session_id,
                     selected_components=selected_components,
-                    bundle_password=bundle_password
+                    bundle_password=bundle_password,
+                    p12_filename=p12_filename
                 )
             elif bundle_type == BundleType.PKCS12:
                 # Use IIS bundle creator but with PKCS12 settings
@@ -549,14 +659,19 @@ class DownloadService:
         return 'certificate'
     
     def get_available_bundle_types(self, session_id: str) -> Dict[str, Any]:
-        """Get available bundle types and their requirements for a session"""
+        """Get available bundle types and their requirements for a session - UPDATED: Server bundles + custom only"""
         session = session_pki_storage.get_or_create_session(session_id)
         
         if not session.components:
             return {
                 "available_types": [],
                 "requirements_met": {},
-                "message": "No components available"
+                "component_summary": {
+                    "has_certificate": False,
+                    "has_private_key": False,
+                    "has_ca_certs": False,
+                    "total_components": 0
+                }
             }
         
         # Check what components are available
@@ -564,7 +679,7 @@ class DownloadService:
         has_private_key = any(c.type == PKIComponentType.PRIVATE_KEY for c in session.components.values())
         has_ca_certs = any(c.type in [PKIComponentType.ROOT_CA, PKIComponentType.INTERMEDIATE_CA, PKIComponentType.ISSUING_CA] for c in session.components.values())
         
-        # Determine which bundle types are available
+        # UPDATED: Only check server bundle types (Apache, IIS, Nginx)
         available_types = []
         requirements_met = {}
         
@@ -601,45 +716,6 @@ class DownloadService:
                     "can_create": False,
                     "missing": "private_key"
                 }
-            
-            # PKCS7 requires certificate + CA certs
-            if has_certificate and has_ca_certs:
-                available_types.append(BundleType.PKCS7)
-                requirements_met[BundleType.PKCS7] = {
-                    "certificate": has_certificate,
-                    "ca_certificates": has_ca_certs,
-                    "can_create": True
-                }
-            else:
-                requirements_met[BundleType.PKCS7] = {
-                    "certificate": has_certificate,
-                    "ca_certificates": has_ca_certs,
-                    "can_create": False,
-                    "missing": "ca_certificates" if has_certificate else "certificate"
-                }
-
-            # PKCS12 requires certificate + private key  
-            if has_certificate and has_private_key:
-                available_types.append(BundleType.PKCS12)
-                requirements_met[BundleType.PKCS12] = {
-                    "certificate": has_certificate,
-                    "private_key": has_private_key,
-                    "can_create": True
-                }
-            else:
-                requirements_met[BundleType.PKCS12] = {
-                    "certificate": has_certificate,
-                    "private_key": has_private_key,
-                    "can_create": False,
-                    "missing": "private_key" if has_certificate else "certificate"
-                }
-            
-            # Custom is always available if we have any components
-            available_types.append(BundleType.CUSTOM)
-            requirements_met[BundleType.CUSTOM] = {
-                "can_create": True,
-                "component_count": len(session.components)
-            }
         
         return {
             "available_types": list(set(available_types)),

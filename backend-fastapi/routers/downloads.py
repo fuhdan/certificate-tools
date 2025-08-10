@@ -1,6 +1,4 @@
 # backend-fastapi/routers/downloads.py
-# STEP 3: Unified Download Router - ALL bundle types supported
-# One API endpoint handles everything: server bundles, individual components, custom selections
 
 import logging
 import json
@@ -23,25 +21,16 @@ async def download_bundle(
     session_id_validated: str = Depends(get_session_id)
 ):
     """
-    Unified download endpoint for ALL bundle types.
+    Unified download endpoint for server bundles + custom selections.
     
     Supported bundle types:
     - apache: Apache server bundle (cert + key + chain + guides)
     - iis: IIS server bundle (PKCS#12 + guides)  
     - nginx: Nginx server bundle (cert + key + chain + guides)
-    - pkcs7: PKCS#7 certificate chain (PEM or DER format)
-    - pkcs12: PKCS#12 bundle (encrypted or unencrypted)
-    - private_key: Just the private key in selected format
-    - certificate: Just the certificate in selected format
-    - ca_chain: Just the CA certificate chain
     - custom: Custom selection of components with format choices
     
     Examples:
     - POST /download/apache/{session_id}?include_instructions=true
-    - POST /download/pkcs7/{session_id}?formats={"pkcs7":"pem"}
-    - POST /download/pkcs12/{session_id}?formats={"pkcs12":"encrypted"}
-    - POST /download/private_key/{session_id}?formats={"private_key":"pkcs8_encrypted"}
-    - POST /download/certificate/{session_id}?formats={"certificate":"der"}
     - POST /download/custom/{session_id}?components=["id1","id2"]&formats={"cert":"pem"}
     
     Args:
@@ -61,8 +50,8 @@ async def download_bundle(
         if session_id != session_id_validated:
             raise HTTPException(status_code=400, detail="Session ID validation failed")
         
-        # Validate bundle_type
-        valid_types = ["apache", "iis", "nginx", "pkcs7", "pkcs12", "private_key", "certificate", "ca_chain", "custom"]
+        # Validate bundle_type - UPDATED: Removed individual component types
+        valid_types = ["apache", "iis", "nginx", "custom"]
         if bundle_type not in valid_types:
             raise HTTPException(
                 status_code=400, 
@@ -85,24 +74,11 @@ async def download_bundle(
             except json.JSONDecodeError:
                 raise HTTPException(status_code=400, detail="Invalid components JSON")
         
-        # Handle special bundle types that need component auto-selection
-        if bundle_type in ["private_key", "certificate", "ca_chain"]:
-            parsed_components, parsed_formats = _auto_select_components_for_bundle_type(
-                bundle_type, session_id, parsed_formats
-            )
-            # For individual component downloads, instructions don't make sense
-            include_instructions = False
-        
-        # Map bundle_type to BundleType enum
+        # Map bundle_type to BundleType enum - UPDATED: Removed individual mappings
         bundle_type_mapping = {
             "apache": BundleType.APACHE,
             "iis": BundleType.IIS,
             "nginx": BundleType.NGINX,
-            "pkcs7": BundleType.PKCS7,
-            "pkcs12": BundleType.PKCS12,
-            "private_key": BundleType.CUSTOM,
-            "certificate": BundleType.CUSTOM,
-            "ca_chain": BundleType.CUSTOM,
             "custom": BundleType.CUSTOM
         }
         
@@ -156,68 +132,12 @@ async def download_bundle(
             detail="Internal server error while creating bundle"
         )
 
-def _auto_select_components_for_bundle_type(bundle_type: str, session_id: str, formats: dict) -> tuple[list, dict]:
-    """Auto-select components based on bundle type"""
-    from certificates.storage.session_pki_storage import session_pki_storage, PKIComponentType
-    
-    session = session_pki_storage.get_or_create_session(session_id)
-    components = []
-    updated_formats = formats.copy()
-    
-    if bundle_type == "private_key":
-        # Find private key component
-        for comp_id, component in session.components.items():
-            if component.type == PKIComponentType.PRIVATE_KEY:
-                components.append(comp_id)
-                # Set default format if not specified
-                format_key = f"privatekey_{comp_id}"
-                if format_key not in updated_formats:
-                    updated_formats[format_key] = "pem"
-                break
-                
-    elif bundle_type == "certificate":
-        # Find end-entity certificate
-        for comp_id, component in session.components.items():
-            if component.type == PKIComponentType.CERTIFICATE:
-                # Prefer non-CA certificates
-                if not component.metadata.get('is_ca', False):
-                    components.append(comp_id)
-                    format_key = f"certificate_{comp_id}"
-                    if format_key not in updated_formats:
-                        updated_formats[format_key] = "pem"
-                    break
-        # If no end-entity cert found, use any certificate
-        if not components:
-            for comp_id, component in session.components.items():
-                if component.type == PKIComponentType.CERTIFICATE:
-                    components.append(comp_id)
-                    format_key = f"certificate_{comp_id}"
-                    if format_key not in updated_formats:
-                        updated_formats[format_key] = "pem"
-                    break
-                    
-    elif bundle_type == "ca_chain":
-        # Find all CA certificates
-        for comp_id, component in session.components.items():
-            if component.type in [PKIComponentType.ROOT_CA, PKIComponentType.INTERMEDIATE_CA, PKIComponentType.ISSUING_CA]:
-                components.append(comp_id)
-                format_key = f"{component.type.type_name.lower()}_{comp_id}"
-                if format_key not in updated_formats:
-                    updated_formats[format_key] = "pem"
-    
-    return components, updated_formats
-
 def _get_bundle_filename(bundle_type: str, session_id: str) -> str:
-    """Generate appropriate filename for bundle type"""
+    """Generate appropriate filename for bundle type - UPDATED: Removed individual types"""
     filename_mapping = {
         "apache": f"apache-bundle-{session_id}.zip",
         "iis": f"iis-bundle-{session_id}.zip",
         "nginx": f"nginx-bundle-{session_id}.zip",
-        "pkcs7": f"custom-bundle-{session_id}.zip",
-        "pkcs12": f"custom-bundle-{session_id}.zip",
-        "private_key": f"private-key-{session_id}.zip",
-        "certificate": f"certificate-{session_id}.zip",
-        "ca_chain": f"ca-chain-{session_id}.zip",
         "custom": f"custom-bundle-{session_id}.zip"
     }
     return filename_mapping.get(bundle_type, f"{bundle_type}-bundle-{session_id}.zip")
@@ -240,49 +160,17 @@ async def get_available_bundle_types(
         # Use download service to analyze what's available
         available_info = download_service.get_available_bundle_types(session_id)
         
-        # Add our individual component bundle types
-        from certificates.storage.session_pki_storage import session_pki_storage, PKIComponentType
+        # UPDATED: Simplified - only show server bundles + custom
+        from certificates.storage.session_pki_storage import session_pki_storage
         session = session_pki_storage.get_or_create_session(session_id)
         
-        individual_bundles = []
-        
-        # Check for private key
-        if any(c.type == PKIComponentType.PRIVATE_KEY for c in session.components.values()):
-            individual_bundles.append({
-                "type": "private_key",
-                "name": "Private Key",
-                "description": "Download just the private key in selected format"
-            })
-        
-        # Check for certificate
-        if any(c.type == PKIComponentType.CERTIFICATE for c in session.components.values()):
-            individual_bundles.append({
-                "type": "certificate", 
-                "name": "Certificate",
-                "description": "Download just the certificate in selected format"
-            })
-        
-        # Check for CA certificates
-        if any(c.type in [PKIComponentType.ROOT_CA, PKIComponentType.INTERMEDIATE_CA, PKIComponentType.ISSUING_CA] 
-               for c in session.components.values()):
-            individual_bundles.append({
-                "type": "ca_chain",
-                "name": "CA Certificate Chain", 
-                "description": "Download CA certificates as a chain"
-            })
-        
-        # Always available if we have components
-        if session.components:
-            individual_bundles.append({
-                "type": "custom",
-                "name": "Custom Selection",
-                "description": "Select specific components and formats"
-            })
+        # Custom is always available if we have components
+        custom_available = bool(session.components)
         
         return {
             "session_id": session_id,
             "server_bundles": available_info["available_types"],
-            "individual_bundles": individual_bundles,
+            "custom_available": custom_available,
             "requirements_met": available_info["requirements_met"],
             "component_summary": available_info["component_summary"]
         }

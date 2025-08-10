@@ -346,20 +346,41 @@ class SecureZipCreator:
         password: Optional[str] = None,
         session_id: Optional[str] = None,
         selected_components: Optional[List] = None,
-        bundle_password: Optional[str] = None
+        bundle_password: Optional[str] = None,
+        bundle_type: str = "IIS/Windows",
+        p12_filename: Optional[str] = None
     ) -> Tuple[bytes, str]:
         """
-        Create password-protected ZIP file for IIS with PKCS#12 bundle and manifest.
+        Create password-protected ZIP file for IIS/PKCS12/PKCS7 bundles with manifest.
         Uses File Naming Service for standardized filenames.
+        
+        Args:
+            p12_bundle: PKCS#12/PKCS#7 bundle content (bytes)
+            iis_guide: Installation guide content (empty string for PKCS7/PKCS12)
+            password: Optional ZIP password (generated if None)
+            session_id: Session identifier for manifest
+            selected_components: List of PKI components for manifest
+            bundle_password: Optional bundle password (for PKCS#12 encryption)
+            bundle_type: Bundle type for manifest ("IIS/Windows", "PKCS12", "PKCS7")
+            p12_filename: Override filename (uses standard naming if None)
+            
+        Returns:
+            Tuple of (zip_data, zip_password)
         """
 
-        # Use File Naming Service for standardized PKCS#12 filename
-        p12_filename = get_standard_filename(PKIComponentType.CERTIFICATE, "PKCS12")
+        # Use provided filename or generate standardized filename
+        if p12_filename:
+            bundle_filename = p12_filename
+        else:
+            # Default IIS behavior - use PKCS12 filename
+            bundle_filename = get_standard_filename(PKIComponentType.CERTIFICATE, "PKCS12")
         
-        files = {
-            p12_filename: p12_bundle,
-            'IIS_INSTALLATION_GUIDE.txt': iis_guide
-        }
+        files = {}
+        files[bundle_filename] = p12_bundle
+        
+        # Add installation guide only if provided (empty for PKCS7/PKCS12)
+        if iis_guide:
+            files['IIS_INSTALLATION_GUIDE.txt'] = iis_guide
 
         # Generate password FIRST if not provided
         if password is None:
@@ -368,18 +389,18 @@ class SecureZipCreator:
         # Generate manifest using ACTUAL ZIP FILES instead of original components
         if session_id:
             manifest_components = self._create_iis_manifest_components(
-                p12_bundle, iis_guide, selected_components, bundle_password, p12_filename
+                p12_bundle, iis_guide, selected_components, bundle_password, bundle_filename
             )
             manifest = self._generate_content_manifest(
                 manifest_components, 
-                "IIS/Windows", 
+                bundle_type,  # Use dynamic bundle type
                 session_id, 
                 password,
                 bundle_password
             )
             files['CONTENT_MANIFEST.txt'] = manifest
         
-        logger.info(f"Creating IIS bundle with standardized filename: {p12_filename}")
+        logger.info(f"Creating {bundle_type} bundle with filename: {bundle_filename}")
         return self.create_protected_zip(files, password)
 
     def get_memory_usage_estimate(self, files: Mapping[str, Union[bytes, str]]) -> int:
@@ -630,21 +651,22 @@ class SecureZipCreator:
         )
         manifest_components.append(p12_component)
         
-        # Installation guide - use PRIVATE_KEY type with special metadata
-        iis_guide_component = PKIComponent(
-            id="iis_guide",
-            filename="IIS_INSTALLATION_GUIDE.txt",
-            content=iis_guide,
-            type=PKIComponentType.PRIVATE_KEY,  # Use as placeholder type
-            metadata={
-                "description": "IIS web server installation guide",
-                "file_type": "text",
-                "content_type": "installation_guide"
-            },
-            order=2,
-            uploaded_at=current_time
-        )
-        manifest_components.append(iis_guide_component)
+        # Installation guide - use PRIVATE_KEY type with special metadata (only if guide provided)
+        if iis_guide:
+            iis_guide_component = PKIComponent(
+                id="iis_guide",
+                filename="IIS_INSTALLATION_GUIDE.txt",
+                content=iis_guide,
+                type=PKIComponentType.PRIVATE_KEY,  # Use as placeholder type
+                metadata={
+                    "description": "IIS web server installation guide",
+                    "file_type": "text",
+                    "content_type": "installation_guide"
+                },
+                order=2,
+                uploaded_at=current_time
+            )
+            manifest_components.append(iis_guide_component)
 
         return manifest_components
 

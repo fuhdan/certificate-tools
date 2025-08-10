@@ -22,6 +22,7 @@ const AdvancedModal = ({ onClose }) => {
   const [downloadResult, setDownloadResult] = useState(null)
 
   const [pkcs7Format, setPkcs7Format] = useState('pem')
+  const [pkcs12Format, setPkcs12Format] = useState('encrypted')
 
   // Get format options for component types
   const getFormatOptions = (componentType) => {
@@ -161,6 +162,12 @@ const AdvancedModal = ({ onClose }) => {
         tooltip: hasEndEntityCert && hasCACerts
           ? "Download PKCS#7 certificate chain"
           : `Missing: ${!hasEndEntityCert ? 'End-entity Certificate' : ''} ${!hasCACerts ? 'CA Certificates' : ''}`.trim()
+      },
+      pkcs12: {  // ← ADD THIS
+        enabled: hasEndEntityCert && hasPrivateKey,
+        tooltip: hasEndEntityCert && hasPrivateKey
+          ? "Download PKCS#12 bundle with certificate and private key"
+          : `Missing: ${!hasEndEntityCert ? 'End-entity Certificate' : ''} ${!hasPrivateKey ? 'Private Key' : ''}`.trim()
       },
       privateKey: {
         enabled: hasPrivateKey,
@@ -396,9 +403,17 @@ const AdvancedModal = ({ onClose }) => {
                 <div className={styles.splitButtonContainer}>
                   <button 
                     className={`${styles.quickActionButton} ${styles.splitButtonMain} ${!bundleReqs.pkcs7.enabled ? styles.disabled : ''}`}
-                    onClick={() => {
+                    onClick={async () => {
                       if (bundleReqs.pkcs7.enabled) {
-                        downloadAPI.downloadPKCS7Bundle(pkcs7Format) // Use selected format
+                        try {
+                          const result = await downloadAPI.downloadPKCS7Bundle(pkcs7Format)
+                          if (result.zipPassword) {
+                            setDownloadResult(result)
+                            setShowPasswordModal(true)
+                          }
+                        } catch (error) {
+                          console.error('PKCS7 download failed:', error)
+                        }
                       }
                     }}
                     disabled={!bundleReqs.pkcs7.enabled}
@@ -419,6 +434,45 @@ const AdvancedModal = ({ onClose }) => {
                     >
                       <option value="pem">PEM</option>
                       <option value="der">DER</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* PKCS12 Bundle with dropdown */}
+                <div className={styles.splitButtonContainer}>
+                  <button 
+                    className={`${styles.quickActionButton} ${styles.splitButtonMain} ${!bundleReqs.pkcs12.enabled ? styles.disabled : ''}`}
+                    onClick={async () => {
+                      if (bundleReqs.pkcs12.enabled) {
+                        try {
+                          const result = await downloadAPI.downloadPKCS12Bundle(pkcs12Format)
+                          if (result.zipPassword) {
+                            setDownloadResult(result)
+                            setShowPasswordModal(true)
+                          }
+                        } catch (error) {
+                          console.error('PKCS7 download failed:', error)
+                        }
+                      }
+                    }}
+                    disabled={!bundleReqs.pkcs12.enabled}
+                    title={bundleReqs.pkcs12.tooltip}
+                  >
+                    <Package size={16} />
+                    PKCS12 Bundle ({pkcs12Format === 'encrypted' ? 'Encrypted' : 'Unencrypted'})
+                  </button>
+                  
+                  <div className={styles.splitButtonDropdown}>
+                    <select 
+                      className={styles.inlineDropdown}
+                      value={pkcs12Format}
+                      onChange={(e) => {
+                        setPkcs12Format(e.target.value) // Just update the format, don't download
+                      }}
+                      disabled={!bundleReqs.pkcs12.enabled}
+                    >
+                      <option value="encrypted">Encrypted</option>
+                      <option value="unencrypted">Unencrypted</option>
                     </select>
                   </div>
                 </div>

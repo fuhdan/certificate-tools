@@ -20,6 +20,8 @@ class BundleType(str, Enum):
     APACHE = "apache"
     IIS = "iis"
     NGINX = "nginx"
+    PKCS7 = "pkcs7"
+    PKCS12 = "pkcs12"
     CUSTOM = "custom"
 
 class BundleConfig(BaseModel):
@@ -59,31 +61,31 @@ class DownloadService:
         if not session.components:
             raise ValueError("No PKI components found in session")
         
-        # Find primary certificate
+        # Find primary certificate for bundles that need it
         primary_cert = self._find_primary_certificate(session)
-        if not primary_cert:
-            raise ValueError("No end-entity certificate found")
         
-        # Extract certificate data based on bundle type
-        certificate_data = self._extract_certificate_data(
-            primary_cert, session, session_id, config.bundle_type
-        )
-        
-        # Prepare download package
+        # Prepare download package based on bundle type
         files = {}
         bundle_password = None
+        selected_components = list(session.components.values())
 
         logger.debug(f"Preparing bundle of type: {config.bundle_type}")
         
         if config.bundle_type in [BundleType.APACHE, BundleType.NGINX]:
-            logger.debug("Taking Apache/Nginx path")
             files, selected_components = self._prepare_apache_nginx_bundle(
-                certificate_data, session, config, include_instructions
+                primary_cert, session, config, include_instructions
             )
         elif config.bundle_type == BundleType.IIS:
-            logger.debug("Taking IIS path")
-            files, selected_components, bundle_password = self._prepare_p12_bundle(
-                certificate_data, session, config, include_instructions
+            files, selected_components, bundle_password = self._prepare_iis_bundle(
+                primary_cert, session, config, include_instructions
+            )
+        elif config.bundle_type == BundleType.PKCS7:
+            files, selected_components = self._prepare_pkcs7_bundle(
+                primary_cert, session, config
+            )
+        elif config.bundle_type == BundleType.PKCS12:
+            files, selected_components, bundle_password = self._prepare_pkcs12_bundle(
+                primary_cert, session, config
             )
         elif config.bundle_type == BundleType.CUSTOM:
             files, selected_components, bundle_password = self._prepare_custom_bundle(
@@ -107,10 +109,11 @@ class DownloadService:
                 return component
         return None
     
-    def _extract_certificate_data(self, primary_cert, session, session_id, bundle_type):
-        """Extract certificate data based on bundle type requirements"""
-        logger.debug(f"Extracting certificate data for {bundle_type} bundle")
-        
+    def _extract_certificate_data(self, primary_cert, session):
+        """Extract certificate data from session components"""
+        if not primary_cert:
+            raise ValueError("No end-entity certificate found")
+            
         certificate_pem = primary_cert.content
         if not certificate_pem:
             raise ValueError("Certificate PEM not found")
@@ -121,10 +124,6 @@ class DownloadService:
             if component.type == PKIComponentType.PRIVATE_KEY:
                 private_key_pem = component.content
                 break
-        
-        # Private key is required for IIS, optional for others
-        if bundle_type == BundleType.IIS and not private_key_pem:
-            raise ValueError("No private key found. IIS requires a private key for PKCS#12 bundle.")
         
         # Build CA bundle from CA components
         ca_bundle_parts = []
@@ -150,8 +149,9 @@ class DownloadService:
             'filename': primary_cert.filename
         }
     
-    def _prepare_apache_nginx_bundle(self, certificate_data, session, config, include_instructions):
+    def _prepare_apache_nginx_bundle(self, primary_cert, session, config, include_instructions):
         """Prepare Apache/Nginx bundle with separate files"""
+        certificate_data = self._extract_certificate_data(primary_cert, session)
         files = {}
         
         # Add certificate files with standardized names
@@ -163,10 +163,6 @@ class DownloadService:
         if certificate_data['ca_bundle']:
             files['ca-bundle.crt'] = certificate_data['ca_bundle']
         
-        # Initialize guides as empty strings
-        apache_guide = ''
-        nginx_guide = ''
-        
         # Add instructions if requested
         if include_instructions:
             if config.bundle_type == BundleType.APACHE:
@@ -175,8 +171,6 @@ class DownloadService:
                 )
                 if apache_guide:
                     files['APACHE_INSTALLATION_GUIDE.txt'] = apache_guide
-                else:
-                    apache_guide = ''  # Ensure it's empty string, not None
             
             if config.bundle_type == BundleType.NGINX:
                 nginx_guide = self.instruction_generator.generate_instructions(
@@ -184,8 +178,6 @@ class DownloadService:
                 )
                 if nginx_guide:
                     files['NGINX_INSTALLATION_GUIDE.txt'] = nginx_guide
-                else:
-                    nginx_guide = ''  # Ensure it's empty string, not None
             
             # For Apache bundles, also generate nginx guide
             if config.bundle_type == BundleType.APACHE:
@@ -194,16 +186,20 @@ class DownloadService:
                 )
                 if nginx_guide:
                     files['NGINX_INSTALLATION_GUIDE.txt'] = nginx_guide
-                else:
-                    nginx_guide = ''  # Ensure it's empty string, not None
         
         # Get selected components for manifest
         selected_components = list(session.components.values())
         
         return files, selected_components
     
-    def _prepare_p12_bundle(self, certificate_data, session, config, include_instructions):
-        """Prepare PKCS#12 bundle using enhanced format_converter"""
+    def _prepare_iis_bundle(self, primary_cert, session, config, include_instructions):
+        """Prepare IIS PKCS#12 bundle"""
+        certificate_data = self._extract_certificate_data(primary_cert, session)
+        
+        # IIS requires private key
+        if not certificate_data['private_key']:
+            raise ValueError("No private key found. IIS requires a private key for PKCS#12 bundle.")
+        
         files = {}
         
         # Generate PKCS#12 password
@@ -211,7 +207,7 @@ class DownloadService:
 
         logger.debug(f"Creating PKCS#12 with cert: {bool(certificate_data['certificate'])}, key: {bool(certificate_data['private_key'])}")
         
-        # Use enhanced format_converter for PKCS#12 creation
+        # Use format_converter for PKCS#12 creation
         p12_bundle = format_converter.create_pkcs12_bundle(
             certificate_data['certificate'],
             certificate_data['private_key'],
@@ -221,7 +217,7 @@ class DownloadService:
         logger.debug(f"PKCS#12 bundle created successfully, size: {len(p12_bundle)}")
         
         # Choose filename extension based on whether IIS instructions are included
-        if config.bundle_type == BundleType.IIS and include_instructions:
+        if include_instructions:
             p12_filename = get_standard_filename(PKIComponentType.CERTIFICATE, "PFX")
         else:
             p12_filename = get_standard_filename(PKIComponentType.CERTIFICATE, "PKCS12")
@@ -237,9 +233,83 @@ class DownloadService:
         
         selected_components = list(session.components.values())
         return files, selected_components, bundle_password
+
+    def _prepare_pkcs7_bundle(self, primary_cert, session, config):
+        """Prepare PKCS7 bundle as certificate chain"""
+        certificate_data = self._extract_certificate_data(primary_cert, session)
+        files = {}
+        
+        # Get format from config
+        format_type = config.format_selections.get('pkcs7', 'pem')
+        
+        # Collect all certificates for the chain
+        cert_chain = []
+        
+        # Add end-entity certificate
+        if certificate_data['certificate']:
+            cert_chain.append(certificate_data['certificate'])
+        
+        # Add CA bundle  
+        if certificate_data['ca_bundle']:
+            cert_chain.append(certificate_data['ca_bundle'])
+        
+        if not cert_chain:
+            raise ValueError("No certificates found for PKCS7 bundle")
+        
+        # Create certificate chain file
+        chain_content = '\n'.join(cert_chain)
+        
+        if format_type == 'der':
+            # Use existing format_converter to convert PEM chain to DER
+            chain_content = format_converter.convert_certificate(chain_content, 'der')
+            filename = 'certificate-chain.p7b'
+        else:
+            # PEM format - just use the concatenated PEM
+            filename = 'certificate-chain.p7c'
+        
+        files[filename] = chain_content
+        
+        # Use original session components for manifest (same as IIS)
+        selected_components = list(session.components.values())
+        return files, selected_components
+
+    def _prepare_pkcs12_bundle(self, primary_cert, session, config):
+        """Prepare standalone PKCS12 bundle"""
+        certificate_data = self._extract_certificate_data(primary_cert, session)
+        
+        # PKCS12 requires private key
+        if not certificate_data['private_key']:
+            raise ValueError("No private key found. PKCS12 requires a private key.")
+        
+        files = {}
+        
+        # Get encryption setting from config
+        encryption = config.format_selections.get('pkcs12', 'encrypted')
+        
+        # Generate password only if encrypted
+        bundle_password = None
+        if encryption == 'encrypted':
+            bundle_password = secure_zip_creator.generate_secure_password()
+        
+        # Use format_converter with optional password (None for unencrypted)
+        p12_bundle = format_converter.create_pkcs12_bundle(
+            certificate_data['certificate'],
+            certificate_data['private_key'], 
+            certificate_data['ca_bundle'],
+            bundle_password  # Will be None for unencrypted
+        )
+        
+        # Choose filename
+        filename = get_standard_filename(PKIComponentType.CERTIFICATE, "PKCS12")
+        files[filename] = p12_bundle
+        
+        # Use original session components for manifest (same as IIS)
+        selected_components = list(session.components.values())
+        
+        return files, selected_components, bundle_password
     
     def _prepare_custom_bundle(self, session, config, include_instructions):
-        """Prepare custom bundle using enhanced format_converter service"""
+        """Prepare custom bundle using format_converter service"""
         files = {}
         selected_components = []
         bundle_password = None  # For encrypted formats
@@ -257,8 +327,7 @@ class DownloadService:
                 
             component = session.components[component_id]
             
-            # Get format selection for this component - try both formats
-            # Frontend might send just component_id as key
+            # Get format selection for this component
             selected_format = config.format_selections.get(component_id, 'pem')
             if selected_format == 'pem':  # If not found, try with type prefix
                 format_key = f"{component.type.type_name.lower()}_{component_id}"
@@ -399,6 +468,52 @@ class DownloadService:
                     selected_components=selected_components,
                     bundle_password=bundle_password
                 )
+            elif bundle_type == BundleType.PKCS12:
+                # Use IIS bundle creator but with PKCS12 settings
+                p12_filename = None
+                p12_content = None
+                for filename, content in files.items():
+                    if filename.lower().endswith(('.p12')):
+                        p12_filename = filename
+                        p12_content = content
+                        break
+                
+                if p12_content is None:
+                    raise ValueError("No PKCS#12 bundle found in files")
+                
+                zip_data, password = secure_zip_creator.create_iis_bundle(
+                    p12_bundle=p12_content,
+                    iis_guide='',  # No instructions for standalone PKCS12
+                    password=None,
+                    session_id=session_id,
+                    selected_components=selected_components,
+                    bundle_password=bundle_password,
+                    bundle_type="PKCS12",
+                    p12_filename=p12_filename
+                )
+            elif bundle_type == BundleType.PKCS7:
+                # Use IIS bundle creator but with PKCS7 settings  
+                p7_filename = None
+                p7_content = None
+                for filename, content in files.items():
+                    if filename.lower().endswith(('.p7b', '.p7c')):
+                        p7_filename = filename
+                        p7_content = content
+                        break
+                
+                if p7_content is None:
+                    raise ValueError("No PKCS7 bundle found in files")
+                
+                zip_data, password = secure_zip_creator.create_iis_bundle(
+                    p12_bundle=p7_content,  # Reuse p12_bundle param for PKCS7 content
+                    iis_guide='',  # No instructions for PKCS7
+                    password=None,
+                    session_id=session_id,
+                    selected_components=selected_components,
+                    bundle_password=None,
+                    bundle_type="PKCS7",
+                    p12_filename=p7_filename
+                )
             else:
                 # CUSTOM bundle - dedicated clean implementation
                 bundle_password_type = getattr(self, '_bundle_password_type', None)
@@ -485,6 +600,38 @@ class DownloadService:
                     "ca_bundle": has_ca_certs,
                     "can_create": False,
                     "missing": "private_key"
+                }
+            
+            # PKCS7 requires certificate + CA certs
+            if has_certificate and has_ca_certs:
+                available_types.append(BundleType.PKCS7)
+                requirements_met[BundleType.PKCS7] = {
+                    "certificate": has_certificate,
+                    "ca_certificates": has_ca_certs,
+                    "can_create": True
+                }
+            else:
+                requirements_met[BundleType.PKCS7] = {
+                    "certificate": has_certificate,
+                    "ca_certificates": has_ca_certs,
+                    "can_create": False,
+                    "missing": "ca_certificates" if has_certificate else "certificate"
+                }
+
+            # PKCS12 requires certificate + private key  
+            if has_certificate and has_private_key:
+                available_types.append(BundleType.PKCS12)
+                requirements_met[BundleType.PKCS12] = {
+                    "certificate": has_certificate,
+                    "private_key": has_private_key,
+                    "can_create": True
+                }
+            else:
+                requirements_met[BundleType.PKCS12] = {
+                    "certificate": has_certificate,
+                    "private_key": has_private_key,
+                    "can_create": False,
+                    "missing": "private_key" if has_certificate else "certificate"
                 }
             
             # Custom is always available if we have any components

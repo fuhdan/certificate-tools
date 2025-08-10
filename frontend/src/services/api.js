@@ -208,6 +208,46 @@ export const downloadAPI = {
   },
 
   /**
+   * Download PKCS7 bundle
+   * @param {string} format - Format for PKCS7 (pem, der)
+   */
+  async downloadPKCS7Bundle(format = 'pem') {
+    try {
+      const sessionId = sessionManager.getSessionId()
+      const result = await this.downloadBundle('pkcs7', {
+        formats: { pkcs7: format },
+        includeInstructions: false
+      })
+      
+      console.log('PKCS7 bundle downloaded successfully')
+      return result
+    } catch (error) {
+      console.error('Error downloading PKCS7 bundle:', error)
+      throw new Error(error.response?.data?.detail || 'PKCS7 download failed')
+    }
+  },
+
+  /**
+   * Download PKCS12 bundle
+   * @param {string} encryption - Encryption type (encrypted, unencrypted)
+   */
+  async downloadPKCS12Bundle(encryption = 'encrypted') {
+    try {
+      const sessionId = sessionManager.getSessionId()
+      const result = await this.downloadBundle('pkcs12', {
+        formats: { pkcs12: encryption },
+        includeInstructions: false
+      })
+      
+      console.log('PKCS12 bundle downloaded successfully')
+      return result
+    } catch (error) {
+      console.error('Error downloading PKCS12 bundle:', error)
+      throw new Error(error.response?.data?.detail || 'PKCS12 download failed')
+    }
+  },
+
+  /**
    * Download private key only
    * @param {string} format - Format for private key (pem, der, pkcs8, pkcs8_encrypted, pem_encrypted)
    */

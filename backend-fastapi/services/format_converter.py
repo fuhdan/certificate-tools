@@ -179,7 +179,7 @@ class FormatConverter:
 
     # ===== ENHANCED METHODS FOR BUNDLE CREATION =====
 
-    def create_pkcs12_bundle(self, cert_pem: str, key_pem: str, ca_bundle: Optional[str], password: str) -> bytes:
+    def create_pkcs12_bundle(self, cert_pem: str, key_pem: str, ca_bundle: Optional[str], password: Optional[str] = None) -> bytes:
         """
         Create PKCS#12 bundle from PEM components
         
@@ -187,7 +187,7 @@ class FormatConverter:
             cert_pem: Certificate in PEM format
             key_pem: Private key in PEM format  
             ca_bundle: CA certificate chain in PEM format (optional)
-            password: Password to encrypt the PKCS#12 bundle
+            password: Password to encrypt the PKCS#12 bundle (optional - None creates unencrypted)
             
         Returns:
             PKCS#12 bundle as bytes
@@ -214,13 +214,19 @@ class FormatConverter:
             from cryptography.hazmat.primitives.serialization.pkcs12 import PKCS12PrivateKeyTypes
             validated_key = cast(PKCS12PrivateKeyTypes, private_key)
             
+            # FIXED: Handle optional password properly
+            if password and password.strip():
+                encryption_algorithm = serialization.BestAvailableEncryption(password.encode())
+            else:
+                encryption_algorithm = serialization.NoEncryption()
+            
             # Create PKCS#12 bundle with validated key type
             p12_data = pkcs12.serialize_key_and_certificates(
                 name=b"certificate-bundle",
                 key=validated_key,
                 cert=cert,
                 cas=ca_certs if ca_certs else None,
-                encryption_algorithm=serialization.BestAvailableEncryption(password.encode())
+                encryption_algorithm=encryption_algorithm
             )
             
             logger.info(f"Created PKCS#12 bundle ({len(p12_data)} bytes)")

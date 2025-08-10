@@ -29,6 +29,8 @@ async def download_bundle(
     - apache: Apache server bundle (cert + key + chain + guides)
     - iis: IIS server bundle (PKCS#12 + guides)  
     - nginx: Nginx server bundle (cert + key + chain + guides)
+    - pkcs7: PKCS#7 certificate chain (PEM or DER format)
+    - pkcs12: PKCS#12 bundle (encrypted or unencrypted)
     - private_key: Just the private key in selected format
     - certificate: Just the certificate in selected format
     - ca_chain: Just the CA certificate chain
@@ -36,6 +38,8 @@ async def download_bundle(
     
     Examples:
     - POST /download/apache/{session_id}?include_instructions=true
+    - POST /download/pkcs7/{session_id}?formats={"pkcs7":"pem"}
+    - POST /download/pkcs12/{session_id}?formats={"pkcs12":"encrypted"}
     - POST /download/private_key/{session_id}?formats={"private_key":"pkcs8_encrypted"}
     - POST /download/certificate/{session_id}?formats={"certificate":"der"}
     - POST /download/custom/{session_id}?components=["id1","id2"]&formats={"cert":"pem"}
@@ -58,7 +62,7 @@ async def download_bundle(
             raise HTTPException(status_code=400, detail="Session ID validation failed")
         
         # Validate bundle_type
-        valid_types = ["apache", "iis", "nginx", "private_key", "certificate", "ca_chain", "custom"]
+        valid_types = ["apache", "iis", "nginx", "pkcs7", "pkcs12", "private_key", "certificate", "ca_chain", "custom"]
         if bundle_type not in valid_types:
             raise HTTPException(
                 status_code=400, 
@@ -94,6 +98,8 @@ async def download_bundle(
             "apache": BundleType.APACHE,
             "iis": BundleType.IIS,
             "nginx": BundleType.NGINX,
+            "pkcs7": BundleType.PKCS7,
+            "pkcs12": BundleType.PKCS12,
             "private_key": BundleType.CUSTOM,
             "certificate": BundleType.CUSTOM,
             "ca_chain": BundleType.CUSTOM,
@@ -207,6 +213,8 @@ def _get_bundle_filename(bundle_type: str, session_id: str) -> str:
         "apache": f"apache-bundle-{session_id}.zip",
         "iis": f"iis-bundle-{session_id}.zip",
         "nginx": f"nginx-bundle-{session_id}.zip",
+        "pkcs7": f"custom-bundle-{session_id}.zip",
+        "pkcs12": f"custom-bundle-{session_id}.zip",
         "private_key": f"private-key-{session_id}.zip",
         "certificate": f"certificate-{session_id}.zip",
         "ca_chain": f"ca-chain-{session_id}.zip",

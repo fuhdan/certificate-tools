@@ -1,1494 +1,1624 @@
-# Technical Documentation - Certificate Analysis Tool
+---
 
-This document provides detailed technical information about the implementation, architecture, and internal workings of the Certificate Analysis Tool.
+## Deployment Architecture
+
+### Docker Compose Infrastructure
+
+```yaml
+# docker-compose.yml
+version: '3.8'
+
+services:
+  nginx:
+    build: ./nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - frontend
+      - backend-fastapi
+    volumes:
+      - ./nginx/ssl:/etc/nginx/ssl:ro  # SSL certificates for HTTPS
+    networks:
+      - certificate-network
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    container_name: certificate-frontend
+    expose:
+      - "80"
+    environment:
+      - NODE_ENV=production
+    networks:
+      - certificate-network
+    restart: unless-stopped
+
+  backend-fastapi:
+    build: ./backend-fastapi
+    container_name: certificate-backend
+    expose:
+      - "8000"
+    environment:
+      - SECRET_KEY=${SECRET_KEY:-your-secret-key-change-in-production}
+      - DEBUG=OFF
+      - ACCESS_TOKEN_EXPIRE_MINUTES=30
+      - MAX_FILE_SIZE=10485760  # 10MB
+    networks:
+      - certificate-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  certificate-network:
+    driver: bridge
+
+volumes:
+  ssl-certs:
+    driver: local
+```
+
+### Nginx Configuration for Production
+
+```nginx
+# nginx/nginx.conf
+upstream frontend {
+    server frontend:80;
+}
+
+upstream backend {
+    server backend-fastapi:8000;
+}
+
+server {
+    listen 80;
+    server_name your-domain.com;
+    
+    # Redirect HTTP to HTTPS
+    return 301 https://$server_name$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name your-domain.com;
+    
+    # SSL Configuration
+    ssl_certificate /etc/nginx/ssl/cert.pem;
+    ssl_certificate_key /etc/nginx/ssl/key.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-RSA-AES256-GCM-SHA512:DHE-RSA-AES256-GCM-SHA512:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES256-GCM-SHA384;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache shared:SSL:10m;
+    
+    # Security Headers
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Referrer-Policy "no-referrer-when-downgrade" always;
+    add_header Content-Security-Policy "default-src 'self' http: https: data: blob: 'unsafe-inline'" always;
+    
+    # File Upload Limits
+    client_max_body_size 10M;
+    client_body_timeout 60s;
+    client_header_timeout 60s;
+    
+    # API Proxy
+    location /api/ {
+        proxy_pass http://backend/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+    
+    # WebSocket Support (if needed for real-time features)
+    location /ws/ {
+        proxy_pass http://backend/ws/;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+    
+    # Frontend SPA
+    location / {
+        proxy_pass http://frontend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        
+        # SPA fallback
+        try_files $uri $uri/ /index.html;
+    }
+    
+    # Static assets caching
+    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg)$ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+        proxy_pass http://frontend;
+    }
+}
+```
+
+### Container Health Monitoring
+
+```python
+# backend-fastapi/health.py
+from fastapi import APIRouter
+from datetime import datetime
+import psutil
+import os
+
+health_router = APIRouter()
+
+@health_router.get("/health")
+async def health_check():
+    """
+    Comprehensive health check endpoint
+    """
+    try:
+        # System metrics
+        cpu_percent = psutil.cpu_percent()
+        memory = psutil.virtual_memory()
+        disk = psutil.disk_usage('/')
+        
+        # Application metrics
+        uptime = datetime.utcnow() - app_start_time
+        active_sessions = len(session_manager.sessions)
+        
+        health_status = {
+            "status": "healthy",
+            "timestamp": datetime.utcnow().isoformat(),
+            "uptime_seconds": uptime.total_seconds(),
+            "system": {
+                "cpu_percent": cpu_percent,
+                "memory_percent": memory.percent,
+                "disk_percent": (disk.used / disk.total) * 100,
+                "load_average": os.getloadavg() if hasattr(os, 'getloadavg') else None
+            },
+            "application": {
+                "active_sessions": active_sessions,
+                "version": "1.0.0",
+                "environment": os.getenv("ENVIRONMENT", "development")
+            }
+        }
+        
+        # Determine overall health
+        if cpu_percent > 90 or memory.percent > 90:
+            health_status["status"] = "warning"
+        
+        if cpu_percent > 95 or memory.percent > 95:
+            health_status["status"] = "unhealthy"
+            
+        return health_status
+        
+    except Exception as e:
+        return {
+            "status": "unhealthy",
+            "timestamp": datetime.utcnow().isoformat(),
+            "error": str(e)
+        }
+```
+
+---
+
+## Performance Considerations
+
+### Memory Management Strategy
+
+```python
+# backend-fastapi/performance_manager.py
+import gc
+import threading
+import time
+from typing import Dict, Any
+from datetime import datetime, timedelta
+
+class PerformanceManager:
+    
+    def __init__(self):
+        self.memory_threshold = 500 * 1024 * 1024  # 500MB
+        self.cleanup_interval = 300  # 5 minutes
+        self.performance_metrics = {
+            'requests_per_second': 0,
+            'average_response_time': 0,
+            'memory_usage': 0,
+            'active_sessions': 0
+        }
+        
+        # Start background cleanup thread
+        self.cleanup_thread = threading.Thread(target=self._cleanup_worker, daemon=True)
+        self.cleanup_thread.start()
+    
+    def _cleanup_worker(self):
+        """
+        Background worker for memory cleanup and session management
+        """
+        while True:
+            try:
+                # Clean expired sessions
+                self._cleanup_expired_sessions()
+                
+                # Force garbage collection if memory usage is high
+                current_memory = psutil.Process().memory_info().rss
+                if current_memory > self.memory_threshold:
+                    gc.collect()
+                    
+                # Update performance metrics
+                self._update_performance_metrics()
+                
+                time.sleep(self.cleanup_interval)
+                
+            except Exception as e:
+                logger.error(f"Cleanup worker error: {str(e)}")
+                time.sleep(60)  # Wait before retrying
+    
+    def _cleanup_expired_sessions(self):
+        """
+        Remove sessions that haven't been accessed recently
+        """
+        current_time = datetime.utcnow()
+        expired_sessions = []
+        
+        for session_id, session_data in session_manager.sessions.items():
+            last_accessed = session_data.get('last_accessed', current_time)
+            if current_time - last_accessed > timedelta(minutes=30):
+                expired_sessions.append(session_id)
+        
+        for session_id in expired_sessions:
+            session_manager.delete_session(session_id)
+            logger.info(f"Cleaned up expired session: {session_id}")
+    
+    def optimize_certificate_storage(self, session_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Optimize certificate storage to reduce memory footprint
+        """
+        optimized_data = {}
+        
+        for key, value in session_data.items():
+            if key in ['certificates', 'private_keys', 'csrs']:
+                # Store only essential data, remove large binary objects when not needed
+                optimized_data[key] = {}
+                for item_id, item_data in value.items():
+                    optimized_item = {
+                        'common_name': item_data.get('common_name'),
+                        'serial_number': item_data.get('serial_number'),
+                        'validity_period': item_data.get('validity_period'),
+                        'issuer': item_data.get('issuer'),
+                        'key_size': item_data.get('key_size'),
+                        'signature_algorithm': item_data.get('signature_algorithm'),
+                        'pem_content': item_data.get('pem_content')  # Keep PEM for downloads
+                        # Remove 'crypto_object' to save memory when not actively validating
+                    }
+                    optimized_data[key][item_id] = optimized_item
+            else:
+                optimized_data[key] = value
+        
+        return optimized_data
+```
+
+### Caching Strategy Implementation
+
+```python
+# backend-fastapi/cache_manager.py
+import hashlib
+import json
+from functools import wraps
+from typing import Any, Callable, Optional
+import time
+
+class CacheManager:
+    
+    def __init__(self, max_size: int = 1000, ttl: int = 3600):
+        self.cache = {}
+        self.access_times = {}
+        self.max_size = max_size
+        self.ttl = ttl  # Time to live in seconds
+    
+    def cache_key(self, *args, **kwargs) -> str:
+        """
+        Generate cache key from function arguments
+        """
+        key_data = {
+            'args': args,
+            'kwargs': sorted(kwargs.items())
+        }
+        key_string = json.dumps(key_data, sort_keys=True, default=str)
+        return hashlib.md5(key_string.encode()).hexdigest()
+    
+    def get(self, key: str) -> Optional[Any]:
+        """
+        Get cached value if it exists and hasn't expired
+        """
+        if key not in self.cache:
+            return None
+        
+        # Check if expired
+        if time.time() - self.access_times[key] > self.ttl:
+            del self.cache[key]
+            del self.access_times[key]
+            return None
+        
+        # Update access time
+        self.access_times[key] = time.time()
+        return self.cache[key]
+    
+    def set(self, key: str, value: Any):
+        """
+        Store value in cache with LRU eviction
+        """
+        # Evict oldest if cache is full
+        if len(self.cache) >= self.max_size:
+            oldest_key = min(self.access_times, key=self.access_times.get)
+            del self.cache[oldest_key]
+            del self.access_times[oldest_key]
+        
+        self.cache[key] = value
+        self.access_times[key] = time.time()
+    
+    def cached_validation(self, func: Callable) -> Callable:
+        """
+        Decorator for caching validation results
+        """
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            cache_key = self.cache_key(*args, **kwargs)
+            cached_result = self.get(cache_key)
+            
+            if cached_result is not None:
+                return cached_result
+            
+            result = func(*args, **kwargs)
+            self.set(cache_key, result)
+            return result
+        
+        return wrapper
+
+# Usage example
+cache_manager = CacheManager(max_size=500, ttl=1800)  # 30 minutes TTL
+
+@cache_manager.cached_validation
+def validate_certificate_chain(certificates: list) -> dict:
+    """
+    Expensive validation operation that benefits from caching
+    """
+    # Perform complex validation logic
+    return validation_results
+```
+
+### Database Scaling Considerations
+
+```python
+# backend-fastapi/scaling_strategy.py
+from typing import Dict, List, Any
+import redis
+import json
+from datetime import datetime, timedelta
+
+class ScalingStrategy:
+    """
+    Strategy for scaling beyond single-instance deployment
+    """
+    
+    def __init__(self, redis_url: str = None):
+        self.redis_client = redis.Redis.from_url(redis_url) if redis_url else None
+        self.local_cache = {}
+    
+    def distributed_session_storage(self, session_id: str, data: Dict[str, Any]):
+        """
+        Store session data in Redis for multi-instance deployment
+        """
+        if self.redis_client:
+            # Serialize complex objects for Redis storage
+            serializable_data = self._make_serializable(data)
+            self.redis_client.setex(
+                f"session:{session_id}",
+                timedelta(minutes=30),
+                json.dumps(serializable_data)
+            )
+        else:
+            # Fallback to local storage
+            self.local_cache[session_id] = data
+    
+    def get_distributed_session(self, session_id: str) -> Dict[str, Any]:
+        """
+        Retrieve session data from distributed storage
+        """
+        if self.redis_client:
+            data = self.redis_client.get(f"session:{session_id}")
+            if data:
+                return json.loads(data)
+        else:
+            return self.local_cache.get(session_id)
+        
+        return None
+    
+    def _make_serializable(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Convert complex objects to JSON-serializable format
+        """
+        serializable = {}
+        
+        for key, value in data.items():
+            if key in ['certificates', 'private_keys', 'csrs']:
+                serializable[key] = {}
+                for item_id, item_data in value.items():
+                    # Store only JSON-serializable data
+                    serializable[key][item_id] = {
+                        k: v for k, v in item_data.items() 
+                        if k != 'crypto_object'  # Exclude cryptography objects
+                    }
+            else:
+                serializable[key] = value
+        
+        return serializable
+    
+    def load_balancing_strategy(self) -> Dict[str, Any]:
+        """
+        Configuration for load balancing multiple instances
+        """
+        return {
+            "strategy": "round_robin",
+            "health_check_interval": 30,
+            "max_connections_per_instance": 100,
+            "session_affinity": False,  # Use distributed sessions
+            "auto_scaling": {
+                "min_instances": 2,
+                "max_instances": 10,
+                "cpu_threshold": 70,
+                "memory_threshold": 80
+            }
+        }
+```
+
+### Performance Monitoring
+
+```mermaid
+graph TD
+    subgraph "Performance Monitoring"
+        A[Request Metrics] --> B[Response Time Tracking]
+        B --> C[Memory Usage Monitoring]
+        C --> D[Session Count Tracking]
+        D --> E[Error Rate Monitoring]
+        
+        E --> F{Performance Threshold?}
+        F -->|Normal| G[Continue Monitoring]
+        F -->|Warning| H[Scale Resources]
+        F -->|Critical| I[Alert + Auto-Scale]
+        
+        H --> J[Add Container Instance]
+        I --> K[Emergency Scaling]
+        J --> G
+        K --> G
+    end
+    
+    subgraph "Auto-Scaling Triggers"
+        L[CPU > 70%] --> M[Scale Up Decision]
+        N[Memory > 80%] --> M
+        O[Response Time > 2s] --> M
+        P[Error Rate > 5%] --> M
+        
+        M --> Q[Deploy New Instance]
+        Q --> R[Update Load Balancer]
+        R --> S[Health Check New Instance]
+        S --> T[Route Traffic]
+    end
+```
+
+---
+
+## Monitoring and Observability
+
+### Logging Strategy
+
+```python
+# backend-fastapi/logging_config.py
+import logging
+import json
+from datetime import datetime
+from typing import Any, Dict
+
+class StructuredLogger:
+    
+    def __init__(self, name: str):
+        self.logger = logging.getLogger(name)
+        self.logger.setLevel(logging.INFO)
+        
+        # Create structured formatter
+        handler = logging.StreamHandler()
+        formatter = logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
+        handler.setFormatter(formatter)
+        self.logger.addHandler(handler)
+    
+    def log_certificate_analysis(self, session_id: str, filename: str, 
+                                analysis_result: Dict[str, Any]):
+        """
+        Log certificate analysis with structured data
+        """
+        log_data = {
+            "event": "certificate_analysis",
+            "session_id": session_id,
+            "filename": filename,
+            "timestamp": datetime.utcnow().isoformat(),
+            "certificates_found": len(analysis_result.get('certificates', [])),
+            "private_keys_found": len(analysis_result.get('private_keys', [])),
+            "csrs_found": len(analysis_result.get('csrs', [])),
+            "format_detected": analysis_result.get('format_detected'),
+            "has_errors": len(analysis_result.get('errors', [])) > 0
+        }
+        
+        self.logger.info(json.dumps(log_data))
+    
+    def log_validation_results(self, session_id: str, validation_results: Dict[str, Any]):
+        """
+        Log validation results for monitoring
+        """
+        log_data = {
+            "event": "validation_completed",
+            "session_id": session_id,
+            "timestamp": datetime.utcnow().isoformat(),
+            "validations": {
+                "key_cert_matches": len(validation_results.get('private_key_certificate_matches', [])),
+                "chain_validations": len(validation_results.get('certificate_chain_validations', [])),
+                "total_valid": sum(1 for v in validation_results.get('private_key_certificate_matches', []) if v['is_valid'])
+            }
+        }
+        
+        self.logger.info(json.dumps(log_data))
+    
+    def log_security_event(self, event_type: str, session_id: str, details: Dict[str, Any]):
+        """
+        Log security-related events
+        """
+        log_data = {
+            "event": "security_event",
+            "event_type": event_type,
+            "session_id": session_id,
+            "timestamp": datetime.utcnow().isoformat(),
+            "details": details
+        }
+        
+        self.logger.warning(json.dumps(log_data))
+
+# Usage throughout the application
+logger = StructuredLogger("certificate_analysis")
+```
+
+### Metrics Collection
+
+```python
+# backend-fastapi/metrics.py
+from prometheus_client import Counter, Histogram, Gauge, start_http_server
+import time
+from functools import wraps
+
+# Define metrics
+REQUEST_COUNT = Counter('certificate_analysis_requests_total', 
+                       'Total requests', ['method', 'endpoint'])
+REQUEST_LATENCY = Histogram('certificate_analysis_request_duration_seconds',
+                           'Request latency')
+ACTIVE_SESSIONS = Gauge('certificate_analysis_active_sessions',
+                       'Number of active sessions')
+CERTIFICATE_UPLOADS = Counter('certificate_uploads_total',
+                             'Total certificate uploads', ['format'])
+
+def track_performance(func):
+    """
+    Decorator to track API performance metrics
+    """
+    @wraps(func)
+    async def wrapper(*args, **kwargs):
+        start_time = time.time()
+        
+        try:
+            result = await func(*args, **kwargs)
+            REQUEST_COUNT.labels(method='POST', endpoint=func.__name__).inc()
+            return result
+        except Exception as e:
+            REQUEST_COUNT.labels(method='POST', endpoint=f"{func.__name__}_error").inc()
+            raise
+        finally:
+            REQUEST_LATENCY.observe(time.time() - start_time)
+    
+    return wrapper
+
+# Start metrics server
+def start_metrics_server(port: int = 8001):
+    start_http_server(port)
+```
+
+This comprehensive technical documentation covers all major aspects of the Certificate Analysis Tool, including:
+
+1. **System Architecture** - High-level design and component interaction
+2. **Session Management** - UUID-based isolation with thread safety
+3. **Certificate Processing** - Multi-format parsing pipeline
+4. **Cryptographic Validation** - Comprehensive validation engine
+5. **Security Implementation** - JWT auth and encrypted downloads
+6. **API Design** - RESTful endpoints with detailed examples
+7. **Frontend Architecture** - React components and state management
+8. **Data Flow** - Complete system data flow diagrams
+9. **Deployment Architecture** - Docker, Nginx, and production setup
+10. **Performance Considerations** - Memory management, caching, and scaling
+11. **Monitoring** - Logging, metrics, and observability
+
+The documentation includes detailed code snippets, Mermaid diagrams, and flowcharts that show exactly how each component works and how data flows through the system. This should give developers a complete understanding of the implementation and help with maintenance, scaling, and further development.# Technical Documentation - Certificate Analysis Tool
 
 ## Table of Contents
 
-- [System Architecture](#system-architecture)
-- [Session Management](#session-management)
-- [Certificate Processing Pipeline](#certificate-processing-pipeline)
-- [Cryptographic Validation](#cryptographic-validation)
-- [Security Implementation](#security-implementation)
-- [API Design](#api-design)
-- [Frontend Architecture](#frontend-architecture)
-- [Data Flow](#data-flow)
-- [Performance Considerations](#performance-considerations)
+1. [System Architecture](#system-architecture)
+2. [Session Management](#session-management)
+3. [Certificate Processing Pipeline](#certificate-processing-pipeline)
+4. [Cryptographic Validation Engine](#cryptographic-validation-engine)
+5. [Security Implementation](#security-implementation)
+6. [API Design](#api-design)
+7. [Frontend Architecture](#frontend-architecture)
+8. [Data Flow](#data-flow)
+9. [Deployment Architecture](#deployment-architecture)
+10. [Performance Considerations](#performance-considerations)
+
+---
 
 ## System Architecture
 
-### Overview
+### High-Level Architecture Overview
 
-The application follows a **microservices-inspired architecture** with clear separation between frontend and backend, designed for scalability and maintainability.
-
+```mermaid
+graph TB
+    subgraph "Client Layer"
+        Browser[Web Browser]
+        Mobile[Mobile Browser]
+    end
+    
+    subgraph "Load Balancer/Proxy Layer"
+        Nginx[Nginx Reverse Proxy<br/>Port 80/443]
+    end
+    
+    subgraph "Application Layer"
+        Frontend[React SPA<br/>Port 3000]
+        Backend[FastAPI Service<br/>Port 8000]
+    end
+    
+    subgraph "Storage Layer"
+        Memory[In-Memory Session Store]
+        JWT[JWT Token Storage]
+    end
+    
+    Browser --> Nginx
+    Mobile --> Nginx
+    Nginx --> Frontend
+    Nginx --> Backend
+    Frontend --> Backend
+    Backend --> Memory
+    Backend --> JWT
 ```
-┌─────────────────┐    HTTP/REST    ┌─────────────────┐
-│   React SPA     │◄──────────────► │   FastAPI       │
-│   (Frontend)    │    JSON/JWT     │   (Backend)     │
-└─────────────────┘                 └─────────────────┘
-         │                                   │
-         ├── Session Manager                 ├── Session Manager
-         ├── File Upload                     ├── Certificate Analyzer  
-         ├── Validation UI                   ├── Cryptographic Engine
-         └── PKI Visualization               └── In-Memory Storage
+
+### Component Interaction Flow
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant N as Nginx
+    participant F as Frontend
+    participant B as Backend
+    participant S as Session Manager
+    participant C as Crypto Engine
+    
+    U->>N: HTTP Request
+    N->>F: Route to Frontend (/)
+    F->>U: Serve React SPA
+    
+    U->>F: Upload Certificate
+    F->>N: POST /api/upload
+    N->>B: Forward to Backend
+    B->>S: Create/Get Session
+    B->>C: Parse Certificate
+    C->>B: Return Analysis
+    B->>S: Store Results
+    B->>F: Return Analysis JSON
+    F->>U: Display Results
 ```
 
-### Technology Stack Deep Dive
-
-#### Backend Stack
-- **FastAPI**: ASGI-based framework chosen for async capabilities and automatic OpenAPI generation
-- **Pydantic**: Data validation and serialization with type hints
-- **cryptography**: Industry-standard Python cryptographic library
-- **python-jose**: JWT token handling with multiple algorithm support
-- **passlib**: Password hashing with bcrypt for security
-- **uvicorn**: High-performance ASGI server
-
-#### Frontend Stack  
-- **React 18**: Modern React with hooks and functional components
-- **Vite**: Fast build tool with HMR and optimized bundling
-- **Axios**: HTTP client with interceptors for authentication
-- **Lucide React**: Consistent icon system
-- **CSS Modules**: Scoped styling with component isolation
+---
 
 ## Session Management
 
-### Backend Session Management
+### Session Architecture
 
-The session management system provides **multi-user isolation** with automatic cleanup and thread safety.
-
-#### SessionManager Class Implementation
+The session management system provides multi-user isolation with automatic cleanup and thread safety.
 
 ```python
+# backend-fastapi/session_manager.py
+import uuid
+import threading
+import time
+from typing import Dict, Any, Optional
+from datetime import datetime, timedelta
+
 class SessionManager:
-    """Manages per-session certificate storage and lifecycle"""
+    def __init__(self, cleanup_interval: int = 300, session_timeout: int = 1800):
+        self.sessions: Dict[str, Dict[str, Any]] = {}
+        self.session_locks: Dict[str, threading.Lock] = {}
+        self.global_lock = threading.Lock()
+        self.cleanup_interval = cleanup_interval
+        self.session_timeout = session_timeout
+        self.last_cleanup = time.time()
     
-    # Class-level storage for all sessions
-    _sessions: Dict[str, Dict[str, Any]] = {}
-    _last_activity: Dict[str, datetime] = {}
-    _lock = threading.RLock()  # Reentrant lock for thread safety
-```
-
-#### Session Data Structure
-
-Each session maintains isolated storage:
-
-```python
-session_data = {
-    "certificates": [],          # List of uploaded certificates
-    "crypto_objects": {},        # Cryptographic objects by cert_id
-    "pki_bundle": None,         # Generated PKI bundle
-    "validation_results": {},    # Cached validation results
-    "metadata": {               # Session metadata
-        "created_at": datetime.now(),
-        "user_agent": request_headers.get("user-agent"),
-        "ip_address": client_ip
-    }
-}
-```
-
-#### Thread Safety Implementation
-
-```python
-@staticmethod
-def get_or_create_session(session_id: str) -> Dict[str, Any]:
-    """Thread-safe session retrieval with automatic cleanup"""
-    with SessionManager._lock:
-        current_time = datetime.now()
+    def create_session(self) -> str:
+        """Create a new session with UUID isolation"""
+        session_id = str(uuid.uuid4())
         
-        # Update activity tracking
-        SessionManager._last_activity[session_id] = current_time
+        with self.global_lock:
+            self.sessions[session_id] = {
+                'certificates': {},
+                'private_keys': {},
+                'csrs': {},
+                'pkcs12_bundles': {},
+                'created_at': datetime.utcnow(),
+                'last_accessed': datetime.utcnow(),
+                'validation_results': {}
+            }
+            self.session_locks[session_id] = threading.Lock()
         
-        if session_id not in SessionManager._sessions:
-            # Create new session with security measures
-            session_data = SessionManager._create_session_structure()
-            SessionManager._sessions[session_id] = session_data
+        return session_id
+    
+    def get_session_data(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """Thread-safe session data retrieval"""
+        if session_id not in self.sessions:
+            return None
             
-        # Trigger background cleanup if needed
-        SessionManager._cleanup_expired_sessions(current_time)
-        
-        return SessionManager._sessions[session_id]
+        with self.session_locks[session_id]:
+            self.sessions[session_id]['last_accessed'] = datetime.utcnow()
+            return self.sessions[session_id].copy()
 ```
 
-#### Automatic Cleanup Mechanism
+### Session Lifecycle Flow
 
-```python
-@staticmethod
-def _cleanup_expired_sessions(current_time: datetime) -> None:
-    """Remove expired sessions to prevent memory leaks"""
-    expired_sessions = []
-    
-    for session_id, last_activity in SessionManager._last_activity.items():
-        if current_time - last_activity > timedelta(hours=1):  # Configurable timeout
-            expired_sessions.append(session_id)
-    
-    for session_id in expired_sessions:
-        SessionManager._sessions.pop(session_id, None)
-        SessionManager._last_activity.pop(session_id, None)
-        logger.info(f"Cleaned up expired session: {session_id}")
+```mermaid
+flowchart TD
+    A[Browser Opens Tab] --> B[Generate UUID Session ID]
+    B --> C[Create Session Storage]
+    C --> D[Set Session Headers]
+    D --> E[Upload Certificates]
+    E --> F{Session Active?}
+    F -->|Yes| G[Process Certificate]
+    F -->|No| H[Create New Session]
+    H --> G
+    G --> I[Store in Session]
+    I --> J{User Action?}
+    J -->|Upload More| E
+    J -->|Download Bundle| K[Generate Encrypted ZIP]
+    J -->|Close Tab| L[Session Expires]
+    L --> M[Automatic Cleanup]
+    K --> J
 ```
 
-### Frontend Session Management
-
-The frontend implements **per-tab session isolation** using `sessionStorage`:
-
-#### SessionManager Class (Frontend)
-
-```javascript
-class SessionManager {
-    constructor() {
-        if (!this.isSessionStorageAvailable()) {
-            console.warn('SessionStorage not available, using memory fallback')
-            this.memoryStorage = new Map()
-        }
-        this.sessionId = this.getOrCreateSessionId()
-        this.initializeSession()
-    }
-    
-    generateUUID() {
-        // RFC 4122 version 4 UUID implementation
-        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-            const r = Math.random() * 16 | 0
-            const v = c === 'x' ? r : (r & 0x3 | 0x8)
-            return v.toString(16)
-        })
-    }
-}
-```
-
-#### Session Persistence Strategy
-
-```javascript
-getOrCreateSessionId() {
-    let sessionId = this.getStorageItem('certificate_session_id')
-    
-    if (!sessionId || !this.isValidUUID(sessionId)) {
-        // Generate new session ID
-        sessionId = this.generateUUID()
-        this.setStorageItem('certificate_session_id', sessionId)
-        this.setStorageItem('certificate_session_created', new Date().toISOString())
-    }
-    
-    return sessionId
-}
-```
+---
 
 ## Certificate Processing Pipeline
 
-### File Upload and Initial Processing
-
-#### 1. File Reception and Validation
+### Multi-Format Certificate Parser
 
 ```python
-@router.post("/upload")
-async def upload_certificate(
-    session_id: str = Depends(get_session_id),
-    file: UploadFile = File(...),
-    password: Optional[str] = Form(None)
-):
-    # Validate file size and extension
-    if file.size > settings.MAX_FILE_SIZE:
-        raise HTTPException(400, "File too large")
-    
-    if not _is_allowed_file(file.filename):
-        raise HTTPException(400, "Unsupported file format")
-    
-    # Read file content
-    content = await file.read()
-    
-    # Process through analyzer
-    result = analyzer.analyze_certificate(content, file.filename, password)
-    
-    return result
-```
+# backend-fastapi/certificate_analyzer.py
+from cryptography import x509
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.serialization import pkcs12
+import base64
 
-#### 2. Format Detection and Parsing
-
-The analyzer implements **intelligent format detection**:
-
-```python  
-def analyze_certificate(self, content: bytes, filename: str, password: str = None) -> Dict:
-    """Multi-format certificate analysis with automatic detection"""
+class CertificateAnalyzer:
     
-    # Try PEM format first (most common)
-    if self._is_pem_format(content):
-        return self._parse_pem_content(content, filename, password)
-    
-    # Try DER format
-    if self._is_der_format(content):
-        return self._parse_der_content(content, filename)
-    
-    # Try PKCS#12 format
-    if self._is_pkcs12_format(content):
-        if not password:
-            raise ValueError("Password required for PKCS#12 file")
-        return self._parse_pkcs12_content(content, filename, password)
-    
-    # Try other formats...
-    raise ValueError(f"Unsupported format for file: {filename}")
-```
-
-#### 3. Content Extraction and Normalization
-
-```python
-def _parse_pem_content(self, content: bytes, filename: str, password: str = None) -> Dict:
-    """Parse PEM formatted content with multiple object support"""
-    
-    content_str = content.decode('utf-8')
-    certificates = []
-    private_keys = []
-    csrs = []
-    
-    # Extract all PEM objects
-    for match in re.finditer(r'-----BEGIN ([A-Z\s]+)-----.*?-----END \1-----', 
-                            content_str, re.DOTALL):
-        pem_object = match.group(0)
-        object_type = match.group(1)
+    @staticmethod
+    def parse_certificate_file(file_content: bytes, password: str = None) -> Dict[str, Any]:
+        """
+        Universal certificate parser supporting multiple formats
+        """
+        results = {
+            'certificates': [],
+            'private_keys': [],
+            'csrs': [],
+            'format_detected': None,
+            'errors': []
+        }
         
+        # Try PKCS#12 first (if password provided)
+        if password:
+            try:
+                private_key, certificate, additional_certificates = pkcs12.load_key_and_certificates(
+                    file_content, password.encode('utf-8')
+                )
+                results['format_detected'] = 'PKCS#12'
+                
+                if certificate:
+                    results['certificates'].append(CertificateAnalyzer._analyze_certificate(certificate))
+                if private_key:
+                    results['private_keys'].append(CertificateAnalyzer._analyze_private_key(private_key))
+                if additional_certificates:
+                    for cert in additional_certificates:
+                        results['certificates'].append(CertificateAnalyzer._analyze_certificate(cert))
+                        
+                return results
+            except Exception as e:
+                results['errors'].append(f"PKCS#12 parsing failed: {str(e)}")
+        
+        # Try PEM format
         try:
-            if 'CERTIFICATE' in object_type:
-                cert = x509.load_pem_x509_certificate(pem_object.encode())
-                certificates.append(self._extract_certificate_info(cert))
-                
-            elif 'PRIVATE KEY' in object_type:
-                private_key = self._load_private_key(pem_object.encode(), password)
-                private_keys.append(self._extract_private_key_info(private_key))
-                
-            elif 'CERTIFICATE REQUEST' in object_type:
-                csr = x509.load_pem_x509_csr(pem_object.encode())
-                csrs.append(self._extract_csr_info(csr))
-                
-        except Exception as e:
-            logger.warning(f"Failed to parse PEM object {object_type}: {e}")
-    
-    return self._build_analysis_result(certificates, private_keys, csrs, filename)
-```
-
-### Certificate Information Extraction
-
-#### Comprehensive Certificate Analysis
-
-```python
-def _extract_certificate_info(self, cert: x509.Certificate) -> Dict:
-    """Extract comprehensive information from X.509 certificate"""
-    
-    # Basic certificate information
-    cert_info = {
-        "version": cert.version.name,
-        "serial_number": str(cert.serial_number),
-        "subject": self._format_name(cert.subject),
-        "issuer": self._format_name(cert.issuer),
-        "not_valid_before": cert.not_valid_before.isoformat(),
-        "not_valid_after": cert.not_valid_after.isoformat(),
-        "signature_algorithm": cert.signature_algorithm_oid._name,
-        "public_key_algorithm": cert.public_key().key_size,
-    }
-    
-    # Extract extensions
-    extensions = {}
-    for ext in cert.extensions:
+            pem_content = file_content.decode('utf-8')
+            results.update(CertificateAnalyzer._parse_pem_content(pem_content))
+            if results['certificates'] or results['private_keys'] or results['csrs']:
+                results['format_detected'] = 'PEM'
+                return results
+        except UnicodeDecodeError:
+            pass
+        
+        # Try DER format
         try:
-            extension_data = self._parse_extension(ext)
-            if extension_data:
-                extensions[ext.oid._name] = extension_data
-        except Exception as e:
-            logger.debug(f"Could not parse extension {ext.oid}: {e}")
-    
-    cert_info["extensions"] = extensions
-    
-    # Determine certificate type and purpose
-    cert_info["certificate_type"] = self._determine_certificate_type(cert)
-    cert_info["key_usage"] = self._extract_key_usage(cert)
-    cert_info["extended_key_usage"] = self._extract_extended_key_usage(cert)
-    
-    return cert_info
-```
-
-#### Extension Parsing
-
-```python
-def _parse_extension(self, extension: x509.Extension) -> Dict:
-    """Parse X.509 extension with type-specific handling"""
-    
-    ext_value = extension.value
-    
-    if isinstance(ext_value, x509.SubjectAlternativeName):
-        return {
-            "critical": extension.critical,
-            "names": [self._format_general_name(name) for name in ext_value]
-        }
-    
-    elif isinstance(ext_value, x509.BasicConstraints):
-        return {
-            "critical": extension.critical,
-            "ca": ext_value.ca,
-            "path_length": ext_value.path_length
-        }
-    
-    elif isinstance(ext_value, x509.KeyUsage):
-        return {
-            "critical": extension.critical,
-            "digital_signature": ext_value.digital_signature,
-            "key_encipherment": ext_value.key_encipherment,
-            "key_agreement": ext_value.key_agreement,
-            "key_cert_sign": ext_value.key_cert_sign,
-            "crl_sign": ext_value.crl_sign,
-            # ... other key usage flags
-        }
-    
-    # Handle other extension types...
-    return {"critical": extension.critical, "value": str(ext_value)}
-```
-
-## Cryptographic Validation
-
-### Validation Engine Architecture
-
-The validation system performs **comprehensive cryptographic verification** across all PKI components:
-
-```python
-class CertificateValidator:
-    """Comprehensive PKI component validation"""
-    
-    def validate_all_relationships(self, certificates: List[Dict], session_id: str) -> Dict:
-        """Validate all cryptographic relationships between components"""
-        
-        validation_results = {
-            "private_key_matches": [],
-            "csr_relationships": [],
-            "certificate_chains": [],
-            "trust_validation": [],
-            "overall_status": "unknown"
-        }
-        
-        # Group components by type
-        components = self._categorize_components(certificates)
-        
-        # Validate private key relationships
-        validation_results["private_key_matches"] = self._validate_private_key_matches(
-            components["private_keys"], 
-            components["certificates"], 
-            components["csrs"]
-        )
-        
-        # Validate CSR relationships
-        validation_results["csr_relationships"] = self._validate_csr_relationships(
-            components["csrs"],
-            components["certificates"]
-        )
-        
-        # Build and validate certificate chains
-        validation_results["certificate_chains"] = self._validate_certificate_chains(
-            components["certificates"]
-        )
-        
-        return validation_results
-```
-
-### Private Key Matching Algorithm
-
-```python
-def _validate_private_key_matches(self, private_keys: List, certificates: List, csrs: List) -> List[Dict]:
-    """Validate private key matches against certificates and CSRs"""
-    
-    matches = []
-    
-    for pk_data in private_keys:
-        private_key_obj = pk_data["private_key_obj"]
-        public_key = private_key_obj.public_key()
-        
-        # Check against certificates
-        for cert_data in certificates:
-            cert_obj = cert_data["certificate_obj"]
-            cert_public_key = cert_obj.public_key()
+            # Try as certificate
+            cert = x509.load_der_x509_certificate(file_content)
+            results['certificates'].append(CertificateAnalyzer._analyze_certificate(cert))
+            results['format_detected'] = 'DER'
+            return results
+        except Exception:
+            pass
             
-            if self._public_keys_match(public_key, cert_public_key):
-                matches.append({
-                    "type": "private_key_certificate",
-                    "private_key_id": pk_data["cert_data"]["id"],
-                    "certificate_id": cert_data["cert_data"]["id"],
-                    "match": True,
-                    "algorithm": cert_obj.public_key().key_size,
-                    "validation_method": "public_key_comparison"
+        # Try as private key (DER)
+        try:
+            private_key = serialization.load_der_private_key(file_content, password=None)
+            results['private_keys'].append(CertificateAnalyzer._analyze_private_key(private_key))
+            results['format_detected'] = 'DER'
+            return results
+        except Exception:
+            pass
+        
+        results['errors'].append("Unable to parse file - unsupported format")
+        return results
+```
+
+### Certificate Analysis Flow
+
+```mermaid
+flowchart TD
+    A[File Upload] --> B{File Type Detection}
+    B -->|PKCS#12| C[Extract P12 Bundle]
+    B -->|PEM| D[Parse PEM Blocks]
+    B -->|DER| E[Parse DER Binary]
+    B -->|Unknown| F[Error: Unsupported Format]
+    
+    C --> G[Extract Certificates]
+    C --> H[Extract Private Keys]
+    C --> I[Extract Additional Certs]
+    
+    D --> J{PEM Block Type?}
+    J -->|CERTIFICATE| G
+    J -->|PRIVATE KEY| H
+    J -->|CERTIFICATE REQUEST| K[Extract CSR]
+    J -->|ENCRYPTED PRIVATE KEY| L[Decrypt with Password]
+    
+    E --> M{DER Content Type?}
+    M -->|Certificate| G
+    M -->|Private Key| H
+    M -->|CSR| K
+    
+    G --> N[Certificate Analysis]
+    H --> O[Private Key Analysis]
+    K --> P[CSR Analysis]
+    L --> O
+    
+    N --> Q[Store in Session]
+    O --> Q
+    P --> Q
+    F --> R[Return Error]
+```
+
+---
+
+## Cryptographic Validation Engine
+
+### Validation Matrix Implementation
+
+```python
+# backend-fastapi/validation_engine.py
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import rsa, ec, ed25519
+import hashlib
+
+class CryptographicValidator:
+    
+    def __init__(self, session_data: Dict[str, Any]):
+        self.session_data = session_data
+        self.validation_matrix = {}
+    
+    def run_comprehensive_validation(self) -> Dict[str, Any]:
+        """
+        Performs all possible validation combinations
+        """
+        validations = {
+            'private_key_certificate_matches': [],
+            'private_key_csr_matches': [],
+            'certificate_csr_matches': [],
+            'certificate_chain_validations': [],
+            'signature_validations': [],
+            'trust_chain_validations': []
+        }
+        
+        # Private Key <-> Certificate matching
+        for key_id, private_key in self.session_data['private_keys'].items():
+            for cert_id, certificate in self.session_data['certificates'].items():
+                validation_result = self._validate_key_certificate_match(
+                    private_key['crypto_object'], 
+                    certificate['crypto_object']
+                )
+                validations['private_key_certificate_matches'].append({
+                    'private_key_id': key_id,
+                    'certificate_id': cert_id,
+                    'is_valid': validation_result['is_valid'],
+                    'details': validation_result['details']
                 })
         
-        # Check against CSRs
-        for csr_data in csrs:
-            csr_obj = csr_data["csr_obj"]
-            csr_public_key = csr_obj.public_key()
-            
-            if self._public_keys_match(public_key, csr_public_key):
-                matches.append({
-                    "type": "private_key_csr",
-                    "private_key_id": pk_data["cert_data"]["id"],
-                    "csr_id": csr_data["cert_data"]["id"],
-                    "match": True,
-                    "validation_method": "public_key_comparison"
-                })
-    
-    return matches
-```
-
-### Public Key Comparison Implementation
-
-```python
-def _public_keys_match(self, key1, key2) -> bool:
-    """Compare two public keys for cryptographic equivalence"""
-    
-    try:
-        # Handle different key types
-        if isinstance(key1, rsa.RSAPublicKey) and isinstance(key2, rsa.RSAPublicKey):
-            return (key1.public_numbers().n == key2.public_numbers().n and
-                   key1.public_numbers().e == key2.public_numbers().e)
+        # Certificate Chain Validation
+        chain_validation = self._build_and_validate_certificate_chain()
+        validations['certificate_chain_validations'] = chain_validation
         
-        elif isinstance(key1, ec.EllipticCurvePublicKey) and isinstance(key2, ec.EllipticCurvePublicKey):
-            return (key1.public_numbers().x == key2.public_numbers().x and
-                   key1.public_numbers().y == key2.public_numbers().y and
-                   key1.curve.name == key2.curve.name)
-        
-        elif isinstance(key1, ed25519.Ed25519PublicKey) and isinstance(key2, ed25519.Ed25519PublicKey):
-            return key1.public_bytes(
-                encoding=serialization.Encoding.Raw,
-                format=serialization.PublicFormat.Raw
-            ) == key2.public_bytes(
-                encoding=serialization.Encoding.Raw,
-                format=serialization.PublicFormat.Raw
-            )
-        
-        # Different key types cannot match
-        return False
-        
-    except Exception as e:
-        logger.error(f"Error comparing public keys: {e}")
-        return False
-```
-
-### Certificate Chain Validation
-
-```python
-def _validate_certificate_chains(self, certificates: List) -> List[Dict]:
-    """Build and validate certificate chains"""
+        return validations
     
-    chains = []
-    ca_certs = [cert for cert in certificates if cert["cert_data"]["analysis"]["certificateType"] == "CA Certificate"]
-    end_entity_certs = [cert for cert in certificates if cert["cert_data"]["analysis"]["certificateType"] == "End-entity Certificate"]
-    
-    for ee_cert in end_entity_certs:
-        chain_result = self._build_chain_for_certificate(ee_cert, ca_certs)
-        chains.append(chain_result)
-    
-    return chains
-
-def _build_chain_for_certificate(self, end_entity: Dict, ca_certificates: List) -> Dict:
-    """Build certificate chain from end-entity to root"""
-    
-    chain = [end_entity]
-    current_cert = end_entity
-    
-    while True:
-        # Find issuer of current certificate
-        issuer = self._find_issuer(current_cert, ca_certificates)
-        
-        if not issuer:
-            break  # No more issuers found
-        
-        if issuer in chain:
-            break  # Prevent circular chains
-        
-        chain.append(issuer)
-        current_cert = issuer
-        
-        # Check if we've reached a self-signed root
-        if self._is_self_signed(issuer):
-            break
-    
-    # Validate chain signatures
-    chain_valid = self._validate_chain_signatures(chain)
-    
-    return {
-        "end_entity_id": end_entity["cert_data"]["id"],
-        "chain_length": len(chain),
-        "chain_ids": [cert["cert_data"]["id"] for cert in chain],
-        "is_complete": self._is_complete_chain(chain),
-        "is_valid": chain_valid,
-        "validation_errors": self._get_chain_errors(chain)
-    }
-```
-
-### Signature Verification
-
-```python
-def _validate_chain_signatures(self, chain: List) -> bool:
-    """Validate signatures throughout certificate chain"""
-    
-    for i in range(len(chain) - 1):
-        child_cert = chain[i]["certificate_obj"]
-        parent_cert = chain[i + 1]["certificate_obj"]
-        
+    def _validate_key_certificate_match(self, private_key, certificate) -> Dict[str, Any]:
+        """
+        Validates if a private key matches a certificate's public key
+        """
         try:
-            # Verify child certificate signature using parent's public key
-            parent_public_key = parent_cert.public_key()
+            # Extract public key from certificate
+            cert_public_key = certificate.public_key()
             
-            if isinstance(parent_public_key, rsa.RSAPublicKey):
-                parent_public_key.verify(
-                    child_cert.signature,
-                    child_cert.tbs_certificate_bytes,
-                    padding.PKCS1v15(),
-                    child_cert.signature_hash_algorithm
+            # Generate a test signature with private key
+            test_data = b"certificate_validation_test_data"
+            
+            if isinstance(private_key, (rsa.RSAPrivateKey, ec.EllipticCurvePrivateKey)):
+                # Sign test data
+                signature = private_key.sign(
+                    test_data,
+                    hashes.SHA256() if isinstance(private_key, rsa.RSAPrivateKey) else ec.ECDSA(hashes.SHA256())
                 )
-            elif isinstance(parent_public_key, ec.EllipticCurvePublicKey):
-                parent_public_key.verify(
-                    child_cert.signature,
-                    child_cert.tbs_certificate_bytes,
-                    ec.ECDSA(child_cert.signature_hash_algorithm)
-                )
-            else:
-                logger.warning(f"Unsupported signature algorithm for chain validation")
-                return False
+                
+                # Verify with certificate's public key
+                if isinstance(cert_public_key, rsa.RSAPublicKey):
+                    cert_public_key.verify(signature, test_data, hashes.SHA256())
+                elif isinstance(cert_public_key, ec.EllipticCurvePublicKey):
+                    cert_public_key.verify(signature, test_data, ec.ECDSA(hashes.SHA256()))
+                
+                return {
+                    'is_valid': True,
+                    'details': 'Private key successfully matches certificate public key',
+                    'algorithm': type(private_key).__name__
+                }
                 
         except Exception as e:
-            logger.error(f"Signature verification failed: {e}")
-            return False
-    
-    return True
+            return {
+                'is_valid': False,
+                'details': f'Key-certificate mismatch: {str(e)}',
+                'algorithm': type(private_key).__name__ if private_key else 'Unknown'
+            }
 ```
+
+### Validation Flow Diagram
+
+```mermaid
+flowchart TD
+    A[Start Validation] --> B{Components Available?}
+    B -->|Private Key + Certificate| C[Test Key-Cert Match]
+    B -->|Private Key + CSR| D[Test Key-CSR Match]
+    B -->|Certificate + CSR| E[Test Cert-CSR Match]
+    B -->|Multiple Certificates| F[Build Certificate Chain]
+    
+    C --> G[Generate Test Signature]
+    G --> H[Verify with Public Key]
+    H --> I{Verification Success?}
+    I -->|Yes| J[Mark as Valid Match]
+    I -->|No| K[Mark as Invalid Match]
+    
+    D --> L[Extract CSR Public Key]
+    L --> M[Compare Key Parameters]
+    M --> N{Keys Match?}
+    N -->|Yes| O[Mark as Valid Match]
+    N -->|No| P[Mark as Invalid Match]
+    
+    F --> Q[Identify Root CA]
+    Q --> R[Build Trust Chain]
+    R --> S[Validate Signatures]
+    S --> T[Check Validity Periods]
+    T --> U[Generate Chain Report]
+    
+    J --> V[Store Results]
+    K --> V
+    O --> V
+    P --> V
+    U --> V
+```
+
+---
 
 ## Security Implementation
 
 ### JWT Authentication System
 
-#### Token Generation and Validation
-
 ```python
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
-    """Create JWT access token with expiration"""
-    to_encode = data.copy()
-    
-    if expires_delta:
-        expire = datetime.utcnow() + expires_delta
-    else:
-        expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    
-    to_encode.update({"exp": expire})
-    encoded_jwt = jose.jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
-    
-    return encoded_jwt
+# backend-fastapi/auth.py
+from datetime import datetime, timedelta
+from jose import JWTError, jwt
+from passlib.context import CryptContext
+from fastapi import HTTPException, status
 
-def verify_token(token: str, credentials_exception):
-    """Verify JWT token and extract payload"""
-    try:
-        payload = jose.jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        username: str = payload.get("sub")
-        
-        if username is None:
-            raise credentials_exception
-            
-        return TokenData(username=username)
-        
-    except JWTError:
-        raise credentials_exception
-```
-
-#### Password Security
-
-```python
-class PasswordHandler:
-    """Secure password handling with bcrypt"""
+class AuthenticationManager:
     
-    def __init__(self):
+    def __init__(self, secret_key: str, algorithm: str = "HS256"):
+        self.secret_key = secret_key
+        self.algorithm = algorithm
         self.pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+        self.access_token_expire_minutes = 30
     
-    def verify_password(self, plain_password: str, hashed_password: str) -> bool:
-        """Verify password against hash"""
-        return self.pwd_context.verify(plain_password, hashed_password)
+    def create_access_token(self, data: dict, expires_delta: timedelta = None):
+        """
+        Create JWT access token with expiration
+        """
+        to_encode = data.copy()
+        if expires_delta:
+            expire = datetime.utcnow() + expires_delta
+        else:
+            expire = datetime.utcnow() + timedelta(minutes=15)
+        
+        to_encode.update({"exp": expire})
+        encoded_jwt = jwt.encode(to_encode, self.secret_key, algorithm=self.algorithm)
+        return encoded_jwt
     
-    def get_password_hash(self, password: str) -> str:
-        """Generate secure password hash"""
-        return self.pwd_context.hash(password)
-
-# Global instance
-password_handler = PasswordHandler()
+    def verify_token(self, token: str):
+        """
+        Verify and decode JWT token
+        """
+        try:
+            payload = jwt.decode(token, self.secret_key, algorithms=[self.algorithm])
+            username: str = payload.get("sub")
+            if username is None:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Could not validate credentials"
+                )
+            return username
+        except JWTError:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Could not validate credentials"
+            )
 ```
 
-### Secure Data Storage Architecture
-
-The application implements **secure separation** of sensitive and non-sensitive data:
-
-#### Storage Layer Design
+### Encrypted ZIP Download Implementation
 
 ```python
-class CertificateStorage:
-    """Secure storage with separation of sensitive cryptographic objects"""
+# backend-fastapi/secure_download.py
+import zipfile
+import secrets
+import string
+from io import BytesIO
+from cryptography.fernet import Fernet
+import base64
+
+class SecureDownloadManager:
     
     @staticmethod
-    def store_certificate(cert_data: Dict, crypto_objects: Dict, session_id: str) -> str:
-        """Store certificate with secure object separation"""
+    def generate_secure_password(length: int = 16) -> str:
+        """
+        Generate cryptographically secure random password
+        """
+        alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
+        password = ''.join(secrets.choice(alphabet) for _ in range(length))
+        return password
+    
+    @staticmethod
+    def create_encrypted_zip(files_data: Dict[str, str], password: str) -> bytes:
+        """
+        Create password-protected ZIP file with certificate bundle
+        """
+        zip_buffer = BytesIO()
         
-        cert_id = str(uuid.uuid4())
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            # Set password for the ZIP file
+            zip_file.setpassword(password.encode('utf-8'))
+            
+            for filename, content in files_data.items():
+                # Add each file to the encrypted ZIP
+                zip_file.writestr(filename, content, compress_type=zipfile.ZIP_DEFLATED)
         
-        # Get session storage
-        session = SessionManager.get_or_create_session(session_id)
+        zip_buffer.seek(0)
+        return zip_buffer.getvalue()
+    
+    @staticmethod
+    def prepare_pki_bundle(session_data: Dict[str, Any]) -> Dict[str, str]:
+        """
+        Prepare complete PKI bundle for download
+        """
+        bundle_files = {}
         
-        # Store JSON-serializable data
-        safe_data = cert_data.copy()
-        safe_data["id"] = cert_id
-        safe_data["uploaded_at"] = datetime.now().isoformat()
+        # Add certificates in proper order (Root -> Intermediate -> End Entity)
+        cert_chain = SecureDownloadManager._order_certificate_chain(
+            session_data['certificates']
+        )
         
-        # Remove any sensitive data from JSON structure
-        safe_data.pop("raw_content", None)
-        safe_data.pop("password", None)
+        for i, cert_data in enumerate(cert_chain):
+            role = cert_data.get('role', 'unknown')
+            filename = f"{i+1:02d}_{role}_{cert_data['common_name']}.crt"
+            bundle_files[filename] = cert_data['pem_content']
         
-        session["certificates"].append(safe_data)
+        # Add private keys
+        for key_id, key_data in session_data['private_keys'].items():
+            filename = f"private_key_{key_data['key_type'].lower()}.key"
+            bundle_files[filename] = key_data['pem_content']
         
-        # Store cryptographic objects separately
-        if crypto_objects:
-            session["crypto_objects"][cert_id] = crypto_objects
+        # Add CSRs
+        for csr_id, csr_data in session_data['csrs'].items():
+            filename = f"certificate_request_{csr_data['common_name']}.csr"
+            bundle_files[filename] = csr_data['pem_content']
         
-        logger.info(f"Stored certificate {cert_id} in session {session_id}")
-        return cert_id
+        # Add README with deployment instructions
+        bundle_files['README.txt'] = SecureDownloadManager._generate_deployment_readme(
+            session_data
+        )
+        
+        return bundle_files
 ```
 
-#### Memory Protection
+### Security Architecture Flow
 
-```python
-def _sanitize_for_json(self, data: Any) -> Any:
-    """Remove non-serializable and sensitive data from objects"""
+```mermaid
+flowchart TD
+    A[User Login Request] --> B[Validate Credentials]
+    B --> C{Valid User?}
+    C -->|Yes| D[Generate JWT Token]
+    C -->|No| E[Return 401 Unauthorized]
     
-    if isinstance(data, dict):
-        sanitized = {}
-        for k, v in data.items():
-            # Skip sensitive keys
-            if k in ['password', 'private_key_bytes', 'raw_content']:
-                continue
-            # Skip cryptographic objects
-            if hasattr(v, 'private_bytes') or hasattr(v, 'public_bytes'):
-                continue
-            sanitized[k] = self._sanitize_for_json(v)
-        return sanitized
+    D --> F[Set Token in Headers]
+    F --> G[Protected Route Access]
+    G --> H[Extract JWT from Header]
+    H --> I{Token Valid?}
+    I -->|Yes| J[Process Request]
+    I -->|No| K[Return 401 Unauthorized]
     
-    elif isinstance(data, list):
-        return [self._sanitize_for_json(item) for item in data]
+    J --> L{Download Request?}
+    L -->|Yes| M[Generate Random Password]
+    L -->|No| N[Normal Response]
     
-    elif isinstance(data, (str, int, float, bool, type(None))):
-        return data
-    
-    else:
-        # Convert complex objects to string representation
-        return str(data)
+    M --> O[Create Encrypted ZIP]
+    O --> P[Return ZIP + Password]
+    P --> Q[User Downloads ZIP]
+    Q --> R[Password Shown Once]
+    R --> S[Password Forgotten by System]
 ```
 
-### Input Validation and Sanitization
-
-#### File Upload Security
-
-```python
-def _validate_upload_security(self, file: UploadFile, content: bytes) -> None:
-    """Comprehensive upload security validation"""
-    
-    # File size validation
-    if len(content) > settings.MAX_FILE_SIZE:
-        raise HTTPException(
-            status_code=413,
-            detail=f"File too large. Maximum size: {settings.MAX_FILE_SIZE} bytes"
-        )
-    
-    # Extension validation
-    if not self._is_allowed_extension(file.filename):
-        raise HTTPException(
-            status_code=400,
-            detail=f"File type not allowed. Supported: {settings.ALLOWED_EXTENSIONS}"
-        )
-    
-    # Content validation - prevent malicious uploads
-    if self._contains_suspicious_content(content):
-        raise HTTPException(
-            status_code=400,
-            detail="File content validation failed"
-        )
-    
-    # Filename sanitization
-    if not self._is_safe_filename(file.filename):
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid filename"
-        )
-
-def _contains_suspicious_content(self, content: bytes) -> bool:
-    """Check for potentially malicious content patterns"""
-    
-    # Check for executable signatures
-    suspicious_signatures = [
-        b'\x4d\x5a',  # Windows PE
-        b'\x7f\x45\x4c\x46',  # Linux ELF
-        b'\xcf\xfa\xed\xfe',  # Mach-O
-    ]
-    
-    for sig in suspicious_signatures:
-        if content.startswith(sig):
-            return True
-    
-    # Check for script content in non-script files
-    if b'<script' in content.lower() or b'javascript:' in content.lower():
-        return True
-    
-    return False
-```
-
-#### Session ID Validation
-
-```python
-def validate_session_id(session_id: str) -> bool:
-    """Validate session ID format and security"""
-    
-    # UUID format validation
-    uuid_pattern = re.compile(
-        r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12},
-        re.IGNORECASE
-    )
-    
-    if not uuid_pattern.match(session_id):
-        return False
-    
-    # Additional security checks
-    if len(session_id) != 36:
-        return False
-    
-    # Prevent obvious attacks
-    if session_id in ['00000000-0000-0000-0000-000000000000', 
-                     'ffffffff-ffff-ffff-ffff-ffffffffffff']:
-        return False
-    
-    return True
-```
+---
 
 ## API Design
 
-### RESTful Architecture
-
-The API follows **REST principles** with clear resource hierarchies and HTTP semantics:
-
-#### Resource Structure
-
-```
-/api/
-├── auth/
-│   ├── POST /login              # Authenticate user
-│   └── GET  /me                 # Get current user
-├── certificates/
-│   ├── POST   /upload           # Upload certificate file
-│   ├── GET    /list/{session}   # List certificates
-│   ├── DELETE /{cert_id}        # Delete certificate
-│   └── POST   /clear/{session}  # Clear session
-├── validation/
-│   ├── POST /validate/{session} # Run validation
-│   └── GET  /results/{session}  # Get results
-└── pki-bundle/
-    └── GET /{session}           # Get PKI bundle (auth required)
-```
-
-#### Request/Response Models
+### RESTful Endpoint Structure
 
 ```python
-# Pydantic models for API contract
-class CertificateUploadResponse(BaseModel):
-    """Response model for certificate upload"""
-    id: str
-    filename: str
-    certificate_type: str
-    is_valid: bool
-    analysis: Dict[str, Any]
-    uploaded_at: str
-    session_id: str
+# backend-fastapi/main.py
+from fastapi import FastAPI, UploadFile, Depends, HTTPException
+from fastapi.security import HTTPBearer
 
-class ValidationRequest(BaseModel):
-    """Request model for validation"""
-    session_id: str
-    validate_signatures: bool = True
-    validate_chains: bool = True
-    validate_key_matches: bool = True
-
-class ValidationResponse(BaseModel):
-    """Response model for validation results"""
-    session_id: str
-    validation_timestamp: str
-    overall_status: Literal["valid", "invalid", "warning", "unknown"]
-    private_key_matches: List[Dict[str, Any]]
-    csr_relationships: List[Dict[str, Any]]
-    certificate_chains: List[Dict[str, Any]]
-    trust_validation: List[Dict[str, Any]]
-    summary: Dict[str, int]
-```
-
-#### Error Handling Strategy
-
-```python
-class APIException(Exception):
-    """Base API exception with structured error responses"""
-    
-    def __init__(self, status_code: int, detail: str, error_code: str = None):
-        self.status_code = status_code
-        self.detail = detail
-        self.error_code = error_code
-
-class ValidationError(APIException):
-    """Certificate validation specific errors"""
-    
-    def __init__(self, detail: str, validation_errors: List[str] = None):
-        super().__init__(422, detail, "VALIDATION_ERROR")
-        self.validation_errors = validation_errors or []
-
-# Global exception handler
-@app.exception_handler(APIException)
-async def api_exception_handler(request: Request, exc: APIException):
-    """Structured error response handler"""
-    return JSONResponse(
-        status_code=exc.status_code,
-        content={
-            "success": False,
-            "error": {
-                "code": exc.error_code or "API_ERROR",
-                "message": exc.detail,
-                "timestamp": datetime.now().isoformat(),
-                "path": str(request.url.path)
-            }
-        }
-    )
-```
-
-### Middleware Architecture
-
-#### Session Middleware Implementation
-
-```python
-class SessionMiddleware:
-    """Middleware for automatic session ID handling"""
-    
-    def __init__(self, app: FastAPI):
-        self.app = app
-    
-    async def __call__(self, scope: Scope, receive: Receive, send: Send):
-        if scope["type"] == "http":
-            request = Request(scope, receive)
-            
-            # Extract session ID from header
-            session_id = request.headers.get("X-Session-ID")
-            
-            # Validate and sanitize
-            if session_id and not validate_session_id(session_id):
-                # Generate new session ID for invalid ones
-                session_id = str(uuid.uuid4())
-                logger.warning(f"Invalid session ID replaced: {request.client.host}")
-            
-            # Add to request state
-            scope["session_id"] = session_id
-            
-            # Continue processing
-            await self.app(scope, receive, send)
-        else:
-            await self.app(scope, receive, send)
-```
-
-#### CORS Configuration
-
-```python
-# Production-ready CORS configuration
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Session-ID"],
-    expose_headers=["X-Session-ID"],
-    max_age=3600,  # Cache preflight requests
+app = FastAPI(
+    title="Certificate Analysis API",
+    description="Comprehensive PKI analysis and management",
+    version="1.0.0"
 )
+
+security = HTTPBearer()
+
+@app.post("/upload")
+async def upload_certificate(
+    file: UploadFile,
+    password: str = None,
+    session_id: str = Depends(get_or_create_session)
+):
+    """
+    Upload and analyze certificate files
+    
+    Supported formats:
+    - PEM (.pem, .crt, .cer)
+    - DER (.der)
+    - PKCS#12 (.p12, .pfx)
+    - Private Keys (.key)
+    - Certificate Requests (.csr)
+    """
+    try:
+        # Validate file size
+        if file.size > MAX_FILE_SIZE:
+            raise HTTPException(400, "File too large")
+        
+        # Read file content
+        content = await file.read()
+        
+        # Analyze certificate
+        analyzer = CertificateAnalyzer()
+        results = analyzer.parse_certificate_file(content, password)
+        
+        # Store in session
+        session_manager.store_analysis_results(session_id, file.filename, results)
+        
+        # Run validations
+        validator = CryptographicValidator(
+            session_manager.get_session_data(session_id)
+        )
+        validation_results = validator.run_comprehensive_validation()
+        
+        return {
+            "analysis": results,
+            "validations": validation_results,
+            "session_id": session_id
+        }
+        
+    except Exception as e:
+        raise HTTPException(500, f"Analysis failed: {str(e)}")
+
+@app.get("/pki-bundle")
+async def get_pki_bundle(
+    session_id: str = Depends(get_session_id),
+    token: str = Depends(security)
+):
+    """
+    Get complete PKI bundle (Protected endpoint)
+    """
+    # Verify JWT token
+    auth_manager.verify_token(token.credentials)
+    
+    session_data = session_manager.get_session_data(session_id)
+    if not session_data:
+        raise HTTPException(404, "Session not found")
+    
+    # Generate ordered PKI bundle
+    bundle_generator = PKIBundleGenerator(session_data)
+    pki_bundle = bundle_generator.generate_complete_bundle()
+    
+    return {
+        "pki_bundle": pki_bundle,
+        "certificate_count": len(session_data['certificates']),
+        "chain_valid": bundle_generator.is_chain_valid()
+    }
+
+@app.post("/download-bundle")
+async def download_secure_bundle(
+    session_id: str = Depends(get_session_id),
+    token: str = Depends(security)
+):
+    """
+    Download encrypted PKI bundle (Protected endpoint)
+    """
+    # Verify JWT token
+    auth_manager.verify_token(token.credentials)
+    
+    session_data = session_manager.get_session_data(session_id)
+    if not session_data:
+        raise HTTPException(404, "Session not found")
+    
+    # Generate secure download
+    download_manager = SecureDownloadManager()
+    
+    # Prepare bundle files
+    bundle_files = download_manager.prepare_pki_bundle(session_data)
+    
+    # Generate random password
+    zip_password = download_manager.generate_secure_password()
+    
+    # Create encrypted ZIP
+    encrypted_zip = download_manager.create_encrypted_zip(bundle_files, zip_password)
+    
+    # Generate filename with timestamp
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    filename = f"certificate-bundle-{timestamp}.zip"
+    
+    return {
+        "zip_data": base64.b64encode(encrypted_zip).decode('utf-8'),
+        "password": zip_password,
+        "filename": filename,
+        "file_count": len(bundle_files)
+    }
 ```
+
+### API Flow Diagram
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant A as API Gateway
+    participant S as Session Manager
+    participant V as Validator
+    participant D as Download Manager
+    
+    C->>A: POST /upload (certificate file)
+    A->>S: Get/Create Session
+    S->>A: Session ID
+    A->>A: Parse Certificate
+    A->>V: Run Validations
+    V->>A: Validation Results
+    A->>S: Store Results
+    A->>C: Analysis + Validations
+    
+    C->>A: POST /token (login)
+    A->>A: Validate Credentials
+    A->>C: JWT Token
+    
+    C->>A: GET /pki-bundle (with JWT)
+    A->>A: Verify JWT
+    A->>S: Get Session Data
+    S->>A: PKI Components
+    A->>A: Generate Bundle
+    A->>C: Complete PKI Bundle
+    
+    C->>A: POST /download-bundle (with JWT)
+    A->>A: Verify JWT
+    A->>D: Generate Secure Download
+    D->>D: Create Random Password
+    D->>D: Encrypt ZIP File
+    D->>A: Encrypted ZIP + Password
+    A->>C: Download Data + Password
+```
+
+---
 
 ## Frontend Architecture
 
-### Component Architecture
+### React Component Structure
 
-The frontend follows a **modular component architecture** with clear separation of concerns:
+```jsx
+// frontend/src/contexts/CertificateContext.jsx
+import React, { createContext, useContext, useReducer } from 'react'
 
-#### Component Hierarchy
+const CertificateContext = createContext()
 
-```
-App
-├── Header
-├── FileUpload
-│   ├── DropZone
-│   └── PasswordPrompt
-├── CertificateList
-│   └── CertificateCard
-│       ├── CertificateDetails
-│       └── ValidationBadge
-├── ValidationPanel
-│   ├── ValidationSummary
-│   └── ValidationDetails
-├── SystemPanel
-│   ├── ConnectionStatus
-│   ├── FileManager
-│   └── SessionControls
-└── PKIBundleModal
-    ├── AuthForm
-    └── BundleViewer
-```
-
-#### State Management Pattern
-
-```javascript
-// Custom hook for certificate state management
-const useCertificateState = () => {
-    const [certificates, setCertificates] = useState([])
-    const [validation, setValidation] = useState(null)
-    const [loading, setLoading] = useState(false)
-    const [error, setError] = useState(null)
-    
-    const uploadCertificate = useCallback(async (file, password) => {
-        setLoading(true)
-        setError(null)
-        
-        try {
-            const formData = new FormData()
-            formData.append('file', file)
-            if (password) formData.append('password', password)
-            
-            const response = await api.uploadCertificate(formData)
-            
-            setCertificates(prev => [...prev, response.data])
-            
-            // Trigger automatic validation
-            await runValidation()
-            
-        } catch (err) {
-            setError(err.response?.data?.detail || 'Upload failed')
-        } finally {
-            setLoading(false)
+const certificateReducer = (state, action) => {
+  switch (action.type) {
+    case 'ADD_CERTIFICATE':
+      return {
+        ...state,
+        certificates: {
+          ...state.certificates,
+          [action.payload.id]: action.payload
         }
-    }, [])
+      }
     
-    const runValidation = useCallback(async () => {
-        try {
-            const result = await api.validateCertificates(sessionManager.getSessionId())
-            setValidation(result.data)
-        } catch (err) {
-            console.error('Validation failed:', err)
+    case 'UPDATE_VALIDATIONS':
+      return {
+        ...state,
+        validations: action.payload
+      }
+    
+    case 'CLEAR_SESSION':
+      return {
+        certificates: {},
+        validations: {},
+        sessionId: null
+      }
+    
+    default:
+      return state
+  }
+}
+
+export const CertificateProvider = ({ children }) => {
+  const [state, dispatch] = useReducer(certificateReducer, {
+    certificates: {},
+    validations: {},
+    sessionId: null
+  })
+  
+  return (
+    <CertificateContext.Provider value={{ state, dispatch }}>
+      {children}
+    </CertificateContext.Provider>
+  )
+}
+
+export const useCertificates = () => {
+  const context = useContext(CertificateContext)
+  if (!context) {
+    throw new Error('useCertificates must be used within CertificateProvider')
+  }
+  return context
+}
+```
+
+### File Upload Component with Progress
+
+```jsx
+// frontend/src/components/FileUpload/FileUpload.jsx
+import React, { useState, useCallback } from 'react'
+import { useDropzone } from 'react-dropzone'
+import api from '../../services/api'
+
+const FileUpload = ({ onUploadSuccess }) => {
+  const [uploadProgress, setUploadProgress] = useState({})
+  const [passwordPrompt, setPasswordPrompt] = useState(null)
+  
+  const onDrop = useCallback(async (acceptedFiles) => {
+    for (const file of acceptedFiles) {
+      await handleFileUpload(file)
+    }
+  }, [])
+  
+  const handleFileUpload = async (file, password = null) => {
+    const fileId = Date.now() + Math.random()
+    
+    // Initialize progress tracking
+    setUploadProgress(prev => ({
+      ...prev,
+      [fileId]: { progress: 0, status: 'uploading' }
+    }))
+    
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      if (password) {
+        formData.append('password', password)
+      }
+      
+      const response = await api.post('/upload', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data'
+        },
+        onUploadProgress: (progressEvent) => {
+          const progress = Math.round(
+            (progressEvent.loaded * 100) / progressEvent.total
+          )
+          setUploadProgress(prev => ({
+            ...prev,
+            [fileId]: { progress, status: 'uploading' }
+          }))
         }
-    }, [])
-    
-    return {
-        certificates,
-        validation,
-        loading,
-        error,
-        uploadCertificate,
-        runValidation,
-        setCertificates,
-        setError
+      })
+      
+      // Success
+      setUploadProgress(prev => ({
+        ...prev,
+        [fileId]: { progress: 100, status: 'success' }
+      }))
+      
+      onUploadSuccess(response.data)
+      
+    } catch (error) {
+      if (error.response?.data?.detail?.includes('password')) {
+        // Prompt for password
+        setPasswordPrompt({ file, fileId })
+      } else {
+        // Upload failed
+        setUploadProgress(prev => ({
+          ...prev,
+          [fileId]: { progress: 0, status: 'error', error: error.message }
+        }))
+      }
     }
+  }
+  
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+    onDrop,
+    accept: {
+      'application/x-pem-file': ['.pem'],
+      'application/x-x509-ca-cert': ['.crt', '.cer'],
+      'application/x-pkcs12': ['.p12', '.pfx'],
+      'application/pkcs8': ['.key'],
+      'application/pkcs10': ['.csr']
+    }
+  })
+  
+  return (
+    <div className="upload-container">
+      <div 
+        {...getRootProps()} 
+        className={`dropzone ${isDragActive ? 'active' : ''}`}
+      >
+        <input {...getInputProps()} />
+        {isDragActive ? (
+          <p>Drop the certificate files here...</p>
+        ) : (
+          <p>Drag & drop certificate files here, or click to select</p>
+        )}
+      </div>
+      
+      {/* Upload Progress Display */}
+      {Object.entries(uploadProgress).map(([fileId, progress]) => (
+        <UploadProgressBar key={fileId} progress={progress} />
+      ))}
+      
+      {/* Password Prompt Modal */}
+      {passwordPrompt && (
+        <PasswordPrompt
+          onSubmit={(password) => {
+            handleFileUpload(passwordPrompt.file, password)
+            setPasswordPrompt(null)
+          }}
+          onCancel={() => setPasswordPrompt(null)}
+        />
+      )}
+    </div>
+  )
 }
 ```
 
-#### API Service Layer
+### Frontend State Flow
 
-```javascript
-// Centralized API service with interceptors
-class APIService {
-    constructor() {
-        this.client = axios.create({
-            baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api',
-            timeout: 30000,
-            headers: {
-                'Content-Type': 'application/json'
-            }
-        })
-        
-        this.setupInterceptors()
-    }
-    
-    setupInterceptors() {
-        // Request interceptor - add session ID
-        this.client.interceptors.request.use((config) => {
-            const sessionId = sessionManager.getSessionId()
-            if (sessionId) {
-                config.headers['X-Session-ID'] = sessionId
-            }
-            
-            // Add auth token if available
-            const token = localStorage.getItem('auth_token')
-            if (token) {
-                config.headers['Authorization'] = `Bearer ${token}`
-            }
-            
-            return config
-        })
-        
-        // Response interceptor - handle errors
-        this.client.interceptors.response.use(
-            (response) => response,
-            (error) => {
-                if (error.response?.status === 401) {
-                    // Handle authentication errors
-                    localStorage.removeItem('auth_token')
-                    window.location.href = '/login'
-                }
-                
-                return Promise.reject(error)
-            }
-        )
-    }
-    
-    // Certificate operations
-    async uploadCertificate(formData) {
-        return this.client.post('/certificates/upload', formData, {
-            headers: { 'Content-Type': 'multipart/form-data' }
-        })
-    }
-    
-    async listCertificates() {
-        const sessionId = sessionManager.getSessionId()
-        return this.client.get(`/certificates/list/${sessionId}`)
-    }
-    
-    async validateCertificates(sessionId) {
-        return this.client.post(`/validation/validate/${sessionId}`)
-    }
-    
-    async getPKIBundle(sessionId) {
-        return this.client.get(`/pki-bundle/${sessionId}`)
-    }
-}
-
-export const apiService = new APIService()
+```mermaid
+stateDiagram-v2
+    [*] --> Initial: App Starts
+    Initial --> FileSelected: User Selects File
+    FileSelected --> Uploading: POST /upload
+    Uploading --> PasswordRequired: Server Requests Password
+    Uploading --> Analyzing: File Uploaded Successfully
+    PasswordRequired --> PasswordProvided: User Enters Password
+    PasswordProvided --> Uploading: Retry Upload
+    Analyzing --> DisplayResults: Analysis Complete
+    DisplayResults --> ValidationRunning: Run Validations
+    ValidationRunning --> ValidationComplete: Validations Done
+    ValidationComplete --> DisplayResults: Update UI
+    DisplayResults --> DownloadReady: User Requests Download
+    DownloadReady --> Authenticated: Check Auth Status
+    Authenticated --> GeneratingBundle: Create Secure Bundle
+    GeneratingBundle --> DownloadComplete: ZIP + Password Ready
+    DownloadComplete --> DisplayResults: Return to Main View
 ```
 
-### Error Handling and User Feedback
-
-#### Error Boundary Implementation
-
-```javascript
-class ErrorBoundary extends React.Component {
-    constructor(props) {
-        super(props)
-        this.state = { hasError: false, error: null, errorInfo: null }
-    }
-    
-    static getDerivedStateFromError(error) {
-        return { hasError: true }
-    }
-    
-    componentDidCatch(error, errorInfo) {
-        this.setState({
-            error: error,
-            errorInfo: errorInfo
-        })
-        
-        // Log error to monitoring service
-        console.error('Application Error:', error, errorInfo)
-    }
-    
-    render() {
-        if (this.state.hasError) {
-            return (
-                <div className="error-boundary">
-                    <h2>Something went wrong</h2>
-                    <details>
-                        <summary>Error Details</summary>
-                        <pre>{this.state.error && this.state.error.toString()}</pre>
-                        <pre>{this.state.errorInfo.componentStack}</pre>
-                    </details>
-                    <button onClick={() => window.location.reload()}>
-                        Reload Application
-                    </button>
-                </div>
-            )
-        }
-        
-        return this.props.children
-    }
-}
-```
-
-#### Toast Notification System
-
-```javascript
-// Context for global notifications
-const NotificationContext = createContext()
-
-export const NotificationProvider = ({ children }) => {
-    const [notifications, setNotifications] = useState([])
-    
-    const addNotification = useCallback((notification) => {
-        const id = Date.now().toString()
-        const newNotification = { id, ...notification }
-        
-        setNotifications(prev => [...prev, newNotification])
-        
-        // Auto-remove after timeout
-        if (notification.autoRemove !== false) {
-            setTimeout(() => {
-                removeNotification(id)
-            }, notification.duration || 5000)
-        }
-    }, [])
-    
-    const removeNotification = useCallback((id) => {
-        setNotifications(prev => prev.filter(n => n.id !== id))
-    }, [])
-    
-    return (
-        <NotificationContext.Provider value={{ addNotification, removeNotification }}>
-            {children}
-            <NotificationContainer notifications={notifications} />
-        </NotificationContext.Provider>
-    )
-}
-
-// Hook for using notifications
-export const useNotifications = () => {
-    const context = useContext(NotificationContext)
-    if (!context) {
-        throw new Error('useNotifications must be used within NotificationProvider')
-    }
-    return context
-}
-```
+---
 
 ## Data Flow
 
-### Complete Request Lifecycle
-
-#### 1. File Upload Flow
+### Complete System Data Flow
 
 ```mermaid
-sequenceDiagram
-    participant U as User
-    participant F as Frontend
-    participant S as Session Manager
-    participant B as Backend API
-    participant A as Analyzer
-    participant V as Validator
-    participant DB as Storage
+flowchart TD
+    subgraph "Client Side"
+        A[User Uploads File] --> B[React File Upload Component]
+        B --> C[FormData with File + Password]
+    end
     
-    U->>F: Drop file on upload area
-    F->>S: Get/create session ID
-    S-->>F: Return session ID
-    F->>F: Validate file (size, type)
-    F->>B: POST /upload (file + session ID)
-    B->>B: Validate request & session
-    B->>A: Analyze certificate content
-    A->>A: Detect format & parse
-    A-->>B: Return analysis result
-    B->>DB: Store certificate data
-    B->>V: Trigger validation
-    V-->>B: Return validation results
-    B-->>F: Return complete response
-    F->>F: Update UI state
-    F-->>U: Show analysis results
-```
-
-#### 2. Validation Flow
-
-```mermaid
-sequenceDiagram
-    participant F as Frontend
-    participant B as Backend
-    participant V as Validator
-    participant S as Storage
+    subgraph "Network Layer"
+        C --> D[HTTP POST to /upload]
+        D --> E[Nginx Reverse Proxy]
+        E --> F[FastAPI Backend]
+    end
     
-    F->>B: POST /validation/validate/{session}
-    B->>S: Get all certificates for session
-    S-->>B: Return certificate list
-    B->>V: Run comprehensive validation
-    V->>V: Check private key matches
-    V->>V: Validate certificate chains
-    V->>V: Verify signatures
-    V-->>B: Return validation results
-    B->>S: Cache validation results
-    B-->>F: Return validation summary
-    F->>F: Update validation panel
-```
-
-### State Synchronization
-
-#### Frontend State Management
-
-```javascript
-// Global state management with React Context
-const AppStateContext = createContext()
-
-export const AppStateProvider = ({ children }) => {
-    const [state, dispatch] = useReducer(appReducer, initialState)
+    subgraph "Backend Processing"
+        F --> G[Session Manager]
+        G --> H{Session Exists?}
+        H -->|No| I[Create New Session]
+        H -->|Yes| J[Use Existing Session]
+        I --> K[Certificate Analyzer]
+        J --> K
+        K --> L[Multi-Format Parser]
+        L --> M[Cryptographic Validator]
+        M --> N[Store Results in Session]
+    end
     
-    // Sync with backend on state changes
-    useEffect(() => {
-        const syncInterval = setInterval(async () => {
-            try {
-                const serverState = await apiService.getSessionState()
-                dispatch({ type: 'SYNC_SERVER_STATE', payload: serverState.data })
-            } catch (error) {
-                console.error('State sync failed:', error)
-            }
-        }, 30000) // Sync every 30 seconds
-        
-        return () => clearInterval(syncInterval)
-    }, [])
+    subgraph "Response Flow"
+        N --> O[JSON Response]
+        O --> P[Nginx Proxy Response]
+        P --> Q[React State Update]
+        Q --> R[UI Components Re-render]
+        R --> S[Display Certificate Details]
+        S --> T[Show Validation Results]
+    end
     
-    return (
-        <AppStateContext.Provider value={{ state, dispatch }}>
-            {children}
-        </AppStateContext.Provider>
-    )
-}
-
-// State reducer
-const appReducer = (state, action) => {
-    switch (action.type) {
-        case 'UPLOAD_START':
-            return {
-                ...state,
-                uploading: true,
-                uploadError: null
-            }
-            
-        case 'UPLOAD_SUCCESS':
-            return {
-                ...state,
-                uploading: false,
-                certificates: [...state.certificates, action.payload]
-            }
-            
-        case 'VALIDATION_COMPLETE':
-            return {
-                ...state,
-                validation: action.payload,
-                lastValidation: new Date().toISOString()
-            }
-            
-        case 'SYNC_SERVER_STATE':
-            return {
-                ...state,
-                ...action.payload,
-                lastSync: new Date().toISOString()
-            }
-            
-        default:
-            return state
-    }
-}
-```
-
-## Performance Considerations
-
-### Backend Optimization
-
-#### Memory Management
-
-```python
-class MemoryOptimizedStorage:
-    """Storage implementation with memory optimization"""
-    
-    def __init__(self):
-        self._sessions = {}
-        self._access_times = {}
-        self._memory_limit = 100 * 1024 * 1024  # 100MB limit
-        
-    def store_certificate(self, cert_data: Dict, session_id: str) -> str:
-        """Store certificate with memory monitoring"""
-        
-        # Check memory usage before storing
-        current_memory = self._calculate_memory_usage()
-        if current_memory > self._memory_limit:
-            self._cleanup_old_sessions()
-        
-        # Store with compression for large objects
-        if self._estimate_size(cert_data) > 1024 * 1024:  # 1MB
-            cert_data = self._compress_data(cert_data)
-        
-        return super().store_certificate(cert_data, session_id)
-    
-    def _compress_data(self, data: Dict) -> Dict:
-        """Compress large certificate data"""
-        compressed = data.copy()
-        
-        # Compress large text fields
-        if 'pem_content' in compressed:
-            compressed['pem_content'] = gzip.compress(
-                compressed['pem_content'].encode()
-            )
-            compressed['_compressed'] = True
-        
-        return compressed
-```
-
-#### Async Processing
-
-```python
-import asyncio
-from concurrent.futures import ThreadPoolExecutor
-
-class AsyncCertificateProcessor:
-    """Async certificate processing for better performance"""
-    
-    def __init__(self):
-        self.executor = ThreadPoolExecutor(max_workers=4)
-    
-    async def process_multiple_certificates(self, files: List[UploadFile]) -> List[Dict]:
-        """Process multiple certificates concurrently"""
-        
-        # Create tasks for concurrent processing
-        tasks = []
-        for file in files:
-            content = await file.read()
-            task = asyncio.create_task(
-                self._process_certificate_async(content, file.filename)
-            )
-            tasks.append(task)
-        
-        # Wait for all tasks to complete
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        # Handle any exceptions
-        processed_results = []
-        for i, result in enumerate(results):
-            if isinstance(result, Exception):
-                logger.error(f"Processing failed for {files[i].filename}: {result}")
-                processed_results.append({
-                    "filename": files[i].filename,
-                    "error": str(result),
-                    "success": False
-                })
-            else:
-                processed_results.append(result)
-        
-        return processed_results
-    
-    async def _process_certificate_async(self, content: bytes, filename: str) -> Dict:
-        """Process single certificate in thread pool"""
-        loop = asyncio.get_event_loop()
-        
-        return await loop.run_in_executor(
-            self.executor,
-            self._process_certificate_sync,
-            content,
-            filename
-        )
-```
-
-### Frontend Optimization
-
-#### Component Memoization
-
-```javascript
-// Memoized certificate card component
-const CertificateCard = React.memo(({
-    certificate,
-    validation,
-    onDelete,
-    onViewDetails
-}) => {
-    // Memoize expensive calculations
-    const certificateStatus = useMemo(() => {
-        return calculateCertificateStatus(certificate, validation)
-    }, [certificate, validation])
-    
-    const handleDelete = useCallback(() => {
-        onDelete(certificate.id)
-    }, [certificate.id, onDelete])
-    
-    return (
-        <div className="certificate-card">
-            {/* Card content */}
-        </div>
-    )
-}, (prevProps, nextProps) => {
-    // Custom comparison function
-    return (
-        prevProps.certificate.id === nextProps.certificate.id &&
-        prevProps.validation?.timestamp === nextProps.validation?.timestamp
-    )
-})
-```
-
-#### Virtual Scrolling for Large Lists
-
-```javascript
-// Virtual scrolling component for large certificate lists
-const VirtualizedCertificateList = ({ certificates, itemHeight = 120 }) => {
-    const [containerHeight, setContainerHeight] = useState(400)
-    const [scrollTop, setScrollTop] = useState(0)
-    
-    const visibleStart = Math.floor(scrollTop / itemHeight)
-    const visibleEnd = Math.min(
-        visibleStart + Math.ceil(containerHeight / itemHeight) + 1,
-        certificates.length
-    )
-    
-    const visibleItems = certificates.slice(visibleStart, visibleEnd)
-    
-    return (
-        <div 
-            className="virtual-list-container"
-            style={{ height: containerHeight }}
-            onScroll={(e) => setScrollTop(e.target.scrollTop)}
-        >
-            <div style={{ height: certificates.length * itemHeight }}>
-                <div 
-                    style={{ 
-                        transform: `translateY(${visibleStart * itemHeight}px)` 
-                    }}
-                >
-                    {visibleItems.map((cert, index) => (
-                        <CertificateCard
-                            key={cert.id}
-                            certificate={cert}
-                            style={{ height: itemHeight }}
-                        />
-                    ))}
-                </div>
-            </div>
-        </div>
-    )
-}
-```
-
-### Caching Strategy
-
-#### Backend Caching
-
-```python
-from functools import lru_cache
-import hashlib
-
-class CacheOptimizedAnalyzer:
-    """Certificate analyzer with intelligent caching"""
-    
-    def __init__(self):
-        self._analysis_cache = {}
-        self._validation_cache = {}
-    
-    def analyze_certificate(self, content: bytes, filename: str, password: str = None) -> Dict:
-        """Analyze certificate with content-based caching"""
-        
-        # Generate cache key from content hash
-        content_hash = hashlib.sha256(content).hexdigest()
-        cache_key = f"{content_hash}:{filename}:{bool(password)}"
-        
-        if cache_key in self._analysis_cache:
-            logger.debug(f"Cache hit for {filename}")
-            return self._analysis_cache[cache_key]
-        
-        # Perform analysis
-        result = self._analyze_certificate_impl(content, filename, password)
-        
-        # Cache result (but not sensitive data)
-        cacheable_result = self._make_cacheable(result)
-        self._analysis_cache[cache_key] = cacheable_result
-        
-        return result
-    
-    @lru_cache(maxsize=128)
-    def _parse_certificate_extensions(self, cert_der: bytes) -> Dict:
-        """Cache expensive extension parsing"""
-        cert = x509.load_der_x509_certificate(cert_der)
-        return self._extract_extensions(cert)
-```
-
-This technical documentation provides comprehensive coverage of the Certificate Analysis Tool's implementation details, from session management through cryptographic validation to performance optimization strategies.
+    subgraph "Download Flow"
+        T --> U{User Requests Download?}
+        U -->|Yes| V[JWT Authentication Check]
+        V --> W[Generate Random Password]
+        W --> X[Create Encrypted ZIP]
+        X --> Y[Base64 Encode ZIP]
+        Y --> Z[Return ZIP + Password]
+        Z --> AA[Client Downloads ZIP]
+        AA --> BB[Password Displayed Once]
+        BB --> CC[System Forgets Password]
+    end

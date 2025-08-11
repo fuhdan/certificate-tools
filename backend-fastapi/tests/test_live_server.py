@@ -1034,6 +1034,59 @@ class TestIntegration:
         pki_response = requests.get(f"{API_BASE_URL}/pki-bundle", headers=headers)
         assert pki_response.status_code == 200
 
+# ========================================
+# SESSION ISOLATION TESTS
+# ========================================
+
+
+class TestSessionIsolation:
+    """Isolation between separate test sessions"""
+
+    def test_different_sessions_are_isolated_no_data_leak(self, auth_token, sample_certificate):
+        """🚦 Different sessions should be isolated; no data leak"""
+        session1 = str(uuid.uuid4())
+        session2 = str(uuid.uuid4())
+
+        headers1 = {
+            "Authorization": f"Bearer {auth_token}",
+            "X-Session-ID": session1
+        }
+        headers2 = {
+            "Authorization": f"Bearer {auth_token}",
+            "X-Session-ID": session2
+        }
+
+        files = {
+            "file": ("test1.crt", sample_certificate, "application/x-pem-file")
+        }
+        response1 = requests.post(
+            f"{API_BASE_URL}/analyze-certificate",
+            files=files,
+            headers=headers1
+        )
+        assert response1.status_code in [200, 201]
+
+        list1 = requests.get(f"{API_BASE_URL}/certificates", headers=headers1)
+        assert list1.json()["count"] >= 1
+
+        list2 = requests.get(f"{API_BASE_URL}/certificates", headers=headers2)
+        assert list2.json()["count"] == 0
+
+    def test_invalid_session_id_results_in_400_error(self, auth_token, sample_certificate, invalid_session_id):
+        """❗ Invalid session ID results in error (400)"""
+        headers = {
+            "Authorization": f"Bearer {auth_token}",
+            "X-Session-ID": str(invalid_session_id)
+        }
+        files = {
+            "certificate": ("test.crt", sample_certificate, "application/x-pem-file")
+        }
+        response = requests.post(
+            f"{API_BASE_URL}/analyze-certificate",
+            files=files,
+            headers=headers
+        )
+        assert response.status_code == 400
 
 # ========================================
 # PERFORMANCE TESTS

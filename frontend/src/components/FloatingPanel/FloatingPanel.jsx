@@ -430,8 +430,14 @@ const FloatingPanel = ({ isAuthenticated, showValidationPanel, onToggleValidatio
                 <label className={styles.checkboxLabel}>
                   <input 
                     type="checkbox"
-                    checked={showValidationPanel}
-                    onChange={(e) => onToggleValidationPanel(e.target.checked)}
+                    checked={showValidationPanel || false}
+                    onChange={(e) => {
+                      if (typeof onToggleValidationPanel === 'function') {
+                        onToggleValidationPanel(e.target.checked);
+                      } else {
+                        console.warn('onToggleValidationPanel handler is not defined');
+                      }
+                    }}
                     className={styles.checkbox}
                   />
                   <span>Show Validation Results</span>

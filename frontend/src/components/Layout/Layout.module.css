@@ -79,3 +79,26 @@
   color: #6b7280;
   font-size: 1rem;
 }
+
+.validationSection {
+  margin-top: 2rem;
+  margin-bottom: 2rem;
+  background-color: white;
+  border-radius: 10px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  padding: 0; /* Let ValidationPanel handle its own padding */
+  overflow: hidden; /* Prevent content overflow */
+}
+
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.uploadSection {
+  background-color: white;
+  border-radius: 10px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  padding: 2rem;
+  margin-bottom: 2rem;
+}

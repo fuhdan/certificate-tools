@@ -18,6 +18,14 @@ const LayoutContent = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [isCheckingAuth, setIsCheckingAuth] = useState(true)
   const [currentUser, setCurrentUser] = useState(null)
+  // ADD: State for ValidationPanel toggle
+  const [showValidationPanel, setShowValidationPanel] = useState(false)
+
+  // ADD: Handler for ValidationPanel toggle
+  const handleToggleValidationPanel = (show) => {
+    setShowValidationPanel(show)
+    console.log('ValidationPanel visibility toggled:', show)
+  }
 
   // Check if user is already authenticated
   useEffect(() => {
@@ -149,6 +157,18 @@ const LayoutContent = () => {
             <FileUpload />
           </div>
           
+          {/* ValidationPanel Section - POSITIONED CORRECTLY AFTER UPLOAD */}
+          {showValidationPanel && (
+            <div className={styles.validationSection}>
+              <ValidationPanel 
+                certificates={sortedCertificates}
+                onValidationComplete={(validations) => {
+                  console.log('Validation completed:', validations)
+                }}
+              />
+            </div>
+          )}
+          
           {/* Certificate Details Section */}
           {sortedCertificates.length > 0 && (
             <div className={styles.certificatesSection}>
@@ -163,23 +183,17 @@ const LayoutContent = () => {
               </div>
             </div>
           )}
-          
-          {/* ValidationPanel - Fixed with real API integration */}
-          <ValidationPanel 
-            certificates={sortedCertificates}
-            onValidationComplete={(validations) => {
-              console.log('Validation completed:', validations)
-            }}
-          />
         </div>
       </main>
       
       <Footer />
       
-      {/* Floating System Panel */}
+      {/* Floating System Panel with ValidationPanel props */}
       <FloatingPanel 
         isAuthenticated={isAuthenticated}
         currentUser={currentUser}
+        showValidationPanel={showValidationPanel}
+        onToggleValidationPanel={handleToggleValidationPanel}
       />
     </div>
   )

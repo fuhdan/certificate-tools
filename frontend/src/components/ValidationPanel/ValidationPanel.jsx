@@ -1,4 +1,38 @@
-import React, { useState, useEffect } from 'react';
+// Filter ONLY for actual PKI relationship validations
+  const isValidPKIRelationship = (validation, key = '') => {
+    const validationType = (validation.title || validation.validation_type || key || '').toLowerCase();
+    
+    // ONLY allow these specific PKI relationship validations
+    const allowedTypes = [
+      'private key',
+      'certificate match',
+      'csr',
+      'chain',
+      'ca match',
+      'issuing',
+      'intermediate',
+      'root ca'
+    ];
+    
+    // EXCLUDE these bullshit validations  
+    const excludedTypes = [
+      'expiry',
+      'expired', 
+      'date',
+      'usage',
+      'algorithm',
+      'strength',
+      'subject alternative',
+      'san',
+      'extension'
+    ];
+    
+    // Must contain allowed type AND not contain excluded type
+    const hasAllowedType = allowedTypes.some(type => validationType.includes(type));
+    const hasExcludedType = excludedTypes.some(type => validationType.includes(type));
+    
+    return hasAllowedType && !hasExcludedType;
+  };import React, { useState, useEffect } from 'react';
 import { 
   Shield, 
   CheckCircle, 
@@ -7,12 +41,9 @@ import {
   Key, 
   FileText, 
   Link, 
-  Clock, 
   Eye, 
   ChevronDown, 
   ChevronRight,
-  Award,
-  AlertCircle,
   Info,
   Loader2
 } from 'lucide-react';
@@ -41,39 +72,58 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
     
     try {
       console.log('🔍 ValidationPanel: Fetching validation results...');
-      // The validation results are already included in the certificates response
       const response = await certificateAPI.getCertificates();
       console.log('📥 ValidationPanel: Received certificates response:', response);
       
       if (response.success && response.validation_results) {
         console.log('📊 ValidationPanel: Found validation results:', response.validation_results);
         
-        // Transform the backend validation results to frontend format
         const backendResults = response.validation_results;
-        const validations = (backendResults.validations || []).map((validation, index) => ({
-          isValid: validation.is_valid,
-          validationType: validation.validation_type || `Validation ${index + 1}`,
-          description: validation.description || '',
-          certificate1: validation.certificate_1 || '',
-          certificate2: validation.certificate_2 || '',
-          error: validation.error || null,
-          details: validation.details || {}
-        }));
+        
+        // Filter out bullshit validations and process only PKI relationship validations
+        let validations = [];
+        
+        if (backendResults.validations) {
+          if (Array.isArray(backendResults.validations)) {
+            validations = backendResults.validations
+              .filter(validation => isValidPKIRelationship(validation))
+              .map((validation, index) => ({
+                isValid: validation.status === 'valid',
+                validationType: validation.title || validation.validation_type || `Validation ${index + 1}`,
+                description: validation.description || '',
+                certificate1: validation.components_involved?.[0] || '',
+                certificate2: validation.components_involved?.[1] || '',
+                error: validation.error || null,
+                details: validation.details || {}
+              }));
+          } else if (typeof backendResults.validations === 'object') {
+            validations = Object.entries(backendResults.validations)
+              .filter(([key, validation]) => isValidPKIRelationship(validation, key))
+              .map(([key, validation]) => ({
+                isValid: validation.status === 'valid',
+                validationType: validation.title || formatValidationType(key),
+                description: validation.description || '',
+                certificate1: validation.components_involved?.[0] || '',
+                certificate2: validation.components_involved?.[1] || '',
+                error: validation.error || null,
+                details: validation.details || {}
+              }));
+          }
+        }
         
         setValidationResults({
           success: true,
           validations: validations,
-          overall_status: backendResults.overall_status,
-          total_validations: backendResults.total_validations,
-          passed_validations: backendResults.passed_validations,
-          failed_validations: backendResults.failed_validations
+          overall_status: backendResults.overall_status || 'unknown',
+          total_validations: validations.length,
+          passed_validations: validations.filter(v => v.isValid).length,
+          failed_validations: validations.filter(v => !v.isValid).length
         });
         
         if (onValidationComplete) {
           onValidationComplete(validations);
         }
       } else {
-        // No validation results available
         setValidationResults({
           success: true,
           validations: [],
@@ -91,40 +141,28 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
     }
   };
 
-  const getStatusIcon = (status, confidence = 'medium') => {
-    const baseSize = 20;
-    switch (status) {
-      case 'valid':
-      case true:
-        return <CheckCircle size={baseSize} className={`${styles.statusIconValid} ${confidence === 'high' ? styles.highConfidence : ''}`} />;
-      case 'warning': 
-        return <AlertTriangle size={baseSize} className={styles.statusIconWarning} />;
-      case 'invalid':
-      case false:
-        return <XCircle size={baseSize} className={styles.statusIconInvalid} />;
-      default:
-        return <AlertCircle size={baseSize} className={styles.statusIconDefault} />;
-    }
+
+
+  const formatValidationType = (key) => {
+    return key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
   };
 
   const getTypeIcon = (type) => {
-    // Map validation types from backend to icons
-    if (type?.includes('Private Key') && type?.includes('Certificate')) {
+    const typeStr = type?.toLowerCase() || '';
+    
+    if (typeStr.includes('private key') && typeStr.includes('certificate')) {
       return <Key size={18} className={styles.typeIconCrypto} />;
     }
-    if (type?.includes('Private Key') && type?.includes('CSR')) {
+    if (typeStr.includes('private key') && typeStr.includes('csr')) {
       return <Key size={18} className={styles.typeIconCrypto} />;
     }
-    if (type?.includes('CSR') && type?.includes('Certificate')) {
+    if (typeStr.includes('csr') && typeStr.includes('certificate')) {
       return <FileText size={18} className={styles.typeIconExtension} />;
     }
-    if (type?.includes('Chain') || type?.includes('chain')) {
+    if (typeStr.includes('chain') || typeStr.includes('ca')) {
       return <Link size={18} className={styles.typeIconChain} />;
     }
-    if (type?.includes('Algorithm') || type?.includes('Strength')) {
-      return <Shield size={18} className={styles.typeIconSecurity} />;
-    }
-    return <Info size={18} className={styles.typeIconDefault} />;
+    return <Shield size={18} className={styles.typeIconSecurity} />;
   };
 
   const getConfidenceBadge = (confidence) => {
@@ -137,6 +175,34 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
     return `${baseClasses} ${confidenceClasses[confidence] || confidenceClasses.medium}`;
   };
 
+  const getValidationConfidence = (validation) => {
+    if (validation.details) {
+      const details = validation.details;
+      
+      // High confidence: Cryptographic key matching validations
+      if (details.modulus_match === true || details.exponent_match === true ||
+          details.fingerprints_match === true || details.public_key_match === true) {
+        return 'high';
+      }
+      
+      // High confidence: Certificate chain validations
+      if (details.all_signatures_valid === true || 
+          details.trust_chain_complete === true ||
+          details.signature_valid === true) {
+        return 'high';
+      }
+      
+      // Medium confidence: Partial matches or incomplete data
+      if (details.partial_match === true || 
+          Object.keys(details).length > 0) {
+        return 'medium';
+      }
+    }
+    
+    // Low confidence: Failed validations or no details
+    return validation.isValid ? 'medium' : 'low';
+  };
+
   const toggleValidation = (validationId) => {
     const newExpanded = new Set(expandedValidations);
     if (newExpanded.has(validationId)) {
@@ -147,29 +213,24 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
     setExpandedValidations(newExpanded);
   };
 
-  const formatFingerprint = (fingerprint) => {
-    if (!fingerprint) return 'N/A';
-    return fingerprint.match(/.{1,4}/g)?.join(' ') || fingerprint;
-  };
-
   const renderValidationDetails = (validation) => {
     const details = validation.details || {};
 
     return (
       <div className={styles.detailsContainer}>
         <div className={styles.validationDetailsBox}>
-          <h4 className={styles.validationDetailsTitle}>Validation Details</h4>
+          <h4 className={styles.validationDetailsTitle}>PKI Relationship Details</h4>
           
           {/* Basic validation info */}
           <div className={styles.basicInfoGrid}>
             <div className={styles.basicInfoItem}>
               <span className={styles.basicInfoLabel}>Validation Type:</span>
-              <span className={styles.basicInfoValue}>{validation.validationType || validation.type || 'Unknown'}</span>
+              <span className={styles.basicInfoValue}>{validation.validationType}</span>
             </div>
             <div className={styles.basicInfoItem}>
               <span className={styles.basicInfoLabel}>Result:</span>
               <span className={`${styles.basicInfoValue} ${validation.isValid ? styles.validText : styles.invalidText}`}>
-                {validation.isValid ? 'VALID' : 'INVALID'}
+                {validation.isValid ? 'MATCH' : 'NO MATCH'}
               </span>
             </div>
             {validation.certificate1 && (
@@ -189,7 +250,7 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
           {/* Error information */}
           {validation.error && (
             <div className={styles.errorDetailsBox}>
-              <h5 className={styles.errorDetailsTitle}>Error Details</h5>
+              <h5 className={styles.errorDetailsTitle}>Validation Error</h5>
               <div className={styles.errorDetailsContent}>
                 <AlertTriangle size={16} className={styles.errorDetailsIcon} />
                 <span className={styles.errorDetailsText}>{validation.error}</span>
@@ -197,10 +258,10 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
             </div>
           )}
 
-          {/* Technical details */}
+          {/* Cryptographic details */}
           {details && Object.keys(details).length > 0 && (
             <div className={styles.technicalDetailsBox}>
-              <h5 className={styles.technicalDetailsTitle}>Technical Details</h5>
+              <h5 className={styles.technicalDetailsTitle}>Cryptographic Analysis</h5>
               <div className={styles.technicalDetailsGrid}>
                 {Object.entries(details).map(([key, value]) => (
                   <div key={key} className={styles.technicalDetailsItem}>
@@ -218,6 +279,10 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
     );
   };
 
+  const getStatusIcon = (isValid) => {
+    return isValid ? '✅' : '❌';
+  };
+
   // Loading state
   if (isLoading) {
     return (
@@ -225,8 +290,8 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
         <div className={styles.loadingContainer}>
           <div className={styles.loadingContent}>
             <Loader2 size={48} className={styles.loadingIcon} />
-            <h3 className={styles.loadingTitle}>Running Validations</h3>
-            <p className={styles.loadingText}>Analyzing cryptographic relationships...</p>
+            <h3 className={styles.loadingTitle}>Validating PKI Relationships</h3>
+            <p className={styles.loadingText}>Analyzing cryptographic component relationships...</p>
           </div>
         </div>
       </div>
@@ -240,7 +305,7 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
         <div className={styles.errorContainer}>
           <div className={styles.errorContent}>
             <AlertTriangle size={48} className={styles.errorIcon} />
-            <h3 className={styles.errorTitle}>Validation Error</h3>
+            <h3 className={styles.errorTitle}>PKI Validation Error</h3>
             <p className={styles.errorText}>{error}</p>
             <button 
               className={styles.retryButton}
@@ -263,17 +328,17 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
   }
 
   // No validation results yet
-  if (!validationResults || !validationResults.validations) {
+  if (!validationResults || !validationResults.validations || validationResults.validations.length === 0) {
     return (
       <div className={styles.container}>
         <div className={styles.noResultsContainer}>
           <div className={styles.noResultsContent}>
             <Shield size={48} className={styles.noResultsIcon} />
-            <h3 className={styles.noResultsTitle}>No Validation Results</h3>
+            <h3 className={styles.noResultsTitle}>No PKI Relationships Found</h3>
             <p className={styles.noResultsText}>
               {certificates.length === 1 
-                ? "Single component uploaded. Upload related components to see cryptographic validations."
-                : "No validation results available."
+                ? "Single component uploaded. Upload related components (Private Key, CSR, Certificates, CAs) to validate PKI relationships."
+                : "No cryptographic relationships detected between uploaded components."
               }
             </p>
           </div>
@@ -285,8 +350,10 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
   const validationsArray = validationResults.validations || [];
   const totalValidations = validationsArray.length;
   const passedValidations = validationsArray.filter(v => v.isValid).length;
-  const failedValidations = validationsArray.filter(v => !v.isValid && !v.error).length;
-  const errorValidations = validationsArray.filter(v => v.error).length;
+  const failedValidations = validationsArray.filter(v => !v.isValid).length;
+
+  // PKI is valid if ALL relationship validations pass
+  const pkiIsValid = totalValidations > 0 && failedValidations === 0;
 
   return (
     <div className={styles.container}>
@@ -295,10 +362,10 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
         <div className={styles.headerTop}>
           <h2 className={styles.title}>
             <Shield size={24} className={styles.titleIcon} />
-            <span>PKI Validation Results</span>
+            <span>PKI Relationship Validation</span>
           </h2>
           <div className={styles.computedAt}>
-            Computed: {new Date().toLocaleString()}
+            Analyzed: {new Date().toLocaleString()}
           </div>
         </div>
 
@@ -306,31 +373,29 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
         <div className={styles.statusGrid}>
           <div className={styles.statusCard}>
             <div className={styles.statusNumber}>{totalValidations}</div>
-            <div className={styles.statusLabel}>Total Checks</div>
+            <div className={styles.statusLabel}>Relationships</div>
           </div>
           <div className={`${styles.statusCard} ${styles.statusCardPassed}`}>
             <div className={styles.statusNumber}>{passedValidations}</div>
-            <div className={styles.statusLabel}>Passed</div>
-          </div>
-          <div className={`${styles.statusCard} ${styles.statusCardWarnings}`}>
-            <div className={styles.statusNumber}>{errorValidations}</div>
-            <div className={styles.statusLabel}>Warnings</div>
+            <div className={styles.statusLabel}>Valid</div>
           </div>
           <div className={`${styles.statusCard} ${styles.statusCardFailed}`}>
             <div className={styles.statusNumber}>{failedValidations}</div>
-            <div className={styles.statusLabel}>Failed</div>
+            <div className={styles.statusLabel}>Invalid</div>
+          </div>
+          <div className={`${styles.statusCard} ${styles.statusCardWarnings}`}>
+            <div className={styles.statusNumber}>{Math.round((passedValidations/totalValidations)*100) || 0}%</div>
+            <div className={styles.statusLabel}>Success Rate</div>
           </div>
         </div>
 
         {/* Overall Status Badge */}
         <div className={styles.overallStatusContainer}>
           <div className={`${styles.overallStatusBadge} ${
-            failedValidations === 0 ? styles.overallStatusValid :
-            errorValidations > 0 ? styles.overallStatusWarning :
-            styles.overallStatusInvalid
+            pkiIsValid ? styles.overallStatusValid : styles.overallStatusInvalid
           }`}>
-            {getStatusIcon(failedValidations === 0 ? 'valid' : 'invalid', 'high')}
-            <span>PKI {failedValidations === 0 ? 'valid' : 'invalid'}</span>
+            {getStatusIcon(pkiIsValid)}
+            <span>PKI {pkiIsValid ? 'Valid' : 'Invalid'}</span>
           </div>
         </div>
       </div>
@@ -338,70 +403,73 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
       {/* Validation Details */}
       <div className={styles.content}>
         <div className={styles.validationsList}>
-          {validationsArray.map((validation, index) => (
-            <div key={validation.validationId || index} className={styles.validationItem}>
-              {/* Validation Header */}
-              <div 
-                className={styles.validationHeader}
-                onClick={() => toggleValidation(validation.validationId || index)}
-              >
-                <div className={styles.validationHeaderContent}>
-                  {getTypeIcon(validation.validationType || validation.type)}
-                  <div className={styles.validationHeaderText}>
-                    <h3 className={styles.validationTitle}>
-                      {validation.validationType || validation.type || 'Unknown Validation'}
-                    </h3>
-                    <p className={styles.validationDescription}>
-                      {validation.description || `${validation.certificate1 || 'Component'} → ${validation.certificate2 || 'Component'}`}
-                    </p>
+          {validationsArray.map((validation, index) => {
+            const confidence = getValidationConfidence(validation);
+            return (
+              <div key={validation.validationId || index} className={styles.validationItem}>
+                {/* Validation Header */}
+                <div 
+                  className={styles.validationHeader}
+                  onClick={() => toggleValidation(validation.validationId || index)}
+                >
+                  <div className={styles.validationHeaderContent}>
+                    {getTypeIcon(validation.validationType)}
+                    <div className={styles.validationHeaderText}>
+                      <h3 className={styles.validationTitle}>
+                        {validation.validationType}
+                      </h3>
+                      <p className={styles.validationDescription}>
+                        {validation.description || `Cryptographic relationship: ${validation.certificate1 || 'Component'} ↔ ${validation.certificate2 || 'Component'}`}
+                      </p>
+                    </div>
+                  </div>
+                  
+                  <div className={styles.validationHeaderControls}>
+                    <span className={getConfidenceBadge(confidence)}>
+                      {confidence} confidence
+                    </span>
+                    {getStatusIcon(validation.isValid)}
+                    {expandedValidations.has(validation.validationId || index) ? (
+                      <ChevronDown size={20} className={styles.expandIcon} />
+                    ) : (
+                      <ChevronRight size={20} className={styles.expandIcon} />
+                    )}
                   </div>
                 </div>
-                
-                <div className={styles.validationHeaderControls}>
-                  <span className={getConfidenceBadge('medium')}>
-                    medium confidence
-                  </span>
-                  {getStatusIcon(validation.isValid)}
-                  {expandedValidations.has(validation.validationId || index) ? (
-                    <ChevronDown size={20} className={styles.expandIcon} />
-                  ) : (
-                    <ChevronRight size={20} className={styles.expandIcon} />
+
+                {/* Component Pills */}
+                <div className={styles.componentPills}>
+                  {validation.certificate1 && (
+                    <span className={styles.componentPill}>
+                      {validation.certificate1}
+                    </span>
+                  )}
+                  {validation.certificate2 && (
+                    <span className={styles.componentPill}>
+                      {validation.certificate2}
+                    </span>
                   )}
                 </div>
-              </div>
 
-              {/* Component Pills */}
-              <div className={styles.componentPills}>
-                {validation.certificate1 && (
-                  <span className={styles.componentPill}>
-                    {validation.certificate1}
-                  </span>
-                )}
-                {validation.certificate2 && (
-                  <span className={styles.componentPill}>
-                    {validation.certificate2}
-                  </span>
+                {/* Expanded Details */}
+                {expandedValidations.has(validation.validationId || index) && (
+                  <div className={styles.expandedDetails}>
+                    {renderValidationDetails(validation)}
+                  </div>
                 )}
               </div>
-
-              {/* Expanded Details */}
-              {expandedValidations.has(validation.validationId || index) && (
-                <div className={styles.expandedDetails}>
-                  {renderValidationDetails(validation)}
-                </div>
-              )}
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
       {/* Footer */}
       <div className={styles.footer}>
         <div className={styles.footerContent}>
-          <span>Validation Engine v2.0</span>
+          <span>PKI Validation Engine v2.0</span>
           <div className={styles.footerHint}>
             <Eye size={14} />
-            <span>Click validations to view detailed analysis</span>
+            <span>Click relationships to view cryptographic analysis</span>
           </div>
         </div>
       </div>

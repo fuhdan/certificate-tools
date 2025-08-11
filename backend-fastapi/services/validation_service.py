@@ -383,9 +383,9 @@ class ValidationService:
             for cert_comp in cert_components:
                 cert = x509.load_pem_x509_certificate(cert_comp.content.encode())
                 
-                # Check expiry
-                is_expired = check_time > cert.not_valid_after
-                days_until_expiry = (cert.not_valid_after - check_time).days
+                # FIXED: Use timezone-aware UTC methods to avoid datetime comparison error
+                is_expired = check_time > cert.not_valid_after_utc
+                days_until_expiry = (cert.not_valid_after_utc - check_time).days
                 
                 if is_expired:
                     all_valid = False
@@ -401,8 +401,8 @@ class ValidationService:
                 certificates.append({
                     "component_id": cert_comp.id,
                     "common_name": cert_comp.metadata.get('subject_common_name', 'Unknown'),
-                    "not_before": cert.not_valid_before.isoformat(),
-                    "not_after": cert.not_valid_after.isoformat(),
+                    "not_before": cert.not_valid_before_utc.isoformat(),
+                    "not_after": cert.not_valid_after_utc.isoformat(),
                     "is_expired": is_expired,
                     "days_until_expiry": days_until_expiry,
                     "status": status

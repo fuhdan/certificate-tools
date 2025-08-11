@@ -1,4 +1,4 @@
-// frontend/src/components/FloatingPanel/FloatingPanel.jsx (Fixed - Preserving Original Logic)
+// frontend/src/components/FloatingPanel/FloatingPanel.jsx (Fixed - Preserving Original Logic + ValidationPanel Toggle)
 import React, { useState, useEffect, useRef } from 'react'
 import {
   Settings,
@@ -10,7 +10,8 @@ import {
   Wrench,
   GripVertical,
   Minimize2,
-  Maximize2
+  Maximize2,
+  Shield
 } from 'lucide-react'
 import styles from './FloatingPanel.module.css'
 import ConnectionStatus from './ConnectionStatus'
@@ -24,7 +25,7 @@ import { useCertificates } from '../../contexts/CertificateContext'
 import { downloadAPI } from '../../services/api'
 import api from '../../services/api'
 
-const FloatingPanel = ({ isAuthenticated }) => {
+const FloatingPanel = ({ isAuthenticated, showValidationPanel, onToggleValidationPanel }) => {
   const { certificates, clearAllFiles } = useCertificates()
   const [showPKIBundle, setShowPKIBundle] = useState(false)
   const [showAdvanced, setShowAdvanced] = useState(false)
@@ -419,6 +420,24 @@ const FloatingPanel = ({ isAuthenticated }) => {
             <div className={styles.sectionContent}>
               <ConnectionStatus />
               <SystemMessages />
+              
+              {/* NEW: Validation Panel Toggle */}
+              <div className={styles.validationToggleSection}>
+                <div className={styles.sectionHeader}>
+                  <Shield size={16} />
+                  <span className={styles.sectionTitle}>Validation Panel</span>
+                </div>
+                <label className={styles.checkboxLabel}>
+                  <input 
+                    type="checkbox"
+                    checked={showValidationPanel}
+                    onChange={(e) => onToggleValidationPanel(e.target.checked)}
+                    className={styles.checkbox}
+                  />
+                  <span>Show Validation Results</span>
+                </label>
+              </div>
+              
               <button
                 className={`${styles.pkiBundleButton} ${!isAuthenticated || !hasAnyFiles ? styles.disabled : ''}`}
                 onClick={handleShowPKIBundle}

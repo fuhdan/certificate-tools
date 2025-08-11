@@ -150,9 +150,10 @@ async def analyze_certificate(
 @router.get("/certificates", tags=["certificates"])
 def get_certificates(
     include_chain_info: bool = False,
+    include_validation: bool = True,  # ADD THIS PARAMETER
     session_id: str = Depends(get_session_id)
 ):
-    """Get all PKI components for session with optional chain information"""
+    """Get all PKI components for session with optional chain information and validation results"""
     
     logger.info(f"[{session_id}] Retrieving PKI components")
     
@@ -168,7 +169,16 @@ def get_certificates(
             "timestamp": datetime.datetime.now().isoformat()
         }
         
-        # Add chain information if requested
+        # ADD THIS SECTION - Include validation results
+        if include_validation:
+            validation_results = session_pki_storage.get_validation_results(session_id)
+            if validation_results:
+                response_data["validation_results"] = validation_results
+                logger.info(f"[{session_id}] Included validation results: {validation_results.get('total_validations', 0)} checks")
+            else:
+                logger.info(f"[{session_id}] No validation results available")
+        
+        # KEEP EXISTING CODE - Add chain information if requested
         if include_chain_info:
             chain_summary = session_pki_storage.get_chain_summary(session_id)
             response_data["chain_info"] = chain_summary
@@ -627,6 +637,37 @@ def get_validation_status(
     except Exception as e:
         logger.error(f"[{session_id}] Validation status error: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get validation status: {str(e)}")
+
+@router.get("/certificates/validation", tags=["certificates", "validation"])
+def get_validation_results(
+    session_id: str = Depends(get_session_id)
+):
+    """Get validation results for session PKI components"""
+    
+    logger.info(f"[{session_id}] Retrieving validation results")
+    
+    try:
+        validation_results = session_pki_storage.get_validation_results(session_id)
+        
+        if not validation_results:
+            return {
+                "success": True,
+                "session_id": session_id,
+                "validation_results": None,
+                "message": "No validation results available. Upload components to generate validations.",
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+        
+        return {
+            "success": True,
+            "session_id": session_id,
+            "validation_results": validation_results,
+            "timestamp": datetime.datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"[{session_id}] Error retrieving validation results: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve validation results: {str(e)}")
 
 def _get_type_description(component_type: PKIComponentType) -> str:
     """Get human-readable description for component type"""

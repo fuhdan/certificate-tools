@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional, Set
 from dataclasses import dataclass, field
 from enum import Enum
+from ..validation.models import ValidationResult as ValidationResultsModel
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,7 @@ class PKISession:
     last_updated: str
     components: Dict[str, PKIComponent] = field(default_factory=dict)  # component_id -> PKIComponent
     chains: Dict[str, Set[str]] = field(default_factory=dict)  # chain_id -> set of component_ids
+    validation_results: Optional[Dict[str, Any]] = field(default_factory=dict)  # Validation results
     
     def add_component(self, component: PKIComponent) -> str:
         """Add component to session"""
@@ -192,6 +194,7 @@ class SessionPKIStorage:
             
             session.replace_component(existing_component_id, new_component)
             logger.info(f"Replaced {component_type.type_name} in session {session_id}: {filename}")
+            self._compute_session_validation(session_id)
             return existing_component_id
         
         # Check for chain conflicts
@@ -216,7 +219,16 @@ class SessionPKIStorage:
         
         session.add_component(component)
         logger.info(f"Added {component_type.type_name} to session {session_id}: {filename}")
+        self._compute_session_validation(session_id)
         return component_id
+
+    def get_validation_results(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """Get validation results for a session"""
+        if session_id not in self._sessions:
+            return None
+        
+        session = self._sessions[session_id]
+        return session.validation_results
     
     def _find_duplicate_component(self, session: PKISession, component_type: PKIComponentType, 
                              metadata: Dict[str, Any]) -> Optional[str]:
@@ -323,6 +335,8 @@ class SessionPKIStorage:
                 chain_id=chain_id
             )
             component_ids.append(component_id)
+
+        self._compute_session_validation(session_id)
         
         logger.info(f"Added {len(component_ids)} components as chain {chain_id}")
         return component_ids
@@ -436,6 +450,46 @@ class SessionPKIStorage:
         
         session = self._sessions[session_id]
         return session.components.get(component_id)
+
+    def _compute_session_validation(self, session_id: str) -> None:
+        """Compute all validations for a session and store results"""
+        if session_id not in self._sessions:
+            return
+            
+        session = self._sessions[session_id]
+        
+        # Import validation service (follows your service pattern)
+        try:
+            from services.validation_service import validation_service
+        except ImportError:
+            # Skip validation if service not available yet
+            logger.warning(f"Validation service not available for session {session_id}")
+            return
+        
+        try:
+            # Compute validations using service
+            validation_results = validation_service.compute_all_validations(session)
+            
+            # Store results in session
+            session.validation_results = validation_results
+            session.last_updated = datetime.utcnow().isoformat()
+            
+            logger.info(f"Computed validations for session {session_id}: {validation_results.get('total_validations', 0)} checks")
+            
+        except Exception as e:
+            logger.error(f"Error computing validations for session {session_id}: {e}")
+            # Store empty validation results on error
+            session.validation_results = {
+                "computed_at": datetime.utcnow().isoformat(),
+                "validation_engine_version": "2.0",
+                "overall_status": "error",
+                "total_validations": 0,
+                "passed_validations": 0,
+                "failed_validations": 0,
+                "warnings": 0,
+                "validations": {},
+                "error": str(e)
+            }
 
 # Global instance
 session_pki_storage = SessionPKIStorage()

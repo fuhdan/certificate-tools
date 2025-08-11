@@ -132,6 +132,31 @@ def storage_to_api_model(storage_data) -> UnifiedCertificateModel:
         used_password=storage_data.used_password
     )
 
+class ValidationDetailModel(BaseModel):
+    """Individual validation details"""
+    validation_id: str
+    type: str  # cryptographic_match, chain_validation, etc.
+    status: str  # valid, warning, invalid
+    confidence: str  # high, medium, low
+    title: str
+    description: str
+    components_involved: List[str] = Field(default_factory=list)
+    validation_method: str
+    details: Dict[str, Any] = Field(default_factory=dict)
+    timestamp: str
+
+class ValidationResultsModel(BaseModel):
+    """Complete validation results for a session"""
+    computed_at: str
+    validation_engine_version: str = "2.0"
+    overall_status: str  # valid, warning, invalid
+    total_validations: int
+    passed_validations: int
+    failed_validations: int
+    warnings: int
+    validations: Dict[str, ValidationDetailModel] = Field(default_factory=dict)
+    security_recommendations: List[Dict[str, Any]] = Field(default_factory=list)
+
 def api_to_pem_export(storage_data) -> PEMExportModel:
     """Convert storage data to PEM export model"""
     

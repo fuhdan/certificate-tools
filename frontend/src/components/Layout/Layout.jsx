@@ -1,5 +1,5 @@
 // frontend/src/components/Layout/Layout.jsx
-// Complete fresh version - bundle expansion with fixed auth
+// Updated layout with fixed ValidationPanel - no mock data
 
 import React, { useState, useEffect, useMemo } from 'react'
 import Header from '../Header/Header'
@@ -7,6 +7,7 @@ import Footer from '../Footer/Footer'
 import FloatingPanel from '../FloatingPanel/FloatingPanel'
 import FileUpload from '../FileUpload/FileUpload'
 import CertificateDetails from '../CertificateDetails/CertificateDetails'
+import ValidationPanel from '../ValidationPanel/ValidationPanel'
 import { CertificateProvider, useCertificates } from '../../contexts/CertificateContext'
 import api from '../../services/api'
 import styles from './Layout.module.css'
@@ -72,39 +73,24 @@ const LayoutContent = () => {
       return 5
     }
 
-    // Default order for unknown types
-    return 999
+    // 6. Unknown/other components
+    return 6
   }
 
-  const createSortedCertificates = (certificates) => {
-    // No bundle expansion - trust the backend to provide correctly structured data
-    // The backend should already handle PKCS12/PKCS7 expansion and proper ordering
-    
-    // Cache the order calculations to avoid repeated computation
-    const certificateOrders = new Map()
-    
-    const getSortOrder = (cert) => {
-      const cacheKey = cert.id
-      if (certificateOrders.has(cacheKey)) {
-        return certificateOrders.get(cacheKey)
-      }
+  // Helper function to create properly sorted certificates
+  const createSortedCertificates = (certs) => {
+    if (!certs || certs.length === 0) return []
+
+    return [...certs].sort((a, b) => {
+      // Primary sort by PKI hierarchy order
+      const orderA = getPKIOrder(a)
+      const orderB = getPKIOrder(b)
       
-      const order = getPKIOrder(cert)
-      certificateOrders.set(cacheKey, order)
-      return order
-    }
-    
-    // Sort certificates by PKI hierarchy order
-    return certificates.slice().sort((a, b) => {
-      const orderA = getSortOrder(a)
-      const orderB = getSortOrder(b)
-      
-      // Primary sort by PKI order
       if (orderA !== orderB) {
         return orderA - orderB
       }
-      
-      // Secondary sort by filename for consistent ordering
+
+      // Secondary sort by filename for same-type components
       const filenameA = a.filename || ''
       const filenameB = b.filename || ''
       return filenameA.localeCompare(filenameB)
@@ -178,7 +164,13 @@ const LayoutContent = () => {
             </div>
           )}
           
-          {/* Validation Panel removed - validation is in individual certificate headers */}
+          {/* ValidationPanel - Fixed with real API integration */}
+          <ValidationPanel 
+            certificates={sortedCertificates}
+            onValidationComplete={(validations) => {
+              console.log('Validation completed:', validations)
+            }}
+          />
         </div>
       </main>
       

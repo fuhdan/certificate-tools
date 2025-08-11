@@ -613,14 +613,34 @@ export const certificateAPI = {
     }
   },
 
-  async getCertificates() {
+  /**
+   * Get certificates with optional validation results
+   * @param {boolean} includeValidation - Whether to include validation results
+   * @param {boolean} includeChainInfo - Whether to include chain information
+   * @returns {Promise<Object>} API response with certificates and validation
+   */
+  async getCertificates(options = {}) {
     try {
       console.log('🔄 API: Getting certificates from /certificates endpoint...')
-      const response = await api.get('/certificates')
+      
+      // Build query parameters
+      const params = new URLSearchParams()
+      if (options.include_validation) {
+        params.append('include_validation', 'true')
+      }
+      if (options.include_chain_info) {
+        params.append('include_chain_info', 'true')
+      }
+      
+      const url = `/certificates${params.toString() ? '?' + params.toString() : ''}`
+      console.log('🔗 API: Request URL:', url)
+      
+      const response = await api.get(url)
 
       console.log('📥 API: Raw /certificates response:', response.data)
       console.log('📥 API: Components array:', response.data.components)
       console.log('📥 API: Components length:', response.data.components?.length)
+      console.log('📥 API: Validation results:', response.data.validation_results)
 
       if (response.data.success && response.data.components) {
         console.log('🔄 API: Starting component mapping...')
@@ -645,11 +665,19 @@ export const certificateAPI = {
         console.log('🎯 API: Final mapped certificates:', certificates)
         console.log('🎯 API: Final certificates count:', certificates.length)
 
-        return {
+        const result = {
           success: true,
           certificates: certificates,
           total: certificates.length
         }
+        
+        // Include validation results if present
+        if (response.data.validation_results) {
+          result.validation_results = response.data.validation_results
+          console.log('✅ API: Added validation results to response:', result.validation_results)
+        }
+        
+        return result
       } else {
         console.log('❌ API: No components found or response unsuccessful')
         return {
@@ -661,6 +689,26 @@ export const certificateAPI = {
     } catch (error) {
       console.error('💥 API: Error fetching certificates:', error)
       throw new Error(error.response?.data?.message || 'Failed to fetch certificates')
+    }
+  },
+
+  /**
+   * Get validation results only
+   * @returns {Promise<Object>} Validation results
+   */
+  async getValidationResults() {
+    try {
+      const response = await api.get('/certificates/validation');
+      
+      console.log('🛡️ Validation results retrieved:', {
+        status: response.data.validation_results?.overall_status,
+        totalChecks: response.data.validation_results?.total_validations
+      });
+
+      return response.data;
+    } catch (error) {
+      console.error('❌ Error fetching validation results:', error);
+      throw new Error(error.response?.data?.detail || 'Failed to fetch validation results');
     }
   },
 
@@ -681,16 +729,6 @@ export const certificateAPI = {
     } catch (error) {
       console.error('Error clearing session:', error)
       throw new Error(error.response?.data?.message || 'Clear session failed')
-    }
-  },
-
-  async getValidationResults() {
-    try {
-      const response = await api.get('/validate')
-      return response.data
-    } catch (error) {
-      console.error('Error fetching validation results:', error)
-      throw new Error(error.response?.data?.message || 'Failed to fetch validation results')
     }
   }
 }

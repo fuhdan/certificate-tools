@@ -169,6 +169,40 @@
   gap: 0.75rem;
 }
 
+/* NEW: Validation Panel Toggle Styles */
+.validationToggleSection {
+  margin: 0.75rem 0;
+  padding: 0.75rem;
+  background-color: #f0f9ff;
+  border: 1px solid #e0f2fe;
+  border-radius: 8px;
+}
+
+.checkboxLabel {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  font-size: 0.875rem;
+  color: #374151;
+  font-weight: 500;
+}
+
+.checkbox {
+  width: 16px;
+  height: 16px;
+  accent-color: rgb(1, 111, 157);
+  cursor: pointer;
+}
+
+.checkbox:checked {
+  accent-color: rgb(1, 111, 157);
+}
+
+.checkboxLabel:hover {
+  color: rgb(1, 111, 157);
+}
+
 /* Status section */
 .statusSection {
   margin: 0;

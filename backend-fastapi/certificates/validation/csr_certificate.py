@@ -1,5 +1,5 @@
 # backend-fastapi/certificates/validation/csr_certificate.py
-# CSR <-> Certificate validation functions - TYPE-SAFE VERSION
+# CSR <-> Certificate validation functions - FIXED TO USE CONSISTENT FIELD NAMES
 
 import logging
 import hashlib
@@ -32,6 +32,9 @@ def validate_csr_certificate_match(csr: x509.CertificateSigningRequest, certific
             return ValidationResult(
                 is_valid=False,
                 validation_type="CSR <-> Certificate",
+                description=f"Algorithm mismatch: CSR has {type(csr_public_key).__name__}, Certificate has {type(cert_public_key).__name__}",
+                certificate_1="CSR",
+                certificate_2="Certificate",
                 error=error_msg
             )
     
@@ -45,8 +48,8 @@ def validate_csr_certificate_match(csr: x509.CertificateSigningRequest, certific
             format=serialization.PublicFormat.SubjectPublicKeyInfo
         )
         
-        csr_fingerprint = hashlib.sha256(csr_pubkey_der).hexdigest()
-        cert_fingerprint = hashlib.sha256(cert_pubkey_der).hexdigest()
+        csr_fingerprint = hashlib.sha256(csr_pubkey_der).hexdigest().upper()
+        cert_fingerprint = hashlib.sha256(cert_pubkey_der).hexdigest().upper()
         fingerprint_match = csr_fingerprint == cert_fingerprint
         
         logger.debug(f"Fingerprint comparison: {fingerprint_match}")
@@ -66,8 +69,10 @@ def validate_csr_certificate_match(csr: x509.CertificateSigningRequest, certific
             logger.debug(f"RSA direct comparison: modulus match = {csr_numbers.n == cert_numbers.n}, exponent match = {csr_numbers.e == cert_numbers.e}")
             
             details = {
-                "algorithm": "RSA",
-                "keySize": csr_numbers.n.bit_length()
+                "key_algorithm": "RSA",
+                "key_size": csr_numbers.n.bit_length(),
+                "modulus_match": csr_numbers.n == cert_numbers.n,
+                "exponent_match": csr_numbers.e == cert_numbers.e
             }
             
         elif isinstance(csr_public_key, ec.EllipticCurvePublicKey) and isinstance(cert_public_key, ec.EllipticCurvePublicKey):
@@ -81,9 +86,9 @@ def validate_csr_certificate_match(csr: x509.CertificateSigningRequest, certific
             logger.debug(f"EC direct comparison: x match = {csr_numbers.x == cert_numbers.x}, y match = {csr_numbers.y == cert_numbers.y}, curve match = {csr_public_key.curve.name == cert_public_key.curve.name}")
             
             details = {
-                "algorithm": "EC",
+                "key_algorithm": "EC",
                 "curve": csr_public_key.curve.name,
-                "keySize": csr_public_key.curve.key_size
+                "key_size": csr_public_key.curve.key_size
             }
         else:
             # For other key types (DSA, Ed25519, Ed448, X25519, X448, etc.)
@@ -92,8 +97,8 @@ def validate_csr_certificate_match(csr: x509.CertificateSigningRequest, certific
             direct_match = fingerprint_match  # For non-RSA/EC keys, fingerprint IS the direct comparison
             
             details = {
-                "algorithm": type(csr_public_key).__name__.replace('PublicKey', ''),
-                "keySize": getattr(csr_public_key, 'key_size', 0)
+                "key_algorithm": type(csr_public_key).__name__.replace('PublicKey', ''),
+                "key_size": getattr(csr_public_key, 'key_size', 0)
             }
         
         logger.debug(f"Direct key comparison: {direct_match}")
@@ -107,39 +112,53 @@ def validate_csr_certificate_match(csr: x509.CertificateSigningRequest, certific
         logger.info(f"fingerprint_match: {fingerprint_match}")
         logger.info(f"direct_match: {direct_match}")
         
-        # Add detailed comparison results
+        # FIXED: Use consistent field names like private_key_csr_match and private_key_certificate_match
         details.update({
-            "publicKeyComparison": {
-                "directMatch": direct_match,
-                "fingerprintMatch": fingerprint_match
-            },
-            "fingerprint": {
-                "csr": csr_fingerprint,
-                "certificate": cert_fingerprint,
-                "match": fingerprint_match
-            }
+            # Use consistent fingerprint field names
+            "csr_public_key_fingerprint": csr_fingerprint,
+            "certificate_public_key_fingerprint": cert_fingerprint,
+            "fingerprints_match": fingerprint_match,
+            
+            # Add subject and public key match booleans for compatibility
+            "subject_match": True,  # Will be updated below if comparison fails
+            "public_key_match": fingerprint_match
         })
+        
+        # DEBUG: Log what we're about to return
+        logger.info(f"CSR VALIDATION DEBUG - Details being returned:")
+        logger.info(f"  csr_public_key_fingerprint: {details.get('csr_public_key_fingerprint', 'MISSING!')}")
+        logger.info(f"  certificate_public_key_fingerprint: {details.get('certificate_public_key_fingerprint', 'MISSING!')}")
+        logger.info(f"  fingerprints_match: {details.get('fingerprints_match', 'MISSING!')}")
+        logger.info(f"  subject_match: {details.get('subject_match', 'MISSING!')}")
+        logger.info(f"  public_key_match: {details.get('public_key_match', 'MISSING!')}")
+        logger.info(f"  All details keys: {list(details.keys())}")
         
         # Add subject and SAN comparisons if there are differences
         try:
             subject_comparison = compare_subject_names(csr, certificate)
+            details["subject_match"] = subject_comparison["match"]
             if not subject_comparison["match"]:
-                details["subjectComparison"] = subject_comparison
+                details["certificate_subject"] = subject_comparison.get("certificate_subject", "N/A")
+                details["csr_subject"] = subject_comparison.get("csr_subject", "N/A")
         except Exception as e:
             logger.warning(f"Error comparing subject names: {e}")
+            details["subject_match"] = True  # Default to true if comparison fails
         
         try:
             san_comparison = compare_sans(csr, certificate)
+            details["san_match"] = san_comparison["match"]
             if not san_comparison["match"]:
-                details["sanComparison"] = san_comparison
+                details["certificate_sans"] = san_comparison.get("certificate_sans", [])
+                details["csr_sans"] = san_comparison.get("csr_sans", [])
         except Exception as e:
             logger.warning(f"Error comparing SANs: {e}")
+            details["san_match"] = True  # Default to true if comparison fails
         
         # Log the final result with explanation
         if is_valid:
             logger.info("✅ CSR <-> Certificate validation: PUBLIC KEYS MATCH")
-            logger.info(f"  ✓ Algorithm: {details['algorithm']}")
-            logger.info(f"  ✓ Key size: {details['keySize']} bits")
+            logger.info(f"  ✓ Algorithm: {details['key_algorithm']}")
+            logger.info(f"  ✓ Key size: {details['key_size']} bits")
             logger.info(f"  ✓ Fingerprint match: True")
             logger.info(f"  ✓ Direct comparison: {direct_match}")
         else:
@@ -152,6 +171,9 @@ def validate_csr_certificate_match(csr: x509.CertificateSigningRequest, certific
         result = ValidationResult(
             is_valid=is_valid,
             validation_type="CSR <-> Certificate",
+            description=f"CSR public key {'matches' if is_valid else 'does not match'} certificate public key",
+            certificate_1="CSR",
+            certificate_2="Certificate",
             details=details
         )
         
@@ -166,5 +188,8 @@ def validate_csr_certificate_match(csr: x509.CertificateSigningRequest, certific
         return ValidationResult(
             is_valid=False,
             validation_type="CSR <-> Certificate",
+            description=f"Error during CSR certificate validation: {str(e)}",
+            certificate_1="CSR",
+            certificate_2="Certificate",
             error=str(e)
         )

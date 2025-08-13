@@ -1,6 +1,4 @@
 // frontend/src/services/api.js
-// STEP 3: Frontend Migration Complete - Individual components now use custom endpoint
-// Removed individual component endpoints, replaced with custom endpoint calls
 
 import axios from 'axios'
 import { sessionManager } from './sessionManager'
@@ -14,19 +12,13 @@ const api = axios.create({
   }
 })
 
-// Request interceptor to add session ID and auth headers
+// Request interceptor to add session ID
 api.interceptors.request.use(
   (config) => {
     // Add session ID to all requests
     const sessionId = sessionManager.getSessionId()
     if (sessionId) {
       config.headers['X-Session-ID'] = sessionId
-    }
-
-    // Add auth token if available
-    const token = localStorage.getItem('access_token')
-    if (token) {
-      config.headers['Authorization'] = `Bearer ${token}`
     }
 
     return config
@@ -42,12 +34,6 @@ api.interceptors.response.use(
     return response
   },
   (error) => {
-    // Handle authentication errors
-    if (error.response?.status === 401) {
-      localStorage.removeItem('access_token')
-      delete api.defaults.headers.common['Authorization']
-    }
-
     // Handle session-related errors
     if (error.response?.status === 400 && error.response?.data?.detail?.includes('session')) {
       sessionManager.generateNewSession()
@@ -730,58 +716,6 @@ export const certificateAPI = {
       console.error('Error clearing session:', error)
       throw new Error(error.response?.data?.message || 'Clear session failed')
     }
-  }
-}
-
-// PKI Bundle API methods
-export const pkiAPI = {
-  async getPKIBundle() {
-    try {
-      const response = await api.get('/pki-bundle')
-      return response.data
-    } catch (error) {
-      console.error('Error fetching PKI bundle:', error)
-      throw new Error(error.response?.data?.message || 'Failed to fetch PKI bundle')
-    }
-  },
-
-  async downloadPKIBundle(format = 'json', password) {
-    try {
-      const config = {
-        params: { format },
-        responseType: format === 'json' ? 'json' : 'blob'
-      }
-      
-      if (password) {
-        config.headers = { 'X-Archive-Password': password }
-      }
-      
-      const response = await api.get('/pki-bundle/download', config)
-      return response
-    } catch (error) {
-      console.error('Error downloading PKI bundle:', error)
-      throw new Error(error.response?.data?.message || 'Download failed')
-    }
-  }
-}
-
-// Authentication API methods
-export const authAPI = {
-  async login(credentials) {
-    const response = await api.post('/token', credentials, {
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
-    })
-    return response.data
-  },
-
-  async getCurrentUser() {
-    const response = await api.get('/users/me/')
-    return response.data
-  },
-
-  async refreshToken(refreshToken) {
-    const response = await api.post('/auth/refresh', { refresh_token: refreshToken })
-    return response.data
   }
 }
 

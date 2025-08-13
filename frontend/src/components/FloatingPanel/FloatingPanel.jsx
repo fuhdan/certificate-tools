@@ -17,7 +17,6 @@ import styles from './FloatingPanel.module.css'
 import ConnectionStatus from './ConnectionStatus'
 import SystemMessages from './SystemMessages'
 import FileManager from './FileManager'
-import PKIBundleViewer from './PKIBundleViewer'
 import AdvancedModal from './AdvancedModal'
 import SecurePasswordModal from './SecurePasswordModal'
 import NotificationToast from '../common/NotificationToast'
@@ -25,9 +24,8 @@ import { useCertificates } from '../../contexts/CertificateContext'
 import { downloadAPI } from '../../services/api'
 import api from '../../services/api'
 
-const FloatingPanel = ({ isAuthenticated, showValidationPanel, onToggleValidationPanel }) => {
+const FloatingPanel = ({ showValidationPanel, onToggleValidationPanel }) => {
   const { certificates, clearAllFiles } = useCertificates()
-  const [showPKIBundle, setShowPKIBundle] = useState(false)
   const [showAdvanced, setShowAdvanced] = useState(false)
   
   // NEW: Download-related state
@@ -353,14 +351,6 @@ const FloatingPanel = ({ isAuthenticated, showValidationPanel, onToggleValidatio
     }
   }, [isDragging, isResizing, dragStart, panelSize.width, panelSize.height])
 
-  const handleShowPKIBundle = () => {
-    setShowPKIBundle(true)
-  }
-
-  const handleClosePKIBundle = () => {
-    setShowPKIBundle(false)
-  }
-
   const handleShowAdvanced = () => {
     setShowAdvanced(true)
   }
@@ -444,21 +434,6 @@ const FloatingPanel = ({ isAuthenticated, showValidationPanel, onToggleValidatio
                 </label>
               </div>
               
-              <button
-                className={`${styles.pkiBundleButton} ${!isAuthenticated || !hasAnyFiles ? styles.disabled : ''}`}
-                onClick={handleShowPKIBundle}
-                title={
-                  !isAuthenticated 
-                    ? "Login required to view PKI Bundle" 
-                    : !hasAnyFiles 
-                      ? "Upload files to view PKI Bundle"
-                      : "View PKI Bundle JSON"
-                }
-                disabled={!isAuthenticated || !hasAnyFiles}
-              >
-                <Package size={16} />
-                View PKI Bundle
-              </button>
               <button className={styles.clearAllButton} onClick={handleClearAllFiles}>
                 <Trash2 size={16} />
                 Clear All Files
@@ -536,10 +511,6 @@ const FloatingPanel = ({ isAuthenticated, showValidationPanel, onToggleValidatio
 
         <div className={styles.resizeHandle}></div>
       </div>
-
-      {showPKIBundle && isAuthenticated && (
-        <PKIBundleViewer onClose={handleClosePKIBundle} />
-      )}
 
       {showAdvanced && (
         <AdvancedModal onClose={handleCloseAdvanced} />

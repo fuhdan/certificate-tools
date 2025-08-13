@@ -1,5 +1,4 @@
 // frontend/src/components/FloatingPanel/AdvancedModal.jsx
-// Complete rewrite - Advanced download functionality with component selection
 
 import React, { useState, useMemo } from 'react'
 import { X, Download, FileText, Key, Package, AlertCircle, CheckSquare, Square } from 'lucide-react'

@@ -7,11 +7,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
 from routers import (
-    auth_router,
     certificates_router,
     downloads_router,
     health_router,
-    pki_router,
     stats_router
 )
 
@@ -47,10 +45,8 @@ app.add_middleware(
 # ============================================================================
 
 app.include_router(health_router)
-app.include_router(auth_router)
 app.include_router(certificates_router)
 app.include_router(downloads_router)
-app.include_router(pki_router)
 app.include_router(stats_router)
 
 # ============================================================================
@@ -66,7 +62,6 @@ def read_root():
         "version": settings.APP_VERSION,
         "endpoints": {
             "health": "/health",
-            "login": "/token",
             "certificates": "/api/certificates",
             "downloads": "/api/downloads",
             "docs": "/docs"
@@ -82,7 +77,6 @@ async def startup_event():
     """Application startup tasks"""
     logger.info(f"Starting {settings.APP_NAME} v{settings.APP_VERSION}")
     logger.info(f"Debug mode: {settings.DEBUG}")
-    logger.info(f"Default login: {settings.DEFAULT_USERNAME} / {settings.DEFAULT_PASSWORD}")
     logger.info("SecureZipCreator service initialized and ready")
 
 @app.on_event("shutdown")

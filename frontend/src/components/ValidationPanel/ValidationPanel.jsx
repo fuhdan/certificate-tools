@@ -1,38 +1,6 @@
-// Filter ONLY for actual PKI relationship validations
-  const isValidPKIRelationship = (validation, key = '') => {
-    const validationType = (validation.title || validation.validation_type || key || '').toLowerCase();
-    
-    // ONLY allow these specific PKI relationship validations
-    const allowedTypes = [
-      'private key',
-      'certificate match',
-      'csr',
-      'chain',
-      'ca match',
-      'issuing',
-      'intermediate',
-      'root ca'
-    ];
-    
-    // EXCLUDE these bullshit validations  
-    const excludedTypes = [
-      'expiry',
-      'expired', 
-      'date',
-      'usage',
-      'algorithm',
-      'strength',
-      'subject alternative',
-      'san',
-      'extension'
-    ];
-    
-    // Must contain allowed type AND not contain excluded type
-    const hasAllowedType = allowedTypes.some(type => validationType.includes(type));
-    const hasExcludedType = excludedTypes.some(type => validationType.includes(type));
-    
-    return hasAllowedType && !hasExcludedType;
-  };import React, { useState, useEffect } from 'react';
+// frontend/src/components/ValidationPanel/ValidationPanel.jsx
+
+import React, { useState, useEffect } from 'react';
 import { 
   Shield, 
   CheckCircle, 
@@ -49,6 +17,41 @@ import {
 } from 'lucide-react';
 import styles from './ValidationPanel.module.css';
 import { certificateAPI } from '../../services/api';
+
+const isValidPKIRelationship = (validation, key = '') => {
+  const validationType = (validation.title || validation.validation_type || key || '').toLowerCase();
+  
+  // ONLY allow these specific PKI relationship validations
+  const allowedTypes = [
+    'private key',
+    'certificate match',
+    'csr',
+    'chain',
+    'ca match',
+    'issuing',
+    'intermediate',
+    'root ca'
+  ];
+  
+  // EXCLUDE these bullshit validations  
+  const excludedTypes = [
+    'expiry',
+    'expired', 
+    'date',
+    'usage',
+    'algorithm',
+    'strength',
+    'subject alternative',
+    'san',
+    'extension'
+  ];
+  
+  // Must contain allowed type AND not contain excluded type
+  const hasAllowedType = allowedTypes.some(type => validationType.includes(type));
+  const hasExcludedType = excludedTypes.some(type => validationType.includes(type));
+  
+  return hasAllowedType && !hasExcludedType;
+};
 
 const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
   const [validationResults, setValidationResults] = useState(null);
@@ -84,30 +87,40 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
         let validations = [];
         
         if (backendResults.validations) {
+          console.log('🔍 Raw backend validations:', backendResults.validations);
           if (Array.isArray(backendResults.validations)) {
             validations = backendResults.validations
               .filter(validation => isValidPKIRelationship(validation))
-              .map((validation, index) => ({
-                isValid: validation.status === 'valid',
-                validationType: validation.title || validation.validation_type || `Validation ${index + 1}`,
-                description: validation.description || '',
-                certificate1: validation.components_involved?.[0] || '',
-                certificate2: validation.components_involved?.[1] || '',
-                error: validation.error || null,
-                details: validation.details || {}
-              }));
+              .map((validation, index) => {
+                console.log(`🔍 Processing validation ${index}:`, validation);
+                console.log(`🔍 Validation details (full object):`, JSON.stringify(validation.details, null, 2));
+                return {
+                  isValid: validation.status === 'valid',
+                  validationType: validation.title || validation.validation_type || `Validation ${index + 1}`,
+                  description: validation.description || '',
+                  certificate1: validation.components_involved?.[0] || '',
+                  certificate2: validation.components_involved?.[1] || '',
+                  error: validation.error || null,
+                  details: validation.details || {}
+                };
+              });
           } else if (typeof backendResults.validations === 'object') {
+            console.log('🔍 Raw backend validations (object):', backendResults.validations);
             validations = Object.entries(backendResults.validations)
               .filter(([key, validation]) => isValidPKIRelationship(validation, key))
-              .map(([key, validation]) => ({
-                isValid: validation.status === 'valid',
-                validationType: validation.title || formatValidationType(key),
-                description: validation.description || '',
-                certificate1: validation.components_involved?.[0] || '',
-                certificate2: validation.components_involved?.[1] || '',
-                error: validation.error || null,
-                details: validation.details || {}
-              }));
+              .map(([key, validation]) => {
+                console.log(`🔍 Processing validation ${key}:`, validation);
+                console.log(`🔍 Validation details (full object):`, JSON.stringify(validation.details, null, 2));
+                return {
+                  isValid: validation.status === 'valid',
+                  validationType: validation.title || formatValidationType(key),
+                  description: validation.description || '',
+                  certificate1: validation.components_involved?.[0] || '',
+                  certificate2: validation.components_involved?.[1] || '',
+                  error: validation.error || null,
+                  details: validation.details || {}
+                };
+              });
           }
         }
         
@@ -140,8 +153,6 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
       setIsLoading(false);
     }
   };
-
-
 
   const formatValidationType = (key) => {
     return key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
@@ -213,6 +224,148 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
     setExpandedValidations(newExpanded);
   };
 
+  // Helper function to render fingerprint information using existing styles
+  const renderFingerprintDetails = (fingerprintData) => {
+    if (!fingerprintData || typeof fingerprintData !== 'object') return null;
+    
+    return (
+      <div className={styles.basicInfoGrid}>
+        <div className={styles.basicInfoItem} style={{ gridColumn: '1 / -1', marginBottom: '0.5rem' }}>
+          <span className={styles.basicInfoLabel} style={{ color: '#1e40af', fontWeight: 'bold' }}>
+            Public Key Fingerprints (SHA256):
+          </span>
+        </div>
+        {fingerprintData.csr && (
+          <div className={styles.basicInfoItem}>
+            <span className={styles.basicInfoLabel}>CSR:</span>
+            <span className={`${styles.basicInfoValue} ${styles.technicalDetailsValue}`} style={{ fontFamily: 'Monaco, Menlo, monospace', fontSize: '0.8rem' }}>
+              {fingerprintData.csr}
+            </span>
+          </div>
+        )}
+        {fingerprintData.certificate && (
+          <div className={styles.basicInfoItem}>
+            <span className={styles.basicInfoLabel}>Certificate:</span>
+            <span className={`${styles.basicInfoValue} ${styles.technicalDetailsValue}`} style={{ fontFamily: 'Monaco, Menlo, monospace', fontSize: '0.8rem' }}>
+              {fingerprintData.certificate}
+            </span>
+          </div>
+        )}
+        <div className={styles.basicInfoItem}>
+          <span className={styles.basicInfoLabel}>Match:</span>
+          <span className={`${styles.basicInfoValue} ${fingerprintData.match ? styles.validText : styles.invalidText}`} style={{ fontWeight: 'bold' }}>
+            {fingerprintData.match ? '✅ Yes' : '❌ No'}
+          </span>
+        </div>
+      </div>
+    );
+  };
+
+  // Helper function to detect and render individual fingerprint fields  
+  const renderIndividualFingerprints = (details, validationType) => {
+    console.log('🔍 Checking for individual fingerprints in:', details);
+    
+    // Check if this validation has fingerprint data using specific patterns
+    const fingerprintPairs = [];
+    
+    // Pattern 1: Private Key ↔ Certificate
+    if (details.private_key_fingerprint && details.certificate_public_key_fingerprint) {
+      console.log('🔍 Found Private Key ↔ Certificate fingerprints:', details.private_key_fingerprint, details.certificate_public_key_fingerprint);
+      fingerprintPairs.push({
+        label1: 'Private Key',
+        value1: details.private_key_fingerprint,
+        label2: 'Certificate Public Key',
+        value2: details.certificate_public_key_fingerprint,
+        match: details.fingerprints_match
+      });
+    }
+    
+    // Pattern 2: Private Key ↔ CSR
+    if (details.private_key_fingerprint && details.csr_public_key_fingerprint) {
+      console.log('🔍 Found Private Key ↔ CSR fingerprints:', details.private_key_fingerprint, details.csr_public_key_fingerprint);
+      fingerprintPairs.push({
+        label1: 'Private Key',
+        value1: details.private_key_fingerprint,
+        label2: 'CSR Public Key',
+        value2: details.csr_public_key_fingerprint,
+        match: details.fingerprints_match
+      });
+    }
+    
+    // Pattern 3: CSR ↔ Certificate
+    if (details.csr_public_key_fingerprint && details.certificate_public_key_fingerprint) {
+      console.log('🔍 Found CSR ↔ Certificate fingerprints:', details.csr_public_key_fingerprint, details.certificate_public_key_fingerprint);
+      fingerprintPairs.push({
+        label1: 'CSR Public Key',
+        value1: details.csr_public_key_fingerprint,
+        label2: 'Certificate Public Key',
+        value2: details.certificate_public_key_fingerprint,
+        match: details.fingerprints_match
+      });
+    }
+    
+    const hasFingerprints = fingerprintPairs.length > 0;
+    
+    if (fingerprintPairs.length === 0) return null;
+    
+    return fingerprintPairs.map((pair, index) => (
+      <div key={index} className={styles.basicInfoGrid} style={{ marginTop: '1rem', padding: '1rem', background: 'rgba(59, 130, 246, 0.05)', borderRadius: '8px' }}>
+        <div className={styles.basicInfoItem} style={{ gridColumn: '1 / -1', marginBottom: '0.5rem' }}>
+          <span className={styles.basicInfoLabel} style={{ color: '#1e40af', fontWeight: 'bold' }}>
+            Public Key Fingerprints (SHA256):
+          </span>
+        </div>
+        <div className={styles.basicInfoItem}>
+          <span className={styles.basicInfoLabel}>{pair.label1}:</span>
+          <span className={`${styles.basicInfoValue} ${styles.technicalDetailsValue}`} style={{ fontFamily: 'Monaco, Menlo, monospace', fontSize: '0.8rem' }}>
+            {pair.value1}
+          </span>
+        </div>
+        <div className={styles.basicInfoItem}>
+          <span className={styles.basicInfoLabel}>{pair.label2}:</span>
+          <span className={`${styles.basicInfoValue} ${styles.technicalDetailsValue}`} style={{ fontFamily: 'Monaco, Menlo, monospace', fontSize: '0.8rem' }}>
+            {pair.value2}
+          </span>
+        </div>
+        <div className={styles.basicInfoItem}>
+          <span className={styles.basicInfoLabel}>Match:</span>
+          <span className={`${styles.basicInfoValue} ${pair.match ? styles.validText : styles.invalidText}`} style={{ fontWeight: 'bold' }}>
+            {pair.match ? '✅ Yes' : '❌ No'}
+          </span>
+        </div>
+      </div>
+    ));
+  };
+
+  // Helper function to render detailed value based on type using existing styles
+  const renderDetailValue = (key, value) => {
+    console.log(`🔍 renderDetailValue called with key: "${key}", value:`, value, typeof value);
+    
+    if (key === 'fingerprint' && typeof value === 'object') {
+      console.log('🎯 Found fingerprint object!', value);
+      return renderFingerprintDetails(value);
+    }
+    
+    if (typeof value === 'object') {
+      return (
+        <pre style={{ 
+          fontFamily: 'Monaco, Menlo, monospace', 
+          fontSize: '0.8rem',
+          background: 'rgba(0, 0, 0, 0.05)',
+          padding: '0.5rem',
+          borderRadius: '4px',
+          margin: 0,
+          overflowX: 'auto',
+          whiteSpace: 'pre-wrap'
+        }}>
+          {JSON.stringify(value, null, 2)}
+        </pre>
+      );
+    }
+    
+    return String(value);
+  };
+
   const renderValidationDetails = (validation) => {
     const details = validation.details || {};
 
@@ -262,15 +415,39 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
           {details && Object.keys(details).length > 0 && (
             <div className={styles.technicalDetailsBox}>
               <h5 className={styles.technicalDetailsTitle}>Cryptographic Analysis</h5>
+              
+              {/* Check for individual fingerprint fields and render them specially */}
+              {renderIndividualFingerprints(details, validation.validationType)}
+              
               <div className={styles.technicalDetailsGrid}>
-                {Object.entries(details).map(([key, value]) => (
-                  <div key={key} className={styles.technicalDetailsItem}>
-                    <span className={styles.technicalDetailsLabel}>{key}:</span>
-                    <span className={styles.technicalDetailsValue}>
-                      {typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value)}
-                    </span>
-                  </div>
-                ))}
+                {Object.entries(details)
+                  .filter(([key, value]) => {
+                    // Hide fingerprint fields since we render them specially above
+                    if (key.includes('fingerprint') || key === 'fingerprints_match' || key === 'public_key_match') {
+                      return false;
+                    }
+                    
+                    // For Certificate ↔ CSR Match, exclude verbose subject/SAN fields since they're redundant
+                    if (validation.validationType.includes('Certificate') && validation.validationType.includes('CSR')) {
+                      const excludedFields = ['certificate_subject', 'csr_subject', 'certificate_sans', 'csr_sans'];
+                      if (excludedFields.includes(key)) {
+                        return false;
+                      }
+                    }
+                    
+                    return true;
+                  })
+                  .map(([key, value]) => {
+                    console.log(`🔍 Rendering detail: ${key}:`, value, typeof value);
+                    return (
+                      <div key={key} className={styles.technicalDetailsItem}>
+                        <span className={styles.technicalDetailsLabel}>{key}:</span>
+                        <span className={styles.technicalDetailsValue}>
+                          {renderDetailValue(key, value)}
+                        </span>
+                      </div>
+                    );
+                  })}
               </div>
             </div>
           )}
@@ -296,7 +473,7 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
         </div>
       </div>
     );
-  }
+  };
 
   // Error state
   if (error) {

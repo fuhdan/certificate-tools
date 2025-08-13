@@ -1,5 +1,4 @@
 # backend-fastapi/services/validation_service.py
-# PKI Validation Service - follows existing service pattern
 
 import logging
 import hashlib
@@ -267,6 +266,7 @@ class ValidationService:
             
             overall_match = subject_match and public_key_match and san_match
             
+            # FIXED: Include fingerprint fields like the other validations
             details = {
                 "subject_match": subject_match,
                 "public_key_match": public_key_match,
@@ -274,8 +274,27 @@ class ValidationService:
                 "certificate_subject": cert_subject,
                 "csr_subject": csr_subject,
                 "certificate_sans": cert_sans,
-                "csr_sans": csr_sans
+                "csr_sans": csr_sans,
+                # ADDED: Include fingerprint fields for consistency
+                "csr_public_key_fingerprint": csr_key_fingerprint,
+                "certificate_public_key_fingerprint": cert_key_fingerprint,
+                "fingerprints_match": public_key_match
             }
+            
+            # Get key algorithm and size for consistency with other validations
+            try:
+                cert_public_key = certificate.public_key()
+                if isinstance(cert_public_key, rsa.RSAPublicKey):
+                    details["key_algorithm"] = "RSA"
+                    details["key_size"] = cert_public_key.key_size
+                elif isinstance(cert_public_key, ec.EllipticCurvePublicKey):
+                    details["key_algorithm"] = "EC"
+                    details["key_size"] = cert_public_key.curve.key_size
+                else:
+                    details["key_algorithm"] = type(cert_public_key).__name__
+                    details["key_size"] = None
+            except Exception as e:
+                logger.warning(f"Could not determine key algorithm: {e}")
             
             status = "valid" if overall_match else "invalid"
             logger.debug(f"Certificate <-> CSR validation: {status}")

@@ -1,5 +1,4 @@
 # backend-fastapi/certificates/validation/__init__.py
-# Updated validation module initialization for unified storage
 
 from .models import ValidationResult
 from .validator import run_validations, CertificateValidator

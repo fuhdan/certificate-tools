@@ -7,7 +7,6 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional, Set
 from dataclasses import dataclass, field
 from enum import Enum
-from ..validation.models import ValidationResult as ValidationResultsModel
 
 logger = logging.getLogger(__name__)
 
@@ -169,8 +168,8 @@ class SessionPKIStorage:
         return self._sessions[session_id]
     
     def add_component(self, session_id: str, component_type: PKIComponentType, 
-                     content: str, filename: str, metadata: Dict[str, Any],
-                     chain_id: Optional[str] = None) -> str:
+                    content: str, filename: str, metadata: Dict[str, Any],
+                    chain_id: Optional[str] = None) -> str:
         """Add PKI component with enhanced deduplication and chain management"""
         session = self.get_or_create_session(session_id)
         
@@ -194,6 +193,9 @@ class SessionPKIStorage:
             
             session.replace_component(existing_component_id, new_component)
             logger.info(f"Replaced {component_type.type_name} in session {session_id}: {filename}")
+            
+            # ADDED: Log validation trigger for replacements
+            logger.info(f"Triggering validation recomputation due to component replacement")
             self._compute_session_validation(session_id)
             return existing_component_id
         
@@ -219,8 +221,38 @@ class SessionPKIStorage:
         
         session.add_component(component)
         logger.info(f"Added {component_type.type_name} to session {session_id}: {filename}")
+        
+        # ADDED: Log validation trigger for new components
+        logger.info(f"Triggering validation recomputation due to new component addition")
         self._compute_session_validation(session_id)
         return component_id
+
+    def remove_component(self, session_id: str, component_id: str) -> bool:
+        """Remove component from session and trigger validation recomputation"""
+        if session_id not in self._sessions:
+            return False
+        
+        session = self._sessions[session_id]
+        
+        if component_id not in session.components:
+            return False
+        
+        # Get component info for logging
+        component = session.components[component_id]
+        component_type = component.type.type_name
+        filename = component.filename
+        
+        # Remove the component
+        success = session.remove_component(component_id)
+        
+        if success:
+            logger.info(f"Removed {component_type} component from session {session_id}: {filename}")
+            
+            # ADDED: Trigger validation recomputation after deletion
+            logger.info(f"Triggering validation recomputation due to component deletion")
+            self._compute_session_validation(session_id)
+        
+        return success
 
     def get_validation_results(self, session_id: str) -> Optional[Dict[str, Any]]:
         """Get validation results for a session"""
@@ -354,10 +386,17 @@ class SessionPKIStorage:
         return [component.to_dict() for component in sorted_components]
     
     def clear_session(self, session_id: str) -> bool:
-        """Clear all components from session"""
+        """Clear all components from session and trigger validation recomputation"""
         if session_id in self._sessions:
+            component_count = len(self._sessions[session_id].components)
             self._sessions[session_id].clear_all()
-            logger.info(f"Cleared PKI session: {session_id}")
+            logger.info(f"Cleared PKI session: {session_id} ({component_count} components removed)")
+            
+            # ADDED: Trigger validation recomputation after clearing
+            if component_count > 0:
+                logger.info(f"Triggering validation recomputation due to session clear")
+                self._compute_session_validation(session_id)
+            
             return True
         return False
     
@@ -467,6 +506,12 @@ class SessionPKIStorage:
             return
         
         try:
+            # ADDED: Clear any existing validation results to force fresh computation
+            session.validation_results = None
+            
+            # ADDED: Log the validation trigger for debugging
+            logger.info(f"Computing fresh validations for session {session_id} with {len(session.components)} components")
+            
             # Compute validations using service
             validation_results = validation_service.compute_all_validations(session)
             
@@ -474,7 +519,10 @@ class SessionPKIStorage:
             session.validation_results = validation_results
             session.last_updated = datetime.utcnow().isoformat()
             
-            logger.info(f"Computed validations for session {session_id}: {validation_results.get('total_validations', 0)} checks")
+            # ADDED: Enhanced logging
+            overall_status = validation_results.get('overall_status', 'unknown')
+            total_validations = validation_results.get('total_validations', 0)
+            logger.info(f"Computed fresh validations for session {session_id}: {total_validations} checks, status: {overall_status}")
             
         except Exception as e:
             logger.error(f"Error computing validations for session {session_id}: {e}")

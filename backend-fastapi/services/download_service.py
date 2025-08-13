@@ -5,7 +5,6 @@ import logging
 from typing import Dict, List, Any, Optional, Tuple
 from enum import Enum
 from pydantic import BaseModel, Field
-from datetime import datetime
 
 from certificates.storage.session_pki_storage import session_pki_storage, PKIComponentType
 from services.secure_zip_creator import secure_zip_creator, SecureZipCreatorError

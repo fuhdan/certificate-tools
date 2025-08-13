@@ -4,12 +4,9 @@ Tests for SecureZipCreator service
 
 import pytest
 import zipfile
-import io
 import tempfile
-from pathlib import Path
 from services.secure_zip_creator import (
-    SecureZipCreator, 
-    SecureZipCreatorError,
+    SecureZipCreator,
     ZipCreationError,
     PasswordGenerationError,
     ZipValidationError

@@ -7,7 +7,6 @@ import logging
 import uuid
 import re
 from typing import Dict, Any, Optional, List
-from datetime import datetime
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization, hashes
 from .extractors.certificate import extract_certificate_metadata

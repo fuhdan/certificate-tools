@@ -61,11 +61,11 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
 
   // Fetch validation results when certificates change
   useEffect(() => {
-    if (certificates.length > 0) {
-      fetchValidationResults();
-    } else {
-      setValidationResults(null);
-      setError(null);
+    console.log('🔄 ValidationPanel: Certificates changed:', certificates?.length, certificates?.map(c => c.filename));
+    
+    if (certificates && certificates.length > 0) {
+        console.log('🔍 ValidationPanel: Fetching validation results...');
+        fetchValidationResults();
     }
   }, [certificates]);
 

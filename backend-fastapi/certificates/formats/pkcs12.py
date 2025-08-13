@@ -5,7 +5,6 @@
 import logging
 import json
 from typing import Dict, Any, Optional, List
-from cryptography.hazmat.primitives.serialization import pkcs12
 
 from ..extractors.certificate import extract_certificate_metadata
 from ..extractors.private_key import extract_private_key_metadata
@@ -272,10 +271,3 @@ def _process_pkcs12_success(cert, private_key, additional_certs: List, is_encryp
     logger.info(f"  Bundle encrypted: {is_encrypted}")
     
     return result
-
-# Legacy compatibility functions (if needed by other parts of the system)
-
-def _process_pkcs12_success_legacy(cert, private_key, additional_certs) -> Dict[str, Any]:
-    """Legacy wrapper for backward compatibility"""
-    logger.warning("Using legacy PKCS12 processing - consider updating to use Password Entry Service")
-    return _process_pkcs12_success(cert, private_key, additional_certs, is_encrypted=False)

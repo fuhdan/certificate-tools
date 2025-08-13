@@ -4,11 +4,8 @@
 import datetime
 import time
 import logging
-from typing import Annotated
 from fastapi import APIRouter, Depends
 
-from auth.models import User
-from auth.dependencies import get_current_active_user
 from config import settings
 from middleware.session_middleware import get_session_id
 
@@ -34,7 +31,6 @@ def get_uptime():
 
 @router.get("/stats", tags=["statistics"])
 def get_system_stats(
-    current_user: Annotated[User, Depends(get_current_active_user)],
     session_id: str = Depends(get_session_id)
 ):
     """Get system statistics"""

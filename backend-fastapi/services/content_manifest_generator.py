@@ -10,7 +10,7 @@ Enhanced with SHA256 hash verification for file integrity.
 import logging
 import hashlib
 from datetime import datetime
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Optional
 from pathlib import Path
 
 from certificates.storage.session_pki_storage import PKIComponent, PKIComponentType

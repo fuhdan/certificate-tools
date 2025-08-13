@@ -1,9 +1,7 @@
 # backend-fastapi/certificates/models/certificate.py
-# Updated certificate model for unified PEM storage
 
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
-from datetime import datetime
 
 class CertificateInfoModel(BaseModel):
     """Certificate information model"""

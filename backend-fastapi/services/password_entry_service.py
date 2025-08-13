@@ -13,11 +13,10 @@ across all certificate formats and eliminates format-specific password logic.
 """
 
 import logging
-from typing import Dict, Any, Optional, Tuple, Union
+from typing import Dict, Any, Optional, Tuple
 from enum import Enum
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.serialization import pkcs12
-from cryptography import x509
 
 from certificates.utils.hashing import generate_file_hash
 

@@ -12,16 +12,11 @@ import uuid
 import json
 import time
 import concurrent.futures
-from datetime import datetime
-from pathlib import Path
 import requests
-import zipfile
 
 
 # Configuration - adjust if your server runs on different port
 API_BASE_URL = "http://localhost:8000"
-DEFAULT_USERNAME = "admin"
-DEFAULT_PASSWORD = "admin123"
 
 
 # ========================================
@@ -41,33 +36,14 @@ def check_server_running():
 
 
 @pytest.fixture
-def auth_token():
-    """🔐 Obtain a valid JWT token for API authentication"""
-    response = requests.post(f"{API_BASE_URL}/token", data={
-        "username": DEFAULT_USERNAME,
-        "password": DEFAULT_PASSWORD
-    })
-    assert response.status_code == 200, f"Auth failed: {response.text}"
-    return response.json()["access_token"]
-
-
-@pytest.fixture
 def test_session_id():
     """🆔 Generate a unique session ID for testing isolation"""
     return str(uuid.uuid4())
 
 
 @pytest.fixture
-def auth_headers(auth_token, test_session_id):
-    """🪪 Standard headers with JWT and Session token"""
-    return {
-        "Authorization": f"Bearer {auth_token}",
-        "X-Session-ID": test_session_id
-    }
-
-@pytest.fixture
 def sess_headers(test_session_id):
-    """🪪 Standard headers with JWT and Session token"""
+    """🪪 Standard headers with Session token"""
     return {
         "X-Session-ID": test_session_id
     }
@@ -278,45 +254,6 @@ class TestHealthChecks:
 
 
 # ========================================
-# AUTHENTICATION TESTS
-# ========================================
-
-
-class TestAuthentication:
-    """JWT token authentication and authorization"""
-
-    def test_valid_credentials_return_jwt_access_token(self):
-        """🔐 Valid credentials should return JWT access token"""
-        response = requests.post(f"{API_BASE_URL}/token", data={
-            "username": DEFAULT_USERNAME,
-            "password": DEFAULT_PASSWORD
-        })
-        assert response.status_code == 200
-        data = response.json()
-        assert "access_token" in data
-        assert data["token_type"] == "bearer"
-
-    def test_invalid_credentials_return_401_unauthorized(self):
-        """🔐 Invalid credentials should return 401 Unauthorized"""
-        response = requests.post(f"{API_BASE_URL}/token", data={
-            "username": "wrong",
-            "password": "wrong"
-        })
-        assert response.status_code == 401
-
-    def test_protected_endpoints_require_authentication_token(self):
-        """🔐 Protected endpoints require authentication token"""
-        response = requests.get(f"{API_BASE_URL}/certificates")
-        assert response.status_code == 400
-
-    def test_valid_jwt_token_not_grants_access_to_protected_endpoints(self, auth_token):
-        """🔐 Valid JWT token grants access to protected endpoints"""
-        headers = {"Authorization": f"Bearer {auth_token}"}
-        response = requests.get(f"{API_BASE_URL}/certificates", headers=headers)
-        assert response.status_code == 400
-
-
-# ========================================
 # CERTIFICATE UPLOAD TESTS
 # ========================================
 
@@ -446,19 +383,6 @@ class TestCertificateManagement:
 
 
 # ========================================
-# VALIDATION TESTS
-# ========================================
-
-
-# class TestValidation:
-#     """Cryptographic validation features"""
-# 
-#     def test_validation_endpoint_not_returns_expected_structure_for_empty_session(self, test_session_id):
-#         """🛡️ Validation endpoint returns expected structure for empty session"""
-#         response = requests.get(f"{API_BASE_URL}/validate?session_id={test_session_id}")
-#         assert response.status_code == 400
-
-# ========================================
 # PKI BUNDLE TESTS
 # ========================================
 
@@ -466,20 +390,19 @@ class TestCertificateManagement:
 class TestPKIBundleAccess:
     """Tests for PKI bundle endpoint access"""
 
-    def test_pki_bundle_access_fails_without_auth(self, sess_headers):
-        """Accessing PKI bundle with only session-id header fails with 401"""
-        response = requests.get(f"{API_BASE_URL}/pki-bundle", headers=sess_headers)
-        assert response.status_code == 401
-        assert "not authenticated" in response.text.lower()
+    def test_pki_bundle_access_fails_without_session_id(self):
+        """Accessing PKI bundle without session-id header fails"""
+        response = requests.get(f"{API_BASE_URL}/pki-bundle")
+        assert response.status_code == 400
 
-    def test_pki_bundle_access_fails_without_files(self, auth_headers):
-        """Accessing PKI bundle with auth and session-id but no certificate uploaded fails"""
-        response = requests.get(f"{API_BASE_URL}/pki-bundle", headers=auth_headers)
+    def test_pki_bundle_access_fails_without_files(self, sess_headers):
+        """Accessing PKI bundle with session-id but no certificate uploaded fails"""
+        response = requests.get(f"{API_BASE_URL}/pki-bundle", headers=sess_headers)
         assert response.status_code == 404 or response.status_code == 400  # Depending on API behavior when no certs
         # Optionally check response content for meaningful error
         assert "no pki components found" in response.text.lower() or "no certificates" in response.text.lower()
 
-    def test_pki_bundle_contains_uploaded_certificate(self, test_session_id, auth_headers, sample_certificate):
+    def test_pki_bundle_contains_uploaded_certificate(self, test_session_id, sess_headers, sample_certificate):
         """After uploading a certificate, PKI bundle contains the uploaded certificate"""
         responses = upload_certificate_bundle(test_session_id, certificate=sample_certificate)
 
@@ -487,7 +410,7 @@ class TestPKIBundleAccess:
         assert cert_response is not None, "Certificate upload response missing"
         assert cert_response.status_code in [200, 201]
 
-        response = requests.get(f"{API_BASE_URL}/pki-bundle", headers=auth_headers)
+        response = requests.get(f"{API_BASE_URL}/pki-bundle", headers=sess_headers)
         assert response.status_code == 200
 
         data = response.json()
@@ -985,17 +908,16 @@ class TestDownloads:
         data = response.json()
         assert "Invalid formats JSON" in data["detail"]
 
-    def test_session_id_mismatch_returns_400(self, auth_token, test_session_id):
+    def test_session_id_mismatch_returns_400(self, test_session_id):
         """🚫 Session ID mismatch returns 400"""
         headers = {
-            "Authorization": f"Bearer {auth_token}",
             "X-Session-ID": test_session_id
         }
         
         # Use different session ID in URL
         different_session_id = str(uuid.uuid4())
         response = requests.post(
-            f"{API_BASE_URL}/downloads/download/apache/{different_session_id}",
+            f"{API_BASE_URL}/downloads/download/nginx/{different_session_id}",
             headers=headers
         )
 
@@ -1012,11 +934,10 @@ class TestDownloads:
 class TestIntegration:
     """End-to-end integration tests"""
 
-    def test_complete_upload_list_validate_pki_workflow(self, auth_token, sample_certificate):
-        """🔄 Upload, list, validate, and get PKI in a complete flow"""
+    def test_complete_upload_list_pki_workflow(self, sample_certificate):
+        """🔄 Upload, list, and get PKI in a complete flow"""
         session_id = str(uuid.uuid4())
         headers = {
-            "Authorization": f"Bearer {auth_token}",
             "X-Session-ID": session_id
         }
 
@@ -1027,9 +948,6 @@ class TestIntegration:
         list_response = requests.get(f"{API_BASE_URL}/certificates", headers=headers)
         assert list_response.status_code == 200
         assert list_response.json()["count"] >= 1
-
-        # validation_response = requests.get(f"{API_BASE_URL}/validate?session_id={session_id}", headers=headers)
-        # assert validation_response.status_code == 200
 
         pki_response = requests.get(f"{API_BASE_URL}/pki-bundle", headers=headers)
         assert pki_response.status_code == 200
@@ -1042,17 +960,15 @@ class TestIntegration:
 class TestSessionIsolation:
     """Isolation between separate test sessions"""
 
-    def test_different_sessions_are_isolated_no_data_leak(self, auth_token, sample_certificate):
+    def test_different_sessions_are_isolated_no_data_leak(self, sample_certificate):
         """🚦 Different sessions should be isolated; no data leak"""
         session1 = str(uuid.uuid4())
         session2 = str(uuid.uuid4())
 
         headers1 = {
-            "Authorization": f"Bearer {auth_token}",
             "X-Session-ID": session1
         }
         headers2 = {
-            "Authorization": f"Bearer {auth_token}",
             "X-Session-ID": session2
         }
 
@@ -1072,10 +988,9 @@ class TestSessionIsolation:
         list2 = requests.get(f"{API_BASE_URL}/certificates", headers=headers2)
         assert list2.json()["count"] == 0
 
-    def test_invalid_session_id_results_in_400_error(self, auth_token, sample_certificate, invalid_session_id):
+    def test_invalid_session_id_results_in_400_error(self, sample_certificate, invalid_session_id):
         """❗ Invalid session ID results in error (400)"""
         headers = {
-            "Authorization": f"Bearer {auth_token}",
             "X-Session-ID": str(invalid_session_id)
         }
         files = {
@@ -1128,11 +1043,10 @@ class TestPerformance:
 class TestErrorHandling:
     """API error handling and invalid requests"""
 
-    def test_malformed_upload_requests_return_422_validation_error(self, auth_token):
+    def test_malformed_upload_requests_return_422_validation_error(self):
         """❌ Various malformed upload requests should yield 422"""
         session_id = str(uuid.uuid4())
         headers = {
-            "Authorization": f"Bearer {auth_token}",
             "X-Session-ID": session_id
         }
 
@@ -1143,9 +1057,9 @@ class TestErrorHandling:
         response = requests.post(f"{API_BASE_URL}/analyze-certificate", files=files, headers=headers)
         assert response.status_code == 422
 
-    def test_invalid_endpoint_access_handled_gracefully(self, auth_headers):
+    def test_invalid_endpoint_access_handled_gracefully(self, sess_headers):
         """❔ Invalid endpoint access handled gracefully (404/405)"""
-        response = requests.get(f"{API_BASE_URL}/nonexistent", headers=auth_headers)
+        response = requests.get(f"{API_BASE_URL}/nonexistent", headers=sess_headers)
         assert response.status_code in [404, 405]
 
 
@@ -1157,24 +1071,24 @@ class TestErrorHandling:
 class TestEdgeCases:
     """Unusual and boundary input cases"""
 
-    def test_empty_file_uploads_handled_without_server_crash(self, auth_headers):
+    def test_empty_file_uploads_handled_without_server_crash(self, sess_headers):
         """🧾 Empty file uploads handled without server crash"""
         files = {"file": ("empty.crt", "", "application/x-pem-file")}
         response = requests.post(
             f"{API_BASE_URL}/analyze-certificate",
             files=files,
-            headers=auth_headers
+            headers=sess_headers
         )
         assert response.status_code in [400, 422]
 
-    def test_files_with_special_characters_in_filename_accepted(self, auth_headers, sample_certificate):
+    def test_files_with_special_characters_in_filename_accepted(self, sess_headers, sample_certificate):
         """🧾 Files with special characters in filename are accepted"""
         special_filename = "test-file_special.crt"
         files = {"file": (special_filename, sample_certificate, "application/x-pem-file")}
         response = requests.post(
             f"{API_BASE_URL}/analyze-certificate",
             files=files,
-            headers=auth_headers
+            headers=sess_headers
         )
         assert response.status_code in [200, 201]
 
@@ -1210,16 +1124,8 @@ class TestConfiguration:
 class TestSecurity:
     """Security and authorization enforcement"""
 
-    def test_expired_or_invalid_jwt_token_rejected_with_400(self):
-        """🚫 Expired or invalid JWT token is rejected (401)"""
-        invalid_token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.invalid.signature"
-        headers = {"Authorization": f"Bearer {invalid_token}"}
-
-        response = requests.get(f"{API_BASE_URL}/certificates", headers=headers)
-        assert response.status_code == 400
-
-    def test_protected_endpoint_without_authorization_rejected_with_400(self):
-        """🚫 Accessing protected endpoint without 'Authorization' is rejected (401)"""
+    def test_protected_endpoint_without_session_id_rejected_with_400(self):
+        """🚫 Accessing protected endpoint without 'X-Session-ID' is rejected (400)"""
         response = requests.get(f"{API_BASE_URL}/certificates")
         assert response.status_code == 400
 
@@ -1251,7 +1157,6 @@ def pytest_configure(config):
     """⚙️ Add pytest markers for custom test categories"""
     config.addinivalue_line("markers", "slow: mark test as slow running")
     config.addinivalue_line("markers", "integration: mark test as integration test")
-    config.addinivalue_line("markers", "auth: mark test as authentication related")
 
 
 # ========================================

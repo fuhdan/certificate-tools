@@ -7,7 +7,6 @@ Properly extracts data from certificate metadata and replaces template variables
 NO EXTERNAL DEPENDENCIES - uses only Python standard library.
 """
 
-import os
 import logging
 from datetime import datetime
 from typing import Dict, Any, Optional

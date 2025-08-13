@@ -5,7 +5,7 @@ import logging
 from typing import Dict, Any, cast
 from cryptography import x509
 from cryptography.x509.oid import ExtensionOID, ExtendedKeyUsageOID
-from cryptography.hazmat.primitives import serialization, hashes
+from cryptography.hazmat.primitives import serialization
 import hashlib
 from .certificate import extract_public_key_details
 

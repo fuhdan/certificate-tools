@@ -6,7 +6,7 @@ Converts PKI components between different formats (PEM, DER, PKCS#8, etc.)
 """
 
 import logging
-from typing import Union, Optional
+from typing import Optional
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.serialization import pkcs12
 from cryptography import x509

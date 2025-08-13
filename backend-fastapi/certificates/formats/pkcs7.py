@@ -4,13 +4,10 @@
 import logging
 import re
 import base64
-import hashlib
-import json
 from ..utils.hashing import generate_certificate_hash, generate_file_hash
 from typing import Dict, Any, Optional, List
 from cryptography import x509
 from cryptography.x509 import oid
-from cryptography.hazmat.primitives import serialization
 
 from ..extractors.certificate import extract_certificate_metadata
 

@@ -5,7 +5,6 @@
 import logging
 from typing import Dict, Any, Optional
 from cryptography import x509
-from cryptography.hazmat.primitives import serialization
 
 from ..extractors.certificate import extract_certificate_metadata, is_ca_certificate
 from ..extractors.csr import extract_csr_metadata

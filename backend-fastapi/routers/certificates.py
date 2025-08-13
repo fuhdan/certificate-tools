@@ -3,14 +3,13 @@
 
 import logging
 import datetime
-from typing import Annotated, List, Dict, Any
+from typing import List
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from fastapi.responses import JSONResponse
 
 import uuid
 from config import settings
 from certificates.analyzer import analyze_uploaded_certificate
-from auth.models import User
 from middleware.session_middleware import get_session_id
 from certificates.analyzer import analyze_uploaded_certificate
 from certificates.storage.session_pki_storage import session_pki_storage, PKIComponentType

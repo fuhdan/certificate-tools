@@ -6,12 +6,36 @@ import styles from './LandingPage.module.css';
 const LandingPage = () => {
   return (
     <div className={styles.landingPage}>
+      {/* Navigation Header */}
+      <nav className={styles.navbar}>
+        <div className={styles.container}>
+          <div className={styles.navContent}>
+            <div className={styles.navLogo}>
+              <img src="/assets/danielf-logo.png" alt="DanielF Security" style={{width: '40px', height: '40px', objectFit: 'contain'}} />
+              <span className={styles.navBrand}>Certificate Tools</span>
+            </div>
+            <div className={styles.navLinks}>
+              <a href="#features" className={styles.navLink}>Features</a>
+              <a href="https://github.com/fuhdan/certificate-tools/blob/main/TECHNICAL.md" target="_blank" rel="noopener noreferrer" className={styles.navLink}>Documentation</a>
+              <a href="https://github.com/fuhdan/certificate-tools/issues" target="_blank" rel="noopener noreferrer" className={styles.navLink}>Help Center</a>
+              <a href="https://github.com/fuhdan" target="_blank" rel="noopener noreferrer" className={styles.navLink}>GitHub</a>
+              <button 
+                className={styles.navButton}
+                onClick={() => window.location.href = '/app'}
+              >
+                Launch App
+              </button>
+            </div>
+          </div>
+        </div>
+      </nav>
+
       {/* Hero Section */}
       <section className={styles.hero}>
         <div className={styles.container}>
           <div className={styles.heroContent}>
             <div className={styles.heroIcon}>
-              <Shield size={64} />
+              <img src="/assets/danielf-logo.png" alt="DanielF Security" style={{width: '64px', height: '64px', objectFit: 'contain'}} />
             </div>
             <h1 className={styles.heroTitle}>
               Certificate Validation & Conversion
@@ -28,7 +52,10 @@ const LandingPage = () => {
                 <Upload size={20} />
                 Start Analyzing Certificates
               </button>
-              <button className={styles.secondaryButton}>
+              <button 
+                className={styles.secondaryButton}
+                onClick={() => window.open('https://github.com/fuhdan/certificate-tools/blob/main/TECHNICAL.md', '_blank')}
+              >
                 <FileText size={20} />
                 View Documentation
               </button>
@@ -76,7 +103,7 @@ const LandingPage = () => {
       </section>
 
       {/* Features Section */}
-      <section className={styles.features}>
+      <section className={styles.features} id="features">
         <div className={styles.container}>
           <h2 className={styles.sectionTitle}>Everything You Need in One Tool</h2>
           <div className={styles.featureGrid}>
@@ -211,31 +238,40 @@ const LandingPage = () => {
               <h3>Product</h3>
               <a href="/app">Certificate Analyzer</a>
               <a href="#features">Features</a>
-              <a href="/docs">Documentation</a>
-              <a href="/help">Help Center</a>
+              <a href="https://github.com/fuhdan/certificate-tools/blob/main/TECHNICAL.md" target="_blank" rel="noopener noreferrer">Documentation</a>
+              <a href="https://github.com/fuhdan/certificate-tools/issues" target="_blank" rel="noopener noreferrer">Help Center</a>
             </div>
             <div className={styles.footerSection}>
               <h3>Support</h3>
-              <a href="/faq">FAQ</a>
-              <a href="mailto:support@cert-analyzer.tools">Contact</a>
-              <a href="/status">System Status</a>
-              <a href="/changelog">Changelog</a>
+              <a href="https://github.com/fuhdan/certificate-tools/blob/main/README.md#-faq-the-burning-questions" target="_blank" rel="noopener noreferrer">FAQ</a>
+              <a href="https://github.com/fuhdan/certificate-tools/issues" target="_blank" rel="noopener noreferrer">Contact</a>
+              <a href="https://github.com/fuhdan/certificate-tools/actions" target="_blank" rel="noopener noreferrer">System Status</a>
+              <a href="https://github.com/fuhdan/certificate-tools/commits/main" target="_blank" rel="noopener noreferrer">Changelog</a>
             </div>
             <div className={styles.footerSection}>
               <h3>Legal</h3>
-              <a href="/privacy">Privacy Policy</a>
-              <a href="/terms">Terms of Service</a>
-              <a href="/security">Security</a>
+              <a href="https://github.com/fuhdan/certificate-tools/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">MIT License</a>
+              <a href="https://github.com/fuhdan/certificate-tools#-license" target="_blank" rel="noopener noreferrer">Terms of Use</a>
+              <a href="https://github.com/fuhdan/certificate-tools/security" target="_blank" rel="noopener noreferrer">Security</a>
             </div>
             <div className={styles.footerSection}>
-              <h3>Community</h3>
-              <a href="https://github.com/your-repo">GitHub</a>
-              <a href="/blog">Blog</a>
-              <a href="https://twitter.com/cert-analyzer">Twitter</a>
+              <h3>Developer</h3>
+              <a href="https://github.com/fuhdan" target="_blank" rel="noopener noreferrer">Daniel Fuhrer</a>
+              <a href="https://github.com/fuhdan/certificate-tools" target="_blank" rel="noopener noreferrer">GitHub Repo</a>
+              <a href="https://x.com/DanielFuhrer" target="_blank" rel="noopener noreferrer">Twitter/X</a>
+              <a href="https://github.com/fuhdan/certificate-tools/blob/main/README.md#-contributing-join-the-beach-crew" target="_blank" rel="noopener noreferrer">Contributing</a>
             </div>
           </div>
           <div className={styles.footerBottom}>
-            <p>&copy; 2025 Certificate Analyzer. Made with ❤️ for the developer community.</p>
+            <div className={styles.footerLogo}>
+              <img src="/assets/danielf-logo.png" alt="DanielF Security" style={{width: '24px', height: '24px', objectFit: 'contain'}} />
+              <span>Daniel Fuhrer</span>
+            </div>
+            <p>&copy; 2025 Certificate Tools. MIT Licensed. Made with ❤️ for the developer community.</p>
+            <div className={styles.footerSocial}>
+              <a href="https://github.com/fuhdan" target="_blank" rel="noopener noreferrer">GitHub</a>
+              <a href="https://x.com/DanielFuhrer" target="_blank" rel="noopener noreferrer">Twitter/X</a>
+            </div>
           </div>
         </div>
       </footer>

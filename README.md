@@ -511,6 +511,38 @@ MIT License - see [LICENSE](LICENSE) file for details.
 - 💬 **Discussions**: [GitHub Discussions](https://github.com/fuhdan/certificate-tools/discussions)
 - 🐦 **Twitter**: [@DanielFuhrer](https://x.com/DanielFuhrer)
 
+# 🏖️ Certificate Analysis Tool - Because PKI Should Be Fun!
+
+*Making PKI management as relaxing as a day at the beach* ☀️
+
+---
+
+## 🌅 Final Words
+
+Remember: Life's too short for bad certificate management tools. Whether you're validating a single certificate or untangling a complex PKI hierarchy, this tool has your back. So grab your favorite beach drink, fire up those Docker containers, and let's make certificate analysis fun again!
+
+**Certificate Analysis Tool** - *Making PKI management as relaxing as a day at the beach.* 🏖️
+
+---
+
+## 🏛️ Official Legal Disclaimer from Daniel's Totally Legit Certificate Authority™
+
+*© 2025 Daniel's Totally Legit Certificate Authority™. All rights reserved.*
+
+*This tool uses TLS 1.3 because anything less is just insecure spaghetti code.*
+
+*Unauthorized access attempts will be ignored like your 10th failed login — but seriously, don't try.*
+
+*Trust is established here by a Root CA, and shattered by expired certs and forgotten passwords.*
+
+*If you don't understand this, please reboot your brain and try again.*
+
+---
+
+*P.S. - No actual certificates were harmed in the making of this tool. All certificates were treated with the utmost respect and given proper validation before being allowed to bask in the digital sunshine.* ☀️
+
+*P.P.S. - The certificate authority mentioned above is purely fictional and exists only in the realm of beach-themed humor. Please don't try to get your certificates signed by the sun.* 🌞
+
 ---
 
 <div align="center">

@@ -426,3 +426,116 @@
     font-size: 1rem;
   }
 }
+
+/* Hero Logo */
+.heroLogo {
+  width: 80px;
+  height: 80px;
+  object-fit: contain;
+  filter: drop-shadow(0 0 20px rgba(255, 215, 0, 0.3));
+}
+
+/* Footer Logo */
+.footerLogoImg {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+}
+
+/* Navigation Styles */
+.navbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  background: rgb(1, 111, 157);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  z-index: 1000;
+  padding: 0.75rem 0;
+}
+
+.navContent {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 2rem;
+}
+
+.navLogo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  text-decoration: none;
+}
+
+.navBrand {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: white;
+}
+
+.navLinks {
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+}
+
+.navLink {
+  color: rgba(255, 255, 255, 0.8);
+  text-decoration: none;
+  font-weight: 500;
+  transition: color 0.2s ease;
+  font-size: 0.95rem;
+}
+
+.navLink:hover {
+  color: white;
+}
+
+.navButton {
+  background: rgba(255, 255, 255, 0.1);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  padding: 0.5rem 1.5rem;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.navButton:hover {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+/* Add top padding to hero to account for fixed navbar */
+.hero {
+  padding-top: 100px; /* Add this to your existing hero styles */
+}
+
+/* Mobile Navigation (Optional Enhancement) */
+@media (max-width: 768px) {
+  .navContent {
+    padding: 0 1rem;
+  }
+  
+  .navLinks {
+    gap: 1rem;
+  }
+  
+  .navLink {
+    font-size: 0.85rem;
+  }
+  
+  .navButton {
+    padding: 0.4rem 1rem;
+    font-size: 0.8rem;
+  }
+  
+  .navBrand {
+    font-size: 1.1rem;
+  }
+}

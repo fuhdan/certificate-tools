@@ -15,8 +15,6 @@ const Footer = () => {
       
       {isOpen && (
         <div className={styles.content}>
-          <p>This is an empty website template.</p>
-          <p>The floating panel shows backend connection status.</p>
           <p>© 2025 Daniel’s Totally Legit Certificate Authority™. All rights reserved.<br />
 This site uses TLS 1.3 because anything less is just insecure spaghetti code.<br />
 Unauthorized access attempts will be ignored like your 10th failed login — but seriously, don’t try.<br />

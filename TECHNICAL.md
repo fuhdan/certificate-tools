@@ -1,3 +1,889 @@
+# Technical Documentation - Certificate Analysis Tool
+
+## Table of Contents
+
+1. [System Architecture](#system-architecture)
+2. [Session Management](#session-management)
+3. [Certificate Processing Pipeline](#certificate-processing-pipeline)
+4. [Cryptographic Validation Engine](#cryptographic-validation-engine)
+5. [Security Implementation](#security-implementation)
+6. [API Design](#api-design)
+7. [Frontend Architecture](#frontend-architecture)
+8. [Data Flow](#data-flow)
+9. [Deployment Architecture](#deployment-architecture)
+10. [Performance Considerations](#performance-considerations)
+11. [Monitoring and Observability](#monitoring-and-observability)
+12. [Development Guidelines](#development-guidelines)
+
+---
+
+## System Architecture
+
+### High-Level Architecture Overview
+
+```mermaid
+graph TB
+    subgraph "Client Layer"
+        Browser[Web Browser]
+        Mobile[Mobile Browser]
+    end
+    
+    subgraph "Load Balancer/Proxy Layer"
+        Nginx[Nginx Reverse Proxy<br/>Port 80]
+    end
+    
+    subgraph "Application Layer"
+        Frontend[React SPA<br/>Port 80]
+        Backend[FastAPI Service<br/>Port 8000]
+    end
+    
+    subgraph "Storage Layer"
+        Memory[In-Memory Session Store]
+    end
+    
+    subgraph "Service Layer"
+        VS[Validation Service]
+        DS[Download Service]
+    end
+    
+    Browser --> Nginx
+    Mobile --> Nginx
+    Nginx --> Frontend
+    Nginx --> Backend
+    Frontend --> Backend
+    Backend --> Memory
+    Backend --> VS
+    Backend --> DS
+```
+
+### Component Interaction Flow
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant N as Nginx
+    participant F as Frontend
+    participant B as Backend
+    participant S as Session Manager
+    participant V as Validation Service
+    participant C as Crypto Engine
+    
+    U->>N: HTTP Request
+    N->>F: Route to Frontend (/)
+    F->>U: Serve React SPA
+    
+    U->>F: Upload Certificate
+    F->>N: POST /api/upload
+    N->>B: Forward to Backend
+    B->>S: Create/Get Session
+    B->>C: Parse Certificate
+    C->>B: Return Analysis
+    B->>V: Compute Validations
+    V->>B: Return Validation Results
+    B->>S: Store Results
+    B->>F: Return Analysis JSON
+    F->>U: Display Results
+```
+
+---
+
+## Session Management
+
+### Session Architecture
+
+The session management system provides multi-user isolation with automatic cleanup and thread safety.
+
+```python
+# backend-fastapi/certificates/storage/session_pki_storage.py
+
+class PKISession:
+    def __init__(self, session_id: str):
+        self.session_id = session_id
+        self.components: Dict[str, PKIComponent] = {}
+        self.validation_results: Optional[Dict[str, Any]] = None
+        self.created_at = datetime.utcnow().isoformat()
+        self.last_updated = datetime.utcnow().isoformat()
+        self._lock = threading.Lock()
+
+class SessionPKIStorage:
+    def __init__(self):
+        self._sessions: Dict[str, PKISession] = {}
+        self._global_lock = threading.Lock()
+        self._start_cleanup_thread()
+```
+
+### Key Features
+
+- **UUID-based session isolation**: Each user gets a unique session
+- **Thread safety**: Concurrent access protection with locks
+- **Automatic cleanup**: Sessions expire after 1 hour of inactivity
+- **Real-time validation**: Automatic validation computation on changes
+
+### Session Lifecycle Flow
+
+```mermaid
+flowchart TD
+    A[Browser Opens Tab] --> B[Generate UUID Session ID]
+    B --> C[Create Session Storage]
+    C --> D[Set Session Headers]
+    D --> E[Upload Certificates]
+    E --> F{Session Active?}
+    F -->|Yes| G[Process Certificate]
+    F -->|No| H[Create New Session]
+    H --> G
+    G --> I[Store in Session]
+    I --> J{User Action?}
+    J -->|Upload More| E
+    J -->|Download Bundle| K[Generate Encrypted ZIP]
+    J -->|Close Tab| L[Session Expires]
+    L --> M[Automatic Cleanup]
+    K --> J
+```
+
+---
+
+## Certificate Processing Pipeline
+
+### PKI Component Types
+
+The system supports a comprehensive PKI component type system:
+
+```python
+# backend-fastapi/models/pki_component.py
+
+class PKIComponentType(Enum):
+    CERTIFICATE = "Certificate"
+    PRIVATE_KEY = "PrivateKey"
+    CSR = "CSR"
+    ISSUING_CA = "IssuingCA"
+    INTERMEDIATE_CA = "IntermediateCA"
+    ROOT_CA = "RootCA"
+    UNKNOWN = "Unknown"
+```
+
+### Component Ordering System
+
+PKI components are automatically ordered based on their hierarchical relationships:
+
+```python
+# Order priority for PKI hierarchy display
+PKI_TYPE_ORDER = {
+    PKIComponentType.ROOT_CA: 1,
+    PKIComponentType.INTERMEDIATE_CA: 2,
+    PKIComponentType.ISSUING_CA: 3,
+    PKIComponentType.CERTIFICATE: 4,
+    PKIComponentType.CSR: 5,
+    PKIComponentType.PRIVATE_KEY: 6,
+    PKIComponentType.UNKNOWN: 7
+}
+```
+
+### Multi-Format Certificate Parser
+
+```python
+# backend-fastapi/certificate_analyzer.py
+from cryptography import x509
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.serialization import pkcs12
+import base64
+
+class CertificateAnalyzer:
+    
+    @staticmethod
+    def parse_certificate_file(file_content: bytes, password: str = None) -> Dict[str, Any]:
+        """
+        Universal certificate parser supporting multiple formats
+        """
+        results = {
+            'certificates': [],
+            'private_keys': [],
+            'csrs': [],
+            'format_detected': None,
+            'errors': []
+        }
+        
+        # Try PKCS#12 first (if password provided)
+        if password:
+            try:
+                private_key, certificate, additional_certificates = pkcs12.load_key_and_certificates(
+                    file_content, password.encode('utf-8')
+                )
+                results['format_detected'] = 'PKCS#12'
+                
+                if certificate:
+                    results['certificates'].append(CertificateAnalyzer._analyze_certificate(certificate))
+                if private_key:
+                    results['private_keys'].append(CertificateAnalyzer._analyze_private_key(private_key))
+                if additional_certificates:
+                    for cert in additional_certificates:
+                        results['certificates'].append(CertificateAnalyzer._analyze_certificate(cert))
+                        
+                return results
+            except Exception as e:
+                results['errors'].append(f"PKCS#12 parsing failed: {str(e)}")
+        
+        # Try PEM format
+        try:
+            pem_content = file_content.decode('utf-8')
+            results.update(CertificateAnalyzer._parse_pem_content(pem_content))
+            if results['certificates'] or results['private_keys'] or results['csrs']:
+                results['format_detected'] = 'PEM'
+                return results
+        except UnicodeDecodeError:
+            pass
+        
+        # Try DER format
+        try:
+            # Try as certificate
+            cert = x509.load_der_x509_certificate(file_content)
+            results['certificates'].append(CertificateAnalyzer._analyze_certificate(cert))
+            results['format_detected'] = 'DER'
+            return results
+        except Exception:
+            pass
+            
+        # Try as private key (DER)
+        try:
+            private_key = serialization.load_der_private_key(file_content, password=None)
+            results['private_keys'].append(CertificateAnalyzer._analyze_private_key(private_key))
+            results['format_detected'] = 'DER'
+            return results
+        except Exception:
+            pass
+        
+        results['errors'].append("Unable to parse file - unsupported format")
+        return results
+```
+
+### Processing Flow
+
+```mermaid
+graph TD
+    A[File Upload] --> B[Format Detection]
+    B --> C{File Format?}
+    C -->|PEM| D[Parse PEM Blocks]
+    C -->|PKCS12| E[Extract with Password]
+    C -->|DER| F[Parse DER Binary]
+    C -->|JKS| G[Extract Java Keystore]
+    
+    D --> H[Component Classification]
+    E --> H
+    F --> H
+    G --> H
+    
+    H --> I[Metadata Extraction]
+    I --> J[PKI Type Assignment]
+    J --> K[Hierarchical Ordering]
+    K --> L[Session Storage]
+    L --> M[Validation Computation]
+    M --> N[Return Results]
+```
+
+---
+
+## Cryptographic Validation Engine
+
+### Validation Service Architecture
+
+The validation system uses a service-based approach:
+
+```python
+# backend-fastapi/services/validation_service.py
+
+class ValidationService:
+    def __init__(self):
+        self.version = "2.0"
+        self.supported_validations = [
+            "private_key_certificate_match",
+            "private_key_csr_match", 
+            "certificate_csr_match",
+            "certificate_chain_validation",
+            "certificate_expiry_check",
+            "key_usage_validation",
+            "subject_alternative_name_validation",
+            "algorithm_strength_validation"
+        ]
+```
+
+### Validation Types
+
+1. **Private Key ↔ Certificate Matching**
+2. **Private Key ↔ CSR Matching**
+3. **Certificate ↔ CSR Matching**
+4. **Certificate Chain Validation**
+5. **Certificate Expiry Checks**
+6. **Key Usage Validation**
+7. **Subject Alternative Name Validation**
+8. **Algorithm Strength Assessment**
+
+### Validation Results Structure
+
+```json
+{
+  "computed_at": "2025-01-15T10:30:00Z",
+  "validation_engine_version": "2.0",
+  "overall_status": "valid",
+  "total_validations": 5,
+  "passed_validations": 4,
+  "failed_validations": 1,
+  "warnings": 0,
+  "validations": {
+    "private_key_certificate_match": {
+      "validation_id": "val-pk-cert-001",
+      "type": "relationship",
+      "status": "valid",
+      "confidence": "high",
+      "title": "Private Key Certificate Match",
+      "description": "Private key matches certificate public key",
+      "components_involved": ["comp-001", "comp-002"],
+      "validation_method": "signature_verification",
+      "details": {
+        "key_algorithm": "RSA",
+        "key_size": 2048,
+        "signature_valid": true
+      }
+    }
+  }
+}
+```
+
+### Validation Flow Diagram
+
+```mermaid
+flowchart TD
+    A[Start Validation] --> B{Components Available?}
+    B -->|Private Key + Certificate| C[Test Key-Cert Match]
+    B -->|Private Key + CSR| D[Test Key-CSR Match]
+    B -->|Certificate + CSR| E[Test Cert-CSR Match]
+    B -->|Multiple Certificates| F[Build Certificate Chain]
+    
+    C --> G[Generate Test Signature]
+    G --> H[Verify with Public Key]
+    H --> I{Verification Success?}
+    I -->|Yes| J[Mark as Valid Match]
+    I -->|No| K[Mark as Invalid Match]
+    
+    D --> L[Extract CSR Public Key]
+    L --> M[Compare Key Parameters]
+    M --> N{Keys Match?}
+    N -->|Yes| O[Mark as Valid Match]
+    N -->|No| P[Mark as Invalid Match]
+    
+    F --> Q[Identify Root CA]
+    Q --> R[Build Trust Chain]
+    R --> S[Validate Signatures]
+    S --> T[Check Validity Periods]
+    T --> U[Generate Chain Report]
+    
+    J --> V[Store Results]
+    K --> V
+    O --> V
+    P --> V
+    U --> V
+```
+
+---
+
+## Security Implementation
+
+### Session-Based Security
+
+The application uses session-based isolation for security rather than user authentication:
+
+```python
+# backend-fastapi/middleware/session_middleware.py
+def get_session_id(x_session_id: str = Header(None)):
+    """
+    Extract session ID from headers with validation
+    """
+    if not x_session_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Session ID required. Include 'X-Session-ID' header."
+        )
+    
+    # Validate UUID format
+    try:
+        uuid.UUID(x_session_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid session ID format. Must be a valid UUID."
+        )
+    
+    return x_session_id
+```
+
+### Secure ZIP Download Implementation
+
+```python
+# backend-fastapi/services/secure_zip_creator.py
+import zipfile
+import secrets
+import string
+from io import BytesIO
+import base64
+
+class SecureZipCreator:
+    
+    @staticmethod
+    def generate_secure_password(length: int = 12) -> str:
+        """Generate cryptographically secure random password"""
+        alphabet = string.ascii_letters + string.digits
+        password = ''.join(secrets.choice(alphabet) for _ in range(length))
+        return password
+    
+    def create_password_protected_zip(self, files_dict: dict) -> tuple[bytes, str]:
+        """
+        Create password-protected ZIP file
+        Returns: (zip_bytes, password)
+        """
+        password = self.generate_secure_password()
+        
+        zip_buffer = BytesIO()
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            for filename, content in files_dict.items():
+                zip_info = zipfile.ZipInfo(filename)
+                zip_info.compress_type = zipfile.ZIP_DEFLATED
+                zip_file.writestr(zip_info, content)
+        
+        # Password protection via external library if needed
+        zip_buffer.seek(0)
+        return zip_buffer.getvalue(), password
+```
+
+### Security Architecture Flow
+
+```mermaid
+flowchart TD
+    A[Client Request] --> B[Session ID Check]
+    B --> C{Valid Session?}
+    C -->|Yes| D[Process Request]
+    C -->|No| E[Return 400 Bad Request]
+    
+    D --> F{Download Request?}
+    F -->|Yes| G[Generate Random Password]
+    F -->|No| H[Normal Response]
+    
+    G --> I[Create Encrypted ZIP]
+    I --> J[Return ZIP + Password]
+    J --> K[Client Downloads ZIP]
+    K --> L[Password Shown Once]
+    L --> M[Password Forgotten by System]
+```
+
+---
+
+## API Design
+
+### Updated API Architecture
+
+The API uses centralized service classes:
+
+```python
+# backend-fastapi/main.py
+
+# Service dependencies
+@app.dependency_overrides.update({
+    "validation_service": lambda: validation_service,
+    "download_service": lambda: download_service
+})
+```
+
+### Core Endpoints
+
+#### 1. Certificate Management
+
+```http
+GET /certificates
+# Returns all PKI components in session with validation results
+# Requires: X-Session-ID header
+
+POST /upload-certificate
+# Upload and analyze new PKI component
+# Requires: X-Session-ID header
+
+DELETE /certificates/{component_id}
+# Remove specific component from session
+# Requires: X-Session-ID header
+
+POST /clear-session
+# Clear all components from session
+# Requires: X-Session-ID header
+```
+
+#### 2. Download System
+
+```http
+POST /downloads/download/{bundle_type}/{session_id}
+# Download bundles (apache, nginx, iis, custom)
+# No authentication required - session-based access only
+```
+
+#### 3. Validation
+
+```http
+GET /validate
+# Get current validation results for session
+# Requires: X-Session-ID header
+```
+
+### RESTful Endpoint Structure
+
+```python
+# backend-fastapi/main.py
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+app = FastAPI(
+    title="Certificate Analysis API",
+    description="Comprehensive PKI analysis and management",
+    version="1.0.0"
+)
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Include routers
+app.include_router(health_router)
+app.include_router(certificates_router)
+app.include_router(downloads_router)
+app.include_router(stats_router)
+
+@app.get("/")
+def read_root():
+    """Root endpoint"""
+    return {
+        "message": settings.APP_NAME,
+        "status": "online",
+        "version": settings.APP_VERSION,
+        "endpoints": {
+            "health": "/health",
+            "certificates": "/certificates", 
+            "downloads": "/downloads",
+            "docs": "/docs"
+        }
+    }
+```
+
+### API Response Format
+
+All API responses follow a consistent structure:
+
+```json
+{
+  "success": true,
+  "components": [...],
+  "validation_results": {...},
+  "total": 3,
+  "message": "Operation completed successfully"
+}
+```
+
+### API Flow Diagram
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant A as API Gateway
+    participant S as Session Manager
+    participant V as Validator
+    participant D as Download Service
+    
+    C->>A: POST /upload-certificate (with X-Session-ID)
+    A->>S: Get/Create Session
+    S->>A: Session Data
+    A->>A: Parse Certificate
+    A->>V: Run Validations
+    V->>A: Validation Results
+    A->>S: Store Results
+    A->>C: Analysis + Validations
+    
+    C->>A: GET /certificates (with X-Session-ID)
+    A->>S: Get Session Data
+    S->>A: PKI Components
+    A->>C: Complete PKI Bundle
+    
+    C->>A: POST /downloads/download/apache/{session_id}
+    A->>D: Generate Apache Bundle
+    D->>D: Create Random Password
+    D->>D: Create ZIP File
+    D->>A: ZIP Data + Password
+    A->>C: Download Data + Password
+```
+
+---
+
+## Frontend Architecture
+
+### React Architecture
+
+The frontend uses centralized API services:
+
+```javascript
+// frontend/src/services/api.js
+
+// Centralized API service
+const certificateAPI = {
+  getCertificates: () => api.get('/certificates'),
+  uploadCertificate: (file, password) => uploadWithFile('/upload-certificate', file, password),
+  deleteCertificate: (componentId) => api.delete(`/certificates/${componentId}`),
+  clearSession: () => api.post('/clear-session')
+};
+
+const downloadAPI = {
+  downloadApacheBundle: (options) => downloadBundle('apache', options),
+  downloadNginxBundle: (options) => downloadBundle('nginx', options),
+  downloadIISBundle: (options) => downloadBundle('iis', options),
+  downloadCustomBundle: (componentIds, options) => downloadCustom(componentIds, options)
+};
+```
+
+### Context-Based State Management
+
+```javascript
+// frontend/src/contexts/CertificateContext.jsx
+
+export const CertificateProvider = ({ children }) => {
+  const [components, setComponents] = useState([])
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState(null)
+
+  const refreshFiles = useCallback(async () => {
+    try {
+      setIsLoading(true)
+      const result = await certificateAPI.getCertificates()
+      if (result.success) {
+        const sortedComponents = (result.certificates || []).sort((a, b) => {
+          return a.order - b.order
+        })
+        setComponents(sortedComponents)
+      }
+    } catch (error) {
+      setError('Failed to refresh PKI components')
+    } finally {
+      setIsLoading(false)
+    }
+  }, [])
+}
+```
+
+### Component Mapping System
+
+The frontend maps backend PKI components to certificate objects:
+
+```javascript
+// frontend/src/services/api.js
+
+function mapPKIComponentToCertificate(component) {
+  const metadata = component.metadata || {}
+  
+  return {
+    id: component.id,
+    filename: component.filename,
+    type: component.type,
+    order: component.order,
+    metadata: metadata,
+    has_certificate: component.type === 'Certificate',
+    has_private_key: component.type === 'PrivateKey',
+    has_csr: component.type === 'CSR',
+    has_ca: ['IssuingCA', 'IntermediateCA', 'RootCA'].includes(component.type)
+  }
+}
+```
+
+### React Component Structure
+
+```jsx
+// frontend/src/contexts/CertificateContext.jsx
+import React, { createContext, useContext, useReducer } from 'react'
+
+const CertificateContext = createContext()
+
+const certificateReducer = (state, action) => {
+  switch (action.type) {
+    case 'ADD_CERTIFICATE':
+      return {
+        ...state,
+        certificates: {
+          ...state.certificates,
+          [action.payload.id]: action.payload
+        }
+      }
+    
+    case 'UPDATE_VALIDATIONS':
+      return {
+        ...state,
+        validations: action.payload
+      }
+    
+    case 'CLEAR_SESSION':
+      return {
+        certificates: {},
+        validations: {},
+        sessionId: null
+      }
+    
+    default:
+      return state
+  }
+}
+
+export const CertificateProvider = ({ children }) => {
+  const [state, dispatch] = useReducer(certificateReducer, {
+    certificates: {},
+    validations: {},
+    sessionId: null
+  })
+  
+  return (
+    <CertificateContext.Provider value={{ state, dispatch }}>
+      {children}
+    </CertificateContext.Provider>
+  )
+}
+
+export const useCertificates = () => {
+  const context = useContext(CertificateContext)
+  if (!context) {
+    throw new Error('useCertificates must be used within CertificateProvider')
+  }
+  return context
+}
+```
+
+### Frontend State Flow
+
+```mermaid
+stateDiagram-v2
+    [*] --> Initial: App Starts
+    Initial --> FileSelected: User Selects File
+    FileSelected --> Uploading: POST /upload
+    Uploading --> PasswordRequired: Server Requests Password
+    Uploading --> Analyzing: File Uploaded Successfully
+    PasswordRequired --> PasswordProvided: User Enters Password
+    PasswordProvided --> Uploading: Retry Upload
+    Analyzing --> DisplayResults: Analysis Complete
+    DisplayResults --> ValidationRunning: Run Validations
+    ValidationRunning --> ValidationComplete: Validations Done
+    ValidationComplete --> DisplayResults: Update UI
+    DisplayResults --> DownloadReady: User Requests Download
+    DownloadReady --> GeneratingBundle: Create Secure Bundle
+    GeneratingBundle --> DownloadComplete: ZIP + Password Ready
+    DownloadComplete --> DisplayResults: Return to Main View
+```
+
+---
+
+## Data Flow
+
+### Complete System Data Flow
+
+```mermaid
+graph TD
+    subgraph "Frontend Layer"
+        UI[React Components]
+        CTX[Certificate Context]
+        API[API Service Layer]
+    end
+    
+    subgraph "Backend Layer"
+        MAIN[FastAPI Main]
+        SVC[Service Layer]
+        STORE[Session Storage]
+    end
+    
+    subgraph "Services"
+        VS[Validation Service]
+        DS[Download Service]
+    end
+    
+    UI --> CTX
+    CTX --> API
+    API --> MAIN
+    MAIN --> SVC
+    SVC --> VS
+    SVC --> DS
+    SVC --> STORE
+    STORE --> SVC
+    SVC --> MAIN
+    MAIN --> API
+    API --> CTX
+    CTX --> UI
+```
+
+### Session Lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> SessionCreated: User visits site
+    SessionCreated --> ComponentUploaded: Upload certificate
+    ComponentUploaded --> ValidationComputed: Auto-validation
+    ValidationComputed --> ComponentUploaded: Upload more
+    ValidationComputed --> DownloadRequested: Request download
+    DownloadRequested --> ValidationComputed: Continue session
+    ComponentUploaded --> SessionCleared: Clear all
+    ValidationComputed --> SessionCleared: Clear all
+    SessionCleared --> SessionCreated: Start fresh
+    ValidationComputed --> SessionExpired: 1 hour timeout
+    SessionExpired --> [*]: Session destroyed
+```
+
+### Complete System Data Flow (Extended)
+
+```mermaid
+flowchart TD
+    subgraph "Client Side"
+        A[User Uploads File] --> B[React File Upload Component]
+        B --> C[FormData with File + Password]
+    end
+    
+    subgraph "Network Layer"
+        C --> D[HTTP POST to /upload]
+        D --> E[Nginx Reverse Proxy]
+        E --> F[FastAPI Backend]
+    end
+    
+    subgraph "Backend Processing"
+        F --> G[Session Manager]
+        G --> H{Session Exists?}
+        H -->|No| I[Create New Session]
+        H -->|Yes| J[Use Existing Session]
+        I --> K[Certificate Analyzer]
+        J --> K
+        K --> L[Multi-Format Parser]
+        L --> M[Cryptographic Validator]
+        M --> N[Store Results in Session]
+    end
+    
+    subgraph "Response Flow"
+        N --> O[JSON Response]
+        O --> P[Nginx Proxy Response]
+        P --> Q[React State Update]
+        Q --> R[UI Components Re-render]
+        R --> S[Display Certificate Details]
+        S --> T[Show Validation Results]
+    end
+    
+    subgraph "Download Flow"
+        T --> U{User Requests Download?}
+        U -->|Yes| V[Session ID Check]
+        V --> W[Generate Random Password]
+        W --> X[Create Encrypted ZIP]
+        X --> Y[Base64 Encode ZIP]
+        Y --> Z[Return ZIP + Password]
+        Z --> AA[Client Downloads ZIP]
+        AA --> BB[Password Displayed Once]
+        BB --> CC[System Forgets Password]
+    end
+```
+
 ---
 
 ## Deployment Architecture
@@ -13,12 +899,9 @@ services:
     build: ./nginx
     ports:
       - "80:80"
-      - "443:443"
     depends_on:
       - frontend
       - backend-fastapi
-    volumes:
-      - ./nginx/ssl:/etc/nginx/ssl:ro  # SSL certificates for HTTPS
     networks:
       - certificate-network
     restart: unless-stopped
@@ -42,7 +925,6 @@ services:
     environment:
       - SECRET_KEY=${SECRET_KEY:-your-secret-key-change-in-production}
       - DEBUG=OFF
-      - ACCESS_TOKEN_EXPIRE_MINUTES=30
       - MAX_FILE_SIZE=10485760  # 10MB
     networks:
       - certificate-network
@@ -56,96 +938,51 @@ services:
 networks:
   certificate-network:
     driver: bridge
-
-volumes:
-  ssl-certs:
-    driver: local
 ```
 
-### Nginx Configuration for Production
+### Nginx Configuration
 
 ```nginx
 # nginx/nginx.conf
-upstream frontend {
+events {
+  worker_connections 1024;
+}
+
+http {
+  upstream frontend {
     server frontend:80;
-}
+  }
 
-upstream backend {
+  upstream backend {
     server backend-fastapi:8000;
-}
+  }
 
-server {
+  server {
     listen 80;
-    server_name your-domain.com;
-    
-    # Redirect HTTP to HTTPS
-    return 301 https://$server_name$request_uri;
-}
 
-server {
-    listen 443 ssl http2;
-    server_name your-domain.com;
-    
-    # SSL Configuration
-    ssl_certificate /etc/nginx/ssl/cert.pem;
-    ssl_certificate_key /etc/nginx/ssl/key.pem;
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers ECDHE-RSA-AES256-GCM-SHA512:DHE-RSA-AES256-GCM-SHA512:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES256-GCM-SHA384;
-    ssl_prefer_server_ciphers off;
-    ssl_session_cache shared:SSL:10m;
-    
-    # Security Headers
-    add_header X-Frame-Options "SAMEORIGIN" always;
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header X-XSS-Protection "1; mode=block" always;
-    add_header Referrer-Policy "no-referrer-when-downgrade" always;
-    add_header Content-Security-Policy "default-src 'self' http: https: data: blob: 'unsafe-inline'" always;
-    
-    # File Upload Limits
-    client_max_body_size 10M;
-    client_body_timeout 60s;
-    client_header_timeout 60s;
-    
-    # API Proxy
-    location /api/ {
-        proxy_pass http://backend/;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_connect_timeout 60s;
-        proxy_send_timeout 60s;
-        proxy_read_timeout 60s;
-    }
-    
-    # WebSocket Support (if needed for real-time features)
-    location /ws/ {
-        proxy_pass http://backend/ws/;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-    }
-    
     # Frontend SPA
     location / {
-        proxy_pass http://frontend;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        
-        # SPA fallback
-        try_files $uri $uri/ /index.html;
+      proxy_pass http://frontend;
+      proxy_set_header Host $host;
+      proxy_set_header X-Real-IP $remote_addr;
+    }
+
+    # API Proxy
+    location /api/ {
+      proxy_pass http://backend/;
+      proxy_set_header Host $host;
+      proxy_set_header X-Real-IP $remote_addr;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto $scheme;
     }
     
-    # Static assets caching
-    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg)$ {
-        expires 1y;
-        add_header Cache-Control "public, immutable";
-        proxy_pass http://frontend;
-    }
+    # TODO: SSL Configuration section
+    # For production deployment with HTTPS:
+    # - Add SSL certificate configuration
+    # - Configure SSL/TLS protocols and ciphers
+    # - Add security headers
+    # - Redirect HTTP to HTTPS
+  }
 }
 ```
 
@@ -277,33 +1114,6 @@ class PerformanceManager:
         for session_id in expired_sessions:
             session_manager.delete_session(session_id)
             logger.info(f"Cleaned up expired session: {session_id}")
-    
-    def optimize_certificate_storage(self, session_data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Optimize certificate storage to reduce memory footprint
-        """
-        optimized_data = {}
-        
-        for key, value in session_data.items():
-            if key in ['certificates', 'private_keys', 'csrs']:
-                # Store only essential data, remove large binary objects when not needed
-                optimized_data[key] = {}
-                for item_id, item_data in value.items():
-                    optimized_item = {
-                        'common_name': item_data.get('common_name'),
-                        'serial_number': item_data.get('serial_number'),
-                        'validity_period': item_data.get('validity_period'),
-                        'issuer': item_data.get('issuer'),
-                        'key_size': item_data.get('key_size'),
-                        'signature_algorithm': item_data.get('signature_algorithm'),
-                        'pem_content': item_data.get('pem_content')  # Keep PEM for downloads
-                        # Remove 'crypto_object' to save memory when not actively validating
-                    }
-                    optimized_data[key][item_id] = optimized_item
-            else:
-                optimized_data[key] = value
-        
-        return optimized_data
 ```
 
 ### Caching Strategy Implementation
@@ -393,91 +1203,6 @@ def validate_certificate_chain(certificates: list) -> dict:
     """
     # Perform complex validation logic
     return validation_results
-```
-
-### Database Scaling Considerations
-
-```python
-# backend-fastapi/scaling_strategy.py
-from typing import Dict, List, Any
-import redis
-import json
-from datetime import datetime, timedelta
-
-class ScalingStrategy:
-    """
-    Strategy for scaling beyond single-instance deployment
-    """
-    
-    def __init__(self, redis_url: str = None):
-        self.redis_client = redis.Redis.from_url(redis_url) if redis_url else None
-        self.local_cache = {}
-    
-    def distributed_session_storage(self, session_id: str, data: Dict[str, Any]):
-        """
-        Store session data in Redis for multi-instance deployment
-        """
-        if self.redis_client:
-            # Serialize complex objects for Redis storage
-            serializable_data = self._make_serializable(data)
-            self.redis_client.setex(
-                f"session:{session_id}",
-                timedelta(minutes=30),
-                json.dumps(serializable_data)
-            )
-        else:
-            # Fallback to local storage
-            self.local_cache[session_id] = data
-    
-    def get_distributed_session(self, session_id: str) -> Dict[str, Any]:
-        """
-        Retrieve session data from distributed storage
-        """
-        if self.redis_client:
-            data = self.redis_client.get(f"session:{session_id}")
-            if data:
-                return json.loads(data)
-        else:
-            return self.local_cache.get(session_id)
-        
-        return None
-    
-    def _make_serializable(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Convert complex objects to JSON-serializable format
-        """
-        serializable = {}
-        
-        for key, value in data.items():
-            if key in ['certificates', 'private_keys', 'csrs']:
-                serializable[key] = {}
-                for item_id, item_data in value.items():
-                    # Store only JSON-serializable data
-                    serializable[key][item_id] = {
-                        k: v for k, v in item_data.items() 
-                        if k != 'crypto_object'  # Exclude cryptography objects
-                    }
-            else:
-                serializable[key] = value
-        
-        return serializable
-    
-    def load_balancing_strategy(self) -> Dict[str, Any]:
-        """
-        Configuration for load balancing multiple instances
-        """
-        return {
-            "strategy": "round_robin",
-            "health_check_interval": 30,
-            "max_connections_per_instance": 100,
-            "session_affinity": False,  # Use distributed sessions
-            "auto_scaling": {
-                "min_instances": 2,
-                "max_instances": 10,
-                "cpu_threshold": 70,
-                "memory_threshold": 80
-            }
-        }
 ```
 
 ### Performance Monitoring
@@ -638,987 +1363,227 @@ def start_metrics_server(port: int = 8001):
     start_http_server(port)
 ```
 
-This comprehensive technical documentation covers all major aspects of the Certificate Analysis Tool, including:
-
-1. **System Architecture** - High-level design and component interaction
-2. **Session Management** - UUID-based isolation with thread safety
-3. **Certificate Processing** - Multi-format parsing pipeline
-4. **Cryptographic Validation** - Comprehensive validation engine
-5. **Security Implementation** - JWT auth and encrypted downloads
-6. **API Design** - RESTful endpoints with detailed examples
-7. **Frontend Architecture** - React components and state management
-8. **Data Flow** - Complete system data flow diagrams
-9. **Deployment Architecture** - Docker, Nginx, and production setup
-10. **Performance Considerations** - Memory management, caching, and scaling
-11. **Monitoring** - Logging, metrics, and observability
-
-The documentation includes detailed code snippets, Mermaid diagrams, and flowcharts that show exactly how each component works and how data flows through the system. This should give developers a complete understanding of the implementation and help with maintenance, scaling, and further development.# Technical Documentation - Certificate Analysis Tool
-
-## Table of Contents
-
-1. [System Architecture](#system-architecture)
-2. [Session Management](#session-management)
-3. [Certificate Processing Pipeline](#certificate-processing-pipeline)
-4. [Cryptographic Validation Engine](#cryptographic-validation-engine)
-5. [Security Implementation](#security-implementation)
-6. [API Design](#api-design)
-7. [Frontend Architecture](#frontend-architecture)
-8. [Data Flow](#data-flow)
-9. [Deployment Architecture](#deployment-architecture)
-10. [Performance Considerations](#performance-considerations)
-
 ---
 
-## System Architecture
+## Development Guidelines
 
-### High-Level Architecture Overview
+### Code Style and Standards
 
-```mermaid
-graph TB
-    subgraph "Client Layer"
-        Browser[Web Browser]
-        Mobile[Mobile Browser]
-    end
-    
-    subgraph "Load Balancer/Proxy Layer"
-        Nginx[Nginx Reverse Proxy<br/>Port 80/443]
-    end
-    
-    subgraph "Application Layer"
-        Frontend[React SPA<br/>Port 3000]
-        Backend[FastAPI Service<br/>Port 8000]
-    end
-    
-    subgraph "Storage Layer"
-        Memory[In-Memory Session Store]
-        JWT[JWT Token Storage]
-    end
-    
-    Browser --> Nginx
-    Mobile --> Nginx
-    Nginx --> Frontend
-    Nginx --> Backend
-    Frontend --> Backend
-    Backend --> Memory
-    Backend --> JWT
-```
+**Backend (Python):**
+- Follow PEP 8 style guidelines
+- Use type hints for all function parameters and return values
+- Implement comprehensive error handling with try-catch blocks
+- Add docstrings to all public methods and classes
+- Use structured logging for all important events
 
-### Component Interaction Flow
+**Frontend (JavaScript/React):**
+- Use ESLint and Prettier for code formatting
+- Implement proper error boundaries for React components
+- Follow React hooks best practices
+- Implement proper loading and error states
 
-```mermaid
-sequenceDiagram
-    participant U as User
-    participant N as Nginx
-    participant F as Frontend
-    participant B as Backend
-    participant S as Session Manager
-    participant C as Crypto Engine
-    
-    U->>N: HTTP Request
-    N->>F: Route to Frontend (/)
-    F->>U: Serve React SPA
-    
-    U->>F: Upload Certificate
-    F->>N: POST /api/upload
-    N->>B: Forward to Backend
-    B->>S: Create/Get Session
-    B->>C: Parse Certificate
-    C->>B: Return Analysis
-    B->>S: Store Results
-    B->>F: Return Analysis JSON
-    F->>U: Display Results
-```
+### Testing Strategy
 
----
-
-## Session Management
-
-### Session Architecture
-
-The session management system provides multi-user isolation with automatic cleanup and thread safety.
-
+**Backend Testing:**
 ```python
-# backend-fastapi/session_manager.py
-import uuid
-import threading
-import time
-from typing import Dict, Any, Optional
-from datetime import datetime, timedelta
+# backend-fastapi/tests/test_validation_service.py
+import pytest
+from services.validation_service import validation_service
+from models.pki_component import PKIComponent
 
-class SessionManager:
-    def __init__(self, cleanup_interval: int = 300, session_timeout: int = 1800):
-        self.sessions: Dict[str, Dict[str, Any]] = {}
-        self.session_locks: Dict[str, threading.Lock] = {}
-        self.global_lock = threading.Lock()
-        self.cleanup_interval = cleanup_interval
-        self.session_timeout = session_timeout
-        self.last_cleanup = time.time()
+class TestValidationService:
     
-    def create_session(self) -> str:
-        """Create a new session with UUID isolation"""
-        session_id = str(uuid.uuid4())
+    def test_private_key_certificate_match(self):
+        """Test private key certificate matching validation"""
+        # Create test session with components
+        session = create_test_session_with_key_cert_pair()
         
-        with self.global_lock:
-            self.sessions[session_id] = {
-                'certificates': {},
-                'private_keys': {},
-                'csrs': {},
-                'pkcs12_bundles': {},
-                'created_at': datetime.utcnow(),
-                'last_accessed': datetime.utcnow(),
-                'validation_results': {}
-            }
-            self.session_locks[session_id] = threading.Lock()
+        # Run validation
+        results = validation_service.compute_all_validations(session)
         
-        return session_id
+        # Assert validation results
+        assert results['overall_status'] == 'valid'
+        assert 'private_key_certificate_match' in results['validations']
+        assert results['validations']['private_key_certificate_match']['status'] == 'valid'
     
-    def get_session_data(self, session_id: str) -> Optional[Dict[str, Any]]:
-        """Thread-safe session data retrieval"""
-        if session_id not in self.sessions:
-            return None
-            
-        with self.session_locks[session_id]:
-            self.sessions[session_id]['last_accessed'] = datetime.utcnow()
-            return self.sessions[session_id].copy()
+    def test_certificate_chain_validation(self):
+        """Test certificate chain validation"""
+        session = create_test_session_with_cert_chain()
+        
+        results = validation_service.compute_all_validations(session)
+        
+        assert 'certificate_chain_validation' in results['validations']
+        chain_validation = results['validations']['certificate_chain_validation']
+        assert chain_validation['status'] in ['valid', 'warning']
 ```
 
-### Session Lifecycle Flow
+**Frontend Testing:**
+```javascript
+// frontend/src/components/__tests__/CertificateUpload.test.jsx
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { CertificateProvider } from '../../contexts/CertificateContext'
+import CertificateUpload from '../CertificateUpload'
 
-```mermaid
-flowchart TD
-    A[Browser Opens Tab] --> B[Generate UUID Session ID]
-    B --> C[Create Session Storage]
-    C --> D[Set Session Headers]
-    D --> E[Upload Certificates]
-    E --> F{Session Active?}
-    F -->|Yes| G[Process Certificate]
-    F -->|No| H[Create New Session]
-    H --> G
-    G --> I[Store in Session]
-    I --> J{User Action?}
-    J -->|Upload More| E
-    J -->|Download Bundle| K[Generate Encrypted ZIP]
-    J -->|Close Tab| L[Session Expires]
-    L --> M[Automatic Cleanup]
-    K --> J
-```
-
----
-
-## Certificate Processing Pipeline
-
-### Multi-Format Certificate Parser
-
-```python
-# backend-fastapi/certificate_analyzer.py
-from cryptography import x509
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.serialization import pkcs12
-import base64
-
-class CertificateAnalyzer:
+describe('CertificateUpload', () => {
+  it('should upload certificate and display results', async () => {
+    render(
+      <CertificateProvider>
+        <CertificateUpload />
+      </CertificateProvider>
+    )
     
-    @staticmethod
-    def parse_certificate_file(file_content: bytes, password: str = None) -> Dict[str, Any]:
-        """
-        Universal certificate parser supporting multiple formats
-        """
-        results = {
-            'certificates': [],
-            'private_keys': [],
-            'csrs': [],
-            'format_detected': None,
-            'errors': []
-        }
-        
-        # Try PKCS#12 first (if password provided)
-        if password:
-            try:
-                private_key, certificate, additional_certificates = pkcs12.load_key_and_certificates(
-                    file_content, password.encode('utf-8')
-                )
-                results['format_detected'] = 'PKCS#12'
-                
-                if certificate:
-                    results['certificates'].append(CertificateAnalyzer._analyze_certificate(certificate))
-                if private_key:
-                    results['private_keys'].append(CertificateAnalyzer._analyze_private_key(private_key))
-                if additional_certificates:
-                    for cert in additional_certificates:
-                        results['certificates'].append(CertificateAnalyzer._analyze_certificate(cert))
-                        
-                return results
-            except Exception as e:
-                results['errors'].append(f"PKCS#12 parsing failed: {str(e)}")
-        
-        # Try PEM format
-        try:
-            pem_content = file_content.decode('utf-8')
-            results.update(CertificateAnalyzer._parse_pem_content(pem_content))
-            if results['certificates'] or results['private_keys'] or results['csrs']:
-                results['format_detected'] = 'PEM'
-                return results
-        except UnicodeDecodeError:
-            pass
-        
-        # Try DER format
-        try:
-            # Try as certificate
-            cert = x509.load_der_x509_certificate(file_content)
-            results['certificates'].append(CertificateAnalyzer._analyze_certificate(cert))
-            results['format_detected'] = 'DER'
-            return results
-        except Exception:
-            pass
-            
-        # Try as private key (DER)
-        try:
-            private_key = serialization.load_der_private_key(file_content, password=None)
-            results['private_keys'].append(CertificateAnalyzer._analyze_private_key(private_key))
-            results['format_detected'] = 'DER'
-            return results
-        except Exception:
-            pass
-        
-        results['errors'].append("Unable to parse file - unsupported format")
-        return results
-```
-
-### Certificate Analysis Flow
-
-```mermaid
-flowchart TD
-    A[File Upload] --> B{File Type Detection}
-    B -->|PKCS#12| C[Extract P12 Bundle]
-    B -->|PEM| D[Parse PEM Blocks]
-    B -->|DER| E[Parse DER Binary]
-    B -->|Unknown| F[Error: Unsupported Format]
+    const fileInput = screen.getByLabelText(/upload certificate/i)
+    const testFile = new File(['certificate content'], 'test.pem', {
+      type: 'application/x-pem-file'
+    })
     
-    C --> G[Extract Certificates]
-    C --> H[Extract Private Keys]
-    C --> I[Extract Additional Certs]
+    fireEvent.change(fileInput, { target: { files: [testFile] } })
     
-    D --> J{PEM Block Type?}
-    J -->|CERTIFICATE| G
-    J -->|PRIVATE KEY| H
-    J -->|CERTIFICATE REQUEST| K[Extract CSR]
-    J -->|ENCRYPTED PRIVATE KEY| L[Decrypt with Password]
-    
-    E --> M{DER Content Type?}
-    M -->|Certificate| G
-    M -->|Private Key| H
-    M -->|CSR| K
-    
-    G --> N[Certificate Analysis]
-    H --> O[Private Key Analysis]
-    K --> P[CSR Analysis]
-    L --> O
-    
-    N --> Q[Store in Session]
-    O --> Q
-    P --> Q
-    F --> R[Return Error]
-```
-
----
-
-## Cryptographic Validation Engine
-
-### Validation Matrix Implementation
-
-```python
-# backend-fastapi/validation_engine.py
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import rsa, ec, ed25519
-import hashlib
-
-class CryptographicValidator:
-    
-    def __init__(self, session_data: Dict[str, Any]):
-        self.session_data = session_data
-        self.validation_matrix = {}
-    
-    def run_comprehensive_validation(self) -> Dict[str, Any]:
-        """
-        Performs all possible validation combinations
-        """
-        validations = {
-            'private_key_certificate_matches': [],
-            'private_key_csr_matches': [],
-            'certificate_csr_matches': [],
-            'certificate_chain_validations': [],
-            'signature_validations': [],
-            'trust_chain_validations': []
-        }
-        
-        # Private Key <-> Certificate matching
-        for key_id, private_key in self.session_data['private_keys'].items():
-            for cert_id, certificate in self.session_data['certificates'].items():
-                validation_result = self._validate_key_certificate_match(
-                    private_key['crypto_object'], 
-                    certificate['crypto_object']
-                )
-                validations['private_key_certificate_matches'].append({
-                    'private_key_id': key_id,
-                    'certificate_id': cert_id,
-                    'is_valid': validation_result['is_valid'],
-                    'details': validation_result['details']
-                })
-        
-        # Certificate Chain Validation
-        chain_validation = self._build_and_validate_certificate_chain()
-        validations['certificate_chain_validations'] = chain_validation
-        
-        return validations
-    
-    def _validate_key_certificate_match(self, private_key, certificate) -> Dict[str, Any]:
-        """
-        Validates if a private key matches a certificate's public key
-        """
-        try:
-            # Extract public key from certificate
-            cert_public_key = certificate.public_key()
-            
-            # Generate a test signature with private key
-            test_data = b"certificate_validation_test_data"
-            
-            if isinstance(private_key, (rsa.RSAPrivateKey, ec.EllipticCurvePrivateKey)):
-                # Sign test data
-                signature = private_key.sign(
-                    test_data,
-                    hashes.SHA256() if isinstance(private_key, rsa.RSAPrivateKey) else ec.ECDSA(hashes.SHA256())
-                )
-                
-                # Verify with certificate's public key
-                if isinstance(cert_public_key, rsa.RSAPublicKey):
-                    cert_public_key.verify(signature, test_data, hashes.SHA256())
-                elif isinstance(cert_public_key, ec.EllipticCurvePublicKey):
-                    cert_public_key.verify(signature, test_data, ec.ECDSA(hashes.SHA256()))
-                
-                return {
-                    'is_valid': True,
-                    'details': 'Private key successfully matches certificate public key',
-                    'algorithm': type(private_key).__name__
-                }
-                
-        except Exception as e:
-            return {
-                'is_valid': False,
-                'details': f'Key-certificate mismatch: {str(e)}',
-                'algorithm': type(private_key).__name__ if private_key else 'Unknown'
-            }
-```
-
-### Validation Flow Diagram
-
-```mermaid
-flowchart TD
-    A[Start Validation] --> B{Components Available?}
-    B -->|Private Key + Certificate| C[Test Key-Cert Match]
-    B -->|Private Key + CSR| D[Test Key-CSR Match]
-    B -->|Certificate + CSR| E[Test Cert-CSR Match]
-    B -->|Multiple Certificates| F[Build Certificate Chain]
-    
-    C --> G[Generate Test Signature]
-    G --> H[Verify with Public Key]
-    H --> I{Verification Success?}
-    I -->|Yes| J[Mark as Valid Match]
-    I -->|No| K[Mark as Invalid Match]
-    
-    D --> L[Extract CSR Public Key]
-    L --> M[Compare Key Parameters]
-    M --> N{Keys Match?}
-    N -->|Yes| O[Mark as Valid Match]
-    N -->|No| P[Mark as Invalid Match]
-    
-    F --> Q[Identify Root CA]
-    Q --> R[Build Trust Chain]
-    R --> S[Validate Signatures]
-    S --> T[Check Validity Periods]
-    T --> U[Generate Chain Report]
-    
-    J --> V[Store Results]
-    K --> V
-    O --> V
-    P --> V
-    U --> V
-```
-
----
-
-## Security Implementation
-
-### JWT Authentication System
-
-```python
-# backend-fastapi/auth.py
-from datetime import datetime, timedelta
-from jose import JWTError, jwt
-from passlib.context import CryptContext
-from fastapi import HTTPException, status
-
-class AuthenticationManager:
-    
-    def __init__(self, secret_key: str, algorithm: str = "HS256"):
-        self.secret_key = secret_key
-        self.algorithm = algorithm
-        self.pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-        self.access_token_expire_minutes = 30
-    
-    def create_access_token(self, data: dict, expires_delta: timedelta = None):
-        """
-        Create JWT access token with expiration
-        """
-        to_encode = data.copy()
-        if expires_delta:
-            expire = datetime.utcnow() + expires_delta
-        else:
-            expire = datetime.utcnow() + timedelta(minutes=15)
-        
-        to_encode.update({"exp": expire})
-        encoded_jwt = jwt.encode(to_encode, self.secret_key, algorithm=self.algorithm)
-        return encoded_jwt
-    
-    def verify_token(self, token: str):
-        """
-        Verify and decode JWT token
-        """
-        try:
-            payload = jwt.decode(token, self.secret_key, algorithms=[self.algorithm])
-            username: str = payload.get("sub")
-            if username is None:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Could not validate credentials"
-                )
-            return username
-        except JWTError:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Could not validate credentials"
-            )
-```
-
-### Encrypted ZIP Download Implementation
-
-```python
-# backend-fastapi/secure_download.py
-import zipfile
-import secrets
-import string
-from io import BytesIO
-from cryptography.fernet import Fernet
-import base64
-
-class SecureDownloadManager:
-    
-    @staticmethod
-    def generate_secure_password(length: int = 16) -> str:
-        """
-        Generate cryptographically secure random password
-        """
-        alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
-        password = ''.join(secrets.choice(alphabet) for _ in range(length))
-        return password
-    
-    @staticmethod
-    def create_encrypted_zip(files_data: Dict[str, str], password: str) -> bytes:
-        """
-        Create password-protected ZIP file with certificate bundle
-        """
-        zip_buffer = BytesIO()
-        
-        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-            # Set password for the ZIP file
-            zip_file.setpassword(password.encode('utf-8'))
-            
-            for filename, content in files_data.items():
-                # Add each file to the encrypted ZIP
-                zip_file.writestr(filename, content, compress_type=zipfile.ZIP_DEFLATED)
-        
-        zip_buffer.seek(0)
-        return zip_buffer.getvalue()
-    
-    @staticmethod
-    def prepare_pki_bundle(session_data: Dict[str, Any]) -> Dict[str, str]:
-        """
-        Prepare complete PKI bundle for download
-        """
-        bundle_files = {}
-        
-        # Add certificates in proper order (Root -> Intermediate -> End Entity)
-        cert_chain = SecureDownloadManager._order_certificate_chain(
-            session_data['certificates']
-        )
-        
-        for i, cert_data in enumerate(cert_chain):
-            role = cert_data.get('role', 'unknown')
-            filename = f"{i+1:02d}_{role}_{cert_data['common_name']}.crt"
-            bundle_files[filename] = cert_data['pem_content']
-        
-        # Add private keys
-        for key_id, key_data in session_data['private_keys'].items():
-            filename = f"private_key_{key_data['key_type'].lower()}.key"
-            bundle_files[filename] = key_data['pem_content']
-        
-        # Add CSRs
-        for csr_id, csr_data in session_data['csrs'].items():
-            filename = f"certificate_request_{csr_data['common_name']}.csr"
-            bundle_files[filename] = csr_data['pem_content']
-        
-        # Add README with deployment instructions
-        bundle_files['README.txt'] = SecureDownloadManager._generate_deployment_readme(
-            session_data
-        )
-        
-        return bundle_files
-```
-
-### Security Architecture Flow
-
-```mermaid
-flowchart TD
-    A[User Login Request] --> B[Validate Credentials]
-    B --> C{Valid User?}
-    C -->|Yes| D[Generate JWT Token]
-    C -->|No| E[Return 401 Unauthorized]
-    
-    D --> F[Set Token in Headers]
-    F --> G[Protected Route Access]
-    G --> H[Extract JWT from Header]
-    H --> I{Token Valid?}
-    I -->|Yes| J[Process Request]
-    I -->|No| K[Return 401 Unauthorized]
-    
-    J --> L{Download Request?}
-    L -->|Yes| M[Generate Random Password]
-    L -->|No| N[Normal Response]
-    
-    M --> O[Create Encrypted ZIP]
-    O --> P[Return ZIP + Password]
-    P --> Q[User Downloads ZIP]
-    Q --> R[Password Shown Once]
-    R --> S[Password Forgotten by System]
-```
-
----
-
-## API Design
-
-### RESTful Endpoint Structure
-
-```python
-# backend-fastapi/main.py
-from fastapi import FastAPI, UploadFile, Depends, HTTPException
-from fastapi.security import HTTPBearer
-
-app = FastAPI(
-    title="Certificate Analysis API",
-    description="Comprehensive PKI analysis and management",
-    version="1.0.0"
-)
-
-security = HTTPBearer()
-
-@app.post("/upload")
-async def upload_certificate(
-    file: UploadFile,
-    password: str = None,
-    session_id: str = Depends(get_or_create_session)
-):
-    """
-    Upload and analyze certificate files
-    
-    Supported formats:
-    - PEM (.pem, .crt, .cer)
-    - DER (.der)
-    - PKCS#12 (.p12, .pfx)
-    - Private Keys (.key)
-    - Certificate Requests (.csr)
-    """
-    try:
-        # Validate file size
-        if file.size > MAX_FILE_SIZE:
-            raise HTTPException(400, "File too large")
-        
-        # Read file content
-        content = await file.read()
-        
-        # Analyze certificate
-        analyzer = CertificateAnalyzer()
-        results = analyzer.parse_certificate_file(content, password)
-        
-        # Store in session
-        session_manager.store_analysis_results(session_id, file.filename, results)
-        
-        # Run validations
-        validator = CryptographicValidator(
-            session_manager.get_session_data(session_id)
-        )
-        validation_results = validator.run_comprehensive_validation()
-        
-        return {
-            "analysis": results,
-            "validations": validation_results,
-            "session_id": session_id
-        }
-        
-    except Exception as e:
-        raise HTTPException(500, f"Analysis failed: {str(e)}")
-
-@app.get("/pki-bundle")
-async def get_pki_bundle(
-    session_id: str = Depends(get_session_id),
-    token: str = Depends(security)
-):
-    """
-    Get complete PKI bundle (Protected endpoint)
-    """
-    # Verify JWT token
-    auth_manager.verify_token(token.credentials)
-    
-    session_data = session_manager.get_session_data(session_id)
-    if not session_data:
-        raise HTTPException(404, "Session not found")
-    
-    # Generate ordered PKI bundle
-    bundle_generator = PKIBundleGenerator(session_data)
-    pki_bundle = bundle_generator.generate_complete_bundle()
-    
-    return {
-        "pki_bundle": pki_bundle,
-        "certificate_count": len(session_data['certificates']),
-        "chain_valid": bundle_generator.is_chain_valid()
-    }
-
-@app.post("/download-bundle")
-async def download_secure_bundle(
-    session_id: str = Depends(get_session_id),
-    token: str = Depends(security)
-):
-    """
-    Download encrypted PKI bundle (Protected endpoint)
-    """
-    # Verify JWT token
-    auth_manager.verify_token(token.credentials)
-    
-    session_data = session_manager.get_session_data(session_id)
-    if not session_data:
-        raise HTTPException(404, "Session not found")
-    
-    # Generate secure download
-    download_manager = SecureDownloadManager()
-    
-    # Prepare bundle files
-    bundle_files = download_manager.prepare_pki_bundle(session_data)
-    
-    # Generate random password
-    zip_password = download_manager.generate_secure_password()
-    
-    # Create encrypted ZIP
-    encrypted_zip = download_manager.create_encrypted_zip(bundle_files, zip_password)
-    
-    # Generate filename with timestamp
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    filename = f"certificate-bundle-{timestamp}.zip"
-    
-    return {
-        "zip_data": base64.b64encode(encrypted_zip).decode('utf-8'),
-        "password": zip_password,
-        "filename": filename,
-        "file_count": len(bundle_files)
-    }
-```
-
-### API Flow Diagram
-
-```mermaid
-sequenceDiagram
-    participant C as Client
-    participant A as API Gateway
-    participant S as Session Manager
-    participant V as Validator
-    participant D as Download Manager
-    
-    C->>A: POST /upload (certificate file)
-    A->>S: Get/Create Session
-    S->>A: Session ID
-    A->>A: Parse Certificate
-    A->>V: Run Validations
-    V->>A: Validation Results
-    A->>S: Store Results
-    A->>C: Analysis + Validations
-    
-    C->>A: POST /token (login)
-    A->>A: Validate Credentials
-    A->>C: JWT Token
-    
-    C->>A: GET /pki-bundle (with JWT)
-    A->>A: Verify JWT
-    A->>S: Get Session Data
-    S->>A: PKI Components
-    A->>A: Generate Bundle
-    A->>C: Complete PKI Bundle
-    
-    C->>A: POST /download-bundle (with JWT)
-    A->>A: Verify JWT
-    A->>D: Generate Secure Download
-    D->>D: Create Random Password
-    D->>D: Encrypt ZIP File
-    D->>A: Encrypted ZIP + Password
-    A->>C: Download Data + Password
-```
-
----
-
-## Frontend Architecture
-
-### React Component Structure
-
-```jsx
-// frontend/src/contexts/CertificateContext.jsx
-import React, { createContext, useContext, useReducer } from 'react'
-
-const CertificateContext = createContext()
-
-const certificateReducer = (state, action) => {
-  switch (action.type) {
-    case 'ADD_CERTIFICATE':
-      return {
-        ...state,
-        certificates: {
-          ...state.certificates,
-          [action.payload.id]: action.payload
-        }
-      }
-    
-    case 'UPDATE_VALIDATIONS':
-      return {
-        ...state,
-        validations: action.payload
-      }
-    
-    case 'CLEAR_SESSION':
-      return {
-        certificates: {},
-        validations: {},
-        sessionId: null
-      }
-    
-    default:
-      return state
-  }
-}
-
-export const CertificateProvider = ({ children }) => {
-  const [state, dispatch] = useReducer(certificateReducer, {
-    certificates: {},
-    validations: {},
-    sessionId: null
+    await waitFor(() => {
+      expect(screen.getByText(/certificate uploaded/i)).toBeInTheDocument()
+    })
   })
-  
-  return (
-    <CertificateContext.Provider value={{ state, dispatch }}>
-      {children}
-    </CertificateContext.Provider>
-  )
-}
-
-export const useCertificates = () => {
-  const context = useContext(CertificateContext)
-  if (!context) {
-    throw new Error('useCertificates must be used within CertificateProvider')
-  }
-  return context
-}
+})
 ```
 
-### File Upload Component with Progress
+### Security Considerations
 
-```jsx
-// frontend/src/components/FileUpload/FileUpload.jsx
-import React, { useState, useCallback } from 'react'
-import { useDropzone } from 'react-dropzone'
-import api from '../../services/api'
+**Session-Based Security:**
+- All endpoints require X-Session-ID header for access
+- Session isolation prevents cross-user data access
+- Passwords are never stored or logged
+- ZIP downloads with one-time passwords
 
-const FileUpload = ({ onUploadSuccess }) => {
-  const [uploadProgress, setUploadProgress] = useState({})
-  const [passwordPrompt, setPasswordPrompt] = useState(null)
-  
-  const onDrop = useCallback(async (acceptedFiles) => {
-    for (const file of acceptedFiles) {
-      await handleFileUpload(file)
-    }
-  }, [])
-  
-  const handleFileUpload = async (file, password = null) => {
-    const fileId = Date.now() + Math.random()
-    
-    // Initialize progress tracking
-    setUploadProgress(prev => ({
-      ...prev,
-      [fileId]: { progress: 0, status: 'uploading' }
-    }))
-    
-    try {
-      const formData = new FormData()
-      formData.append('file', file)
-      if (password) {
-        formData.append('password', password)
-      }
-      
-      const response = await api.post('/upload', formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data'
-        },
-        onUploadProgress: (progressEvent) => {
-          const progress = Math.round(
-            (progressEvent.loaded * 100) / progressEvent.total
-          )
-          setUploadProgress(prev => ({
-            ...prev,
-            [fileId]: { progress, status: 'uploading' }
-          }))
-        }
-      })
-      
-      // Success
-      setUploadProgress(prev => ({
-        ...prev,
-        [fileId]: { progress: 100, status: 'success' }
-      }))
-      
-      onUploadSuccess(response.data)
-      
-    } catch (error) {
-      if (error.response?.data?.detail?.includes('password')) {
-        // Prompt for password
-        setPasswordPrompt({ file, fileId })
-      } else {
-        // Upload failed
-        setUploadProgress(prev => ({
-          ...prev,
-          [fileId]: { progress: 0, status: 'error', error: error.message }
-        }))
-      }
-    }
-  }
-  
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({
-    onDrop,
-    accept: {
-      'application/x-pem-file': ['.pem'],
-      'application/x-x509-ca-cert': ['.crt', '.cer'],
-      'application/x-pkcs12': ['.p12', '.pfx'],
-      'application/pkcs8': ['.key'],
-      'application/pkcs10': ['.csr']
-    }
-  })
-  
-  return (
-    <div className="upload-container">
-      <div 
-        {...getRootProps()} 
-        className={`dropzone ${isDragActive ? 'active' : ''}`}
-      >
-        <input {...getInputProps()} />
-        {isDragActive ? (
-          <p>Drop the certificate files here...</p>
-        ) : (
-          <p>Drag & drop certificate files here, or click to select</p>
-        )}
-      </div>
-      
-      {/* Upload Progress Display */}
-      {Object.entries(uploadProgress).map(([fileId, progress]) => (
-        <UploadProgressBar key={fileId} progress={progress} />
-      ))}
-      
-      {/* Password Prompt Modal */}
-      {passwordPrompt && (
-        <PasswordPrompt
-          onSubmit={(password) => {
-            handleFileUpload(passwordPrompt.file, password)
-            setPasswordPrompt(null)
-          }}
-          onCancel={() => setPasswordPrompt(null)}
-        />
-      )}
-    </div>
-  )
-}
-```
+**Input Validation:**
+- File size limits enforced (10MB default)
+- File type validation based on content, not just extension
+- Password strength requirements for encrypted files
+- XSS protection with Content Security Policy headers
 
-### Frontend State Flow
+**Data Protection:**
+- Sessions expire automatically after 1 hour
+- Certificate data stored only in memory (no persistent storage)
+- Secure random password generation for downloads
+- HTTP-only (HTTPS can be configured in production)
 
-```mermaid
-stateDiagram-v2
-    [*] --> Initial: App Starts
-    Initial --> FileSelected: User Selects File
-    FileSelected --> Uploading: POST /upload
-    Uploading --> PasswordRequired: Server Requests Password
-    Uploading --> Analyzing: File Uploaded Successfully
-    PasswordRequired --> PasswordProvided: User Enters Password
-    PasswordProvided --> Uploading: Retry Upload
-    Analyzing --> DisplayResults: Analysis Complete
-    DisplayResults --> ValidationRunning: Run Validations
-    ValidationRunning --> ValidationComplete: Validations Done
-    ValidationComplete --> DisplayResults: Update UI
-    DisplayResults --> DownloadReady: User Requests Download
-    DownloadReady --> Authenticated: Check Auth Status
-    Authenticated --> GeneratingBundle: Create Secure Bundle
-    GeneratingBundle --> DownloadComplete: ZIP + Password Ready
-    DownloadComplete --> DisplayResults: Return to Main View
-```
+### Troubleshooting Guide
+
+**Common Issues and Solutions:**
+
+1. **Session Not Found Errors**
+   ```
+   Problem: "Session not found" errors in API calls
+   Solution: Check X-Session-ID header is being sent correctly
+   
+   // Verify session ID is present
+   console.log('Session ID:', sessionManager.getSessionId())
+   ```
+
+2. **Validation Service Errors**
+   ```
+   Problem: ValidationService import errors
+   Solution: Ensure new validation service is properly imported
+   
+   # Check validation service import
+   from services.validation_service import validation_service
+   ```
+
+3. **Upload Failures**
+   ```
+   Problem: Certificate upload fails with "unsupported format"
+   Solution: Check file format and password requirements
+   
+   // Debug file format detection
+   console.log('File type:', file.type)
+   console.log('File size:', file.size)
+   ```
+
+4. **Frontend API Errors**
+   ```
+   Problem: API calls failing after frontend refactoring
+   Solution: Update to use new certificateAPI service
+   
+   // Use centralized API
+   import { certificateAPI } from '../services/api'
+   const result = await certificateAPI.getCertificates()
+   ```
+
+### Performance Optimization Tips
+
+**Backend Optimization:**
+- Use caching for expensive validation operations
+- Implement session cleanup to prevent memory leaks
+- Use async/await for I/O operations
+- Monitor memory usage with health checks
+
+**Frontend Optimization:**
+- Implement lazy loading for certificate details
+- Use React.memo for expensive components
+- Debounce user input for search functionality
+- Optimize bundle size with code splitting
+
+**Database/Storage Optimization:**
+- Use Redis for distributed session storage in multi-instance deployments
+- Implement LRU cache for frequently accessed data
+- Use connection pooling for database connections
+- Monitor query performance with logging
 
 ---
 
-## Data Flow
+## Deployment Checklist
 
-### Complete System Data Flow
+### Pre-Deployment
 
-```mermaid
-flowchart TD
-    subgraph "Client Side"
-        A[User Uploads File] --> B[React File Upload Component]
-        B --> C[FormData with File + Password]
-    end
-    
-    subgraph "Network Layer"
-        C --> D[HTTP POST to /upload]
-        D --> E[Nginx Reverse Proxy]
-        E --> F[FastAPI Backend]
-    end
-    
-    subgraph "Backend Processing"
-        F --> G[Session Manager]
-        G --> H{Session Exists?}
-        H -->|No| I[Create New Session]
-        H -->|Yes| J[Use Existing Session]
-        I --> K[Certificate Analyzer]
-        J --> K
-        K --> L[Multi-Format Parser]
-        L --> M[Cryptographic Validator]
-        M --> N[Store Results in Session]
-    end
-    
-    subgraph "Response Flow"
-        N --> O[JSON Response]
-        O --> P[Nginx Proxy Response]
-        P --> Q[React State Update]
-        Q --> R[UI Components Re-render]
-        R --> S[Display Certificate Details]
-        S --> T[Show Validation Results]
-    end
-    
-    subgraph "Download Flow"
-        T --> U{User Requests Download?}
-        U -->|Yes| V[JWT Authentication Check]
-        V --> W[Generate Random Password]
-        W --> X[Create Encrypted ZIP]
-        X --> Y[Base64 Encode ZIP]
-        Y --> Z[Return ZIP + Password]
-        Z --> AA[Client Downloads ZIP]
-        AA --> BB[Password Displayed Once]
-        BB --> CC[System Forgets Password]
-    end
+- [ ] Update environment variables in `.env` file
+- [ ] Generate secure SECRET_KEY for session management
+- [ ] Configure SSL certificates for HTTPS (optional)
+- [ ] Set up monitoring and logging
+- [ ] Run security audit on dependencies
+- [ ] Verify backup and recovery procedures
+
+### Production Deployment
+
+- [ ] Deploy with Docker Compose
+- [ ] Configure Nginx reverse proxy
+- [ ] Set up health check endpoints
+- [ ] Configure log aggregation
+- [ ] Set up monitoring dashboards
+- [ ] Test SSL/TLS configuration (if enabled)
+- [ ] Verify session management
+- [ ] Test download functionality
+
+### Post-Deployment
+
+- [ ] Monitor application performance
+- [ ] Check error rates and response times
+- [ ] Verify certificate validation accuracy
+- [ ] Test auto-scaling if configured
+- [ ] Monitor memory usage and cleanup
+- [ ] Verify security headers
+- [ ] Test backup and recovery procedures
+
+---
+
+## Important Notes
+
+### No Authentication System
+- **The application does NOT have user authentication**
+- **No JWT tokens, no login system, no user accounts**
+- Security is based on session isolation using UUID session IDs
+- All endpoints require `X-Session-ID` header for access
+- Downloads are protected by session ownership only
+
+### Session-Based Architecture
+- Each browser session gets a unique UUID
+- Sessions automatically expire after 1 hour of inactivity
+- All certificate data is stored in memory only
+- No persistent storage or database required
+
+### Download Security
+- ZIP files are password-protected with random passwords
+- Passwords are generated per download and forgotten by system
+- Downloads are tied to session ID, not user authentication
+
+---
+
+This comprehensive technical documentation covers all major aspects of the Certificate Analysis Tool with accurate information based on the actual codebase implementation. The documentation provides developers with complete understanding of the current session-based architecture and best practices for maintenance and further development.

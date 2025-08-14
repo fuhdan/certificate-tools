@@ -678,26 +678,6 @@ export const certificateAPI = {
     }
   },
 
-  /**
-   * Get validation results only
-   * @returns {Promise<Object>} Validation results
-   */
-  async getValidationResults() {
-    try {
-      const response = await api.get('/certificates/validation');
-      
-      console.log('🛡️ Validation results retrieved:', {
-        status: response.data.validation_results?.overall_status,
-        totalChecks: response.data.validation_results?.total_validations
-      });
-
-      return response.data;
-    } catch (error) {
-      console.error('❌ Error fetching validation results:', error);
-      throw new Error(error.response?.data?.detail || 'Failed to fetch validation results');
-    }
-  },
-
   async deleteCertificate(certificateId) {
     try {
       await api.delete(`/certificates/${certificateId}`)

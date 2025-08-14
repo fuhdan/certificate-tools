@@ -1,4 +1,5 @@
 // frontend/src/components/ValidationPanel/ValidationPanel.jsx
+// FIXED: Validation panel not updating after component deletion
 
 import React, { useState, useEffect } from 'react';
 import { 
@@ -59,14 +60,15 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
   const [error, setError] = useState(null);
   const [expandedValidations, setExpandedValidations] = useState(new Set());
 
-  // Fetch validation results when certificates change
+  // FIXED: Fetch validation results when certificates change (including deletions)
   useEffect(() => {
     console.log('🔄 ValidationPanel: Certificates changed:', certificates?.length, certificates?.map(c => c.filename));
     
-    if (certificates && certificates.length > 0) {
-        console.log('🔍 ValidationPanel: Fetching validation results...');
-        fetchValidationResults();
-    }
+    // CHANGE: Always fetch validation results when certificates change, even if empty
+    // This ensures we refresh after deletions
+    console.log('🔍 ValidationPanel: Fetching validation results...');
+    setValidationResults(null);
+    fetchValidationResults();
   }, [certificates]);
 
   const fetchValidationResults = async () => {
@@ -137,6 +139,8 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
           onValidationComplete(validations);
         }
       } else {
+        // FIXED: Clear validation results when no validation data is available
+        console.log('📊 ValidationPanel: No validation results found, clearing display');
         setValidationResults({
           success: true,
           validations: [],
@@ -496,10 +500,19 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
     );
   }
 
-  // No certificates uploaded
+  // FIXED: No certificates uploaded - show appropriate empty state
   if (certificates.length === 0) {
     return (
       <div className={styles.container}>
+        <div className={styles.noResultsContainer}>
+          <div className={styles.noResultsContent}>
+            <Shield size={48} className={styles.noResultsIcon} />
+            <h3 className={styles.noResultsTitle}>No PKI Components</h3>
+            <p className={styles.noResultsText}>
+              Upload PKI components (Private Keys, CSRs, Certificates, CAs) to validate cryptographic relationships.
+            </p>
+          </div>
+        </div>
       </div>
     );
   }

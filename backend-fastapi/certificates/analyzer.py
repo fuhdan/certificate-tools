@@ -4,7 +4,6 @@
 
 import hashlib
 import logging
-import uuid
 import re
 from typing import Dict, Any, Optional, List
 from cryptography import x509

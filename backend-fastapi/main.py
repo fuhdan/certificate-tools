@@ -62,8 +62,8 @@ def read_root():
         "version": settings.APP_VERSION,
         "endpoints": {
             "health": "/health",
-            "certificates": "/api/certificates",
-            "downloads": "/api/downloads",
+            "certificates": "/certificates",
+            "downloads": "/downloads",
             "docs": "/docs"
         }
     }

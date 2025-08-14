@@ -34,8 +34,8 @@
 │ • Validation UI │             │ • Session Storage    │
 │ • Auth System   │             │ • Validation Engine  │
 └─────────────────┘             └──────────────────────┘
-        │                                  │
-        │                                  │
+        │                                 │
+        │                                 │
    ┌────▼────┐                      ┌─────▼─────┐
    │ Nginx   │                      │  Memory   │
    │ (Prod)  │                      │  Storage  │

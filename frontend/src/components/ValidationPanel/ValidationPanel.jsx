@@ -25,9 +25,9 @@ const isValidPKIRelationship = (validation, key = '') => {
   // ONLY allow these specific PKI relationship validations
   const allowedTypes = [
     'private key',
-    'certificate match',
-    'csr',
-    'chain',
+    'certificate match',  // ❌ DOESN'T MATCH 'certificate_csr_match'
+    'csr',                // ❌ DOESN'T MATCH 'certificate_csr_match' 
+    'chain',              // ❌ DOESN'T MATCH 'certificate_chain_validation'
     'ca match',
     'issuing',
     'intermediate',
@@ -39,10 +39,10 @@ const isValidPKIRelationship = (validation, key = '') => {
     'expiry',
     'expired', 
     'date',
-    'usage',
-    'algorithm',
-    'strength',
-    'subject alternative',
+    'usage',              // ❌ EXCLUDES 'key_usage_validation'
+    'algorithm',          // ❌ EXCLUDES 'algorithm_strength_validation'
+    'strength',           // ❌ EXCLUDES 'algorithm_strength_validation'
+    'subject alternative',// ❌ EXCLUDES 'subject_alternative_name_validation'
     'san',
     'extension'
   ];

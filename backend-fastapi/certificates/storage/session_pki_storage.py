@@ -3,6 +3,7 @@
 
 import uuid
 import logging
+import time
 from datetime import datetime
 from typing import Dict, Any, List, Optional, Set
 from dataclasses import dataclass, field
@@ -251,6 +252,9 @@ class SessionPKIStorage:
             # ADDED: Trigger validation recomputation after deletion
             logger.info(f"Triggering validation recomputation due to component deletion")
             self._compute_session_validation(session_id)
+            # Wait until validation_results is populated
+            while self._sessions[session_id].validation_results is None:
+                time.sleep(0.01)
         
         return success
 

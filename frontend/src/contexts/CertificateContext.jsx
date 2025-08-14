@@ -79,13 +79,14 @@ export const CertificateProvider = ({ children }) => {
 
   const deleteComponent = useCallback(async (componentId) => {
     try {
-      setComponents(prev => prev.filter(comp => comp.id !== componentId))
-      // FIXED: Use certificateAPI.deleteCertificate() instead of direct api call
       await certificateAPI.deleteCertificate(componentId)
+      
+      // ✅ BEST: Always refresh from server to ensure UI matches backend
+      await refreshFiles()
+      
     } catch (error) {
       console.error('Error deleting component:', error)
       setError('Failed to delete component')
-      refreshFiles()
     }
   }, [refreshFiles])
 

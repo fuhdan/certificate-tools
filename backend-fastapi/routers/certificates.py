@@ -328,7 +328,7 @@ def delete_certificate_component(
         component_type = component.type.type_name
         chain_id = component.chain_id
         
-        # FIXED: Use session_pki_storage.remove_component() instead of session.remove_component()
+        # FIXED: Use session_pki_storage.remove_component() instead of session_pki_storage.remove_component()
         # This ensures validation recomputation is triggered after deletion
         success = session_pki_storage.remove_component(session_id, component_id)
         

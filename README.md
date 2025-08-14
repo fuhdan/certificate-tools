@@ -501,8 +501,7 @@ MIT License - see [LICENSE](LICENSE) file for details.
 ## 📞 Support & Feedback
 
 - 🐛 **Bug Reports**: [GitHub Issues](https://github.com/fuhdan/certificate-tools/issues)
-- 💬 **Discussions**: [GitHub Discussions](https://github.com/fuhdan/certificate-tools/discussions)  
-- 📧 **Security Issues**: security@danielf.dev (PGP key available)
+- 💬 **Discussions**: [GitHub Discussions](https://github.com/fuhdan/certificate-tools/discussions)
 - 🐦 **Twitter**: [@DanielFuhrer](https://x.com/DanielFuhrer)
 
 ---

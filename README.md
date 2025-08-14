@@ -5,6 +5,8 @@
 ![React](https://img.shields.io/badge/React-Frontend-blue?style=for-the-badge)
 ![PKI](https://img.shields.io/badge/PKI-Analysis-red?style=for-the-badge)
 
+🌐 **[Try it live at certificate.danielf.ch](https://certificate.danielf.ch)** 🌐
+
 > *"Because understanding your PKI components shouldn't require a PhD in cryptography"* 🎓
 
 ## 🎯 What This Actually Does
@@ -75,6 +77,10 @@ GET  /downloads/full-chain        # Download complete certificate chain
 ```
 
 ## 📦 Installation (The "Actually Works" Guide)
+
+### 🌐 Try Online First!
+
+**Want to test it immediately?** Visit **[certificate.danielf.ch](https://certificate.danielf.ch)** - no installation required!
 
 ### Quick Start with Docker (Recommended)
 
@@ -500,6 +506,7 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ## 📞 Support & Feedback
 
+- 🌐 **Live Demo**: [certificate.danielf.ch](https://certificate.danielf.ch) - Try it now!
 - 🐛 **Bug Reports**: [GitHub Issues](https://github.com/fuhdan/certificate-tools/issues)
 - 💬 **Discussions**: [GitHub Discussions](https://github.com/fuhdan/certificate-tools/discussions)
 - 🐦 **Twitter**: [@DanielFuhrer](https://x.com/DanielFuhrer)

@@ -3,6 +3,7 @@ FROM node:24-alpine AS builder
 WORKDIR /app
 COPY package.json ./
 RUN npm install
+RUN npm install react-router-dom
 
 COPY . .
 RUN npm run build

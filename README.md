@@ -1,291 +1,520 @@
-# 🏖️ Certificate Analysis Tool: Where PKI Gets a Suntan! ☀️
+# 🔐 Certificate Tools - PKI Analysis & Management Platform
 
-[![React](https://img.shields.io/badge/React-18.2.0-blue.svg)](https://reactjs.org/)
-[![Docker](https://img.shields.io/badge/Docker-Compose-blue.svg)](https://docs.docker.com/compose/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Certificates](https://img.shields.io/badge/Certificates-Properly_Validated-green.svg)](#)
-[![Fun Factor](https://img.shields.io/badge/Fun_Factor-Over_9000-ff69b4.svg)](#)
+![Certificate Tools](https://img.shields.io/badge/Certificate-Tools-gold?style=for-the-badge&logo=security&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-Backend-teal?style=for-the-badge)
+![React](https://img.shields.io/badge/React-Frontend-blue?style=for-the-badge)
+![PKI](https://img.shields.io/badge/PKI-Analysis-red?style=for-the-badge)
 
-*Because even cryptographic certificates deserve some beach time! 🌊*
+> *"Because understanding your PKI components shouldn't require a PhD in cryptography"* 🎓
 
----
+## 🎯 What This Actually Does
 
-## 🎯 What the Heck Is This Thing?
+**Certificate Tools** is a comprehensive PKI analysis platform that makes certificate management as easy as uploading a file. Upload any certificate, private key, CSR, or PKCS#12 bundle and get instant analysis, validation, and insights about your PKI components.
 
-Ever tried to untangle a PKI certificate chain and felt like you were wrestling an octopus made of math? Well, grab your sunglasses and slather on some digital SPF 50, because this tool makes certificate analysis as relaxing as lounging on a beach! 🏖️
+### 🚀 Real Features (Not Marketing BS)
 
-The **Certificate Analysis Tool** is what happens when security professionals get tired of squinting at PEM files in Notepad and decide to build something that doesn't make their eyes bleed. It's a comprehensive, full-stack PKI analysis and management tool that treats your certificates better than a 5-star resort treats its guests.
+- **📤 Smart File Upload**: Drag & drop certificates, keys, CSRs, PKCS#12 files with automatic format detection
+- **🔍 Deep PKI Analysis**: Parse and analyze X.509 certificates, private keys, and certificate signing requests  
+- **✅ Cryptographic Validation**: Automatic validation between components (private key ↔ certificate matching, CSR ↔ certificate verification)
+- **🏗️ PKI Hierarchy Detection**: Intelligently identifies Root CA, Intermediate CA, and End-Entity certificates
+- **🔐 Encrypted File Support**: Handles password-protected PKCS#12 bundles and encrypted private keys
+- **📊 Visual Dashboard**: React-based UI with real-time validation results and PKI component relationships
+- **🧹 Session Management**: UUID-based sessions for secure, isolated analysis
+- **📦 Bundle Downloads**: Generate secure ZIP bundles of your PKI components
 
-### 🏨 What Makes This Tool So Fancy?
+## 🏗️ Architecture Overview
 
-Think of this as the luxury spa for your certificates:
-
-- **🔍 Multi-Format Support**: We speak fluent PEM, DER, PKCS#12, PKCS#7, and PKCS#8 - basically every certificate format except the one your vendor just made up
-- **🔐 Cryptographic Validation**: Our math is so good, it makes calculators jealous
-- **👥 Multi-User Sessions**: Each browser tab gets its own private cabana (UUID-based isolation)
-- **🎨 Modern UI**: So pretty, your certificates will want to take selfies
-- **🧠 Smart PKI Analysis**: Automatically figures out who's the boss (Root CA) and who's doing the actual work (End Entity)
-
----
-
-## ✨ Features That'll Knock Your Socks Off
-
-### 🌴 Certificate Paradise
-- **Drag & Drop Upload**: Because clicking "Browse" is so 2010
-- **Password-Protected Files**: We handle encrypted stuff like a digital locksmith
-- **Real-Time Validation**: Faster than you can say "certificate chain validation"
-- **PKI Hierarchy Visualization**: Family trees, but for certificates!
-
-### 🏄‍♂️ Ride the Crypto Wave
-- **Private Key ↔ Certificate Matching**: Like a dating app, but for cryptography
-- **Certificate Chain Verification**: We check the whole family lineage
-- **Signature Verification**: Trust, but verify (then verify again)
-- **CSR Validation**: Making sure your certificate requests aren't just wishful thinking
-
-### 🍹 Smooth User Experience
-- **JWT Authentication**: Secure login that's smoother than a piña colada
-- **Session Management**: Automatic cleanup because nobody likes digital clutter
-- **Responsive Design**: Looks great on everything from phones to ultrawide monitors
-- **Error Handling**: When things go wrong, we tell you nicely (no cryptic error codes from 1987)
-
----
-
-## 🏗️ Architecture: Like a Beach Resort, But for Code
-
-### The Grand Design
 ```
-          🌊 Internet (Port 80/443) 🌊
-                     ↓
-              🏖️ Nginx Beach Bar 🏖️
-              ┌─────────────────┐
-              │  Frontend Tiki  │ ← Static React files served fresh
-              │  /api/* Hut     │ → Backend FastAPI cabana  
-              │  /docs Lounge   │ → API Documentation deck
-              └─────────────────┘
-                     ↓
-              🏨 Docker Resort Network 🏨
-              ┌─────────────────┐
-              │  React Spa      │ (Internal Pool: Port 3000)
-              │  FastAPI Suite  │ (Private Beach: Port 8000)
-              └─────────────────┘
+┌─────────────────┐    HTTPS    ┌──────────────────────┐
+│   React SPA     │◄──────────►│   FastAPI Backend    │
+│   (Frontend)    │             │   (Certificate API)  │
+├─────────────────┤             ├──────────────────────┤
+│ • File Upload   │             │ • Certificate Parser │
+│ • PKI Dashboard │             │ • OpenSSL Engine    │
+│ • Validation UI │             │ • Session Storage   │
+│ • Auth System   │             │ • Validation Engine │
+└─────────────────┘             └──────────────────────┘
+        │                                  │
+        │                                  │
+   ┌────▼────┐                      ┌─────▼─────┐
+   │ Nginx   │                      │  Memory   │
+   │ (Prod)  │                      │  Storage  │
+   └─────────┘                      └───────────┘
 ```
 
-### Tech Stack That's Cooler Than Ice
-- **Frontend**: React 18 with Vite (fast like a jet ski)
-- **Backend**: FastAPI (async like a speed boat)
-- **Crypto Engine**: Python's `cryptography` library (trusted by paranoid security experts worldwide)
-- **Authentication**: JWT tokens (secure like a resort safe)
-- **Database**: In-memory storage (because certificates are temporary guests)
-- **Proxy**: Nginx (the bouncer who never sleeps)
+## 🛠️ Tech Stack (The Real Deal)
 
----
+### Backend (FastAPI) 🧠
+- **FastAPI**: Modern Python web framework with automatic OpenAPI docs
+- **OpenSSL**: Certificate parsing and cryptographic operations
+- **Cryptography**: Python cryptographic library for advanced operations
+- **Session Management**: UUID-based sessions with automatic cleanup
+- **Memory Storage**: No persistent storage - everything in memory for security
 
-## 🚀 Quick Start: From Zero to Certificate Hero in 3 Beach-Easy Steps
+### Frontend (React) 🎨
+- **React 18**: Modern React with hooks and context
+- **Vite**: Fast build tool and dev server
+- **CSS Modules**: Scoped styling without conflicts
+- **Lucide Icons**: Beautiful, consistent icon library
+- **Axios**: HTTP client with interceptors and error handling
 
-### What You'll Need (The Bare Minimum)
-- Docker & Docker Compose (the only installation that actually matters)
-- A browser made after the year 2020 (sorry Internet Explorer, you're not invited to this party)
-- Basic understanding that certificates are important (trust us, they're like digital sunscreen)
-- Coffee ☕ (optional but highly recommended for any serious certificate analysis)
+### Real API Endpoints (What Actually Works)
 
-### Get This Beach Party Started 🏖️
 ```bash
-# 1. Grab the code (like claiming the best beach chair before Karen gets there)
-git clone <your-repo-url>
-cd certificate-analysis-tool
+# Core Certificate Analysis
+POST /analyze-certificate          # Upload & analyze certificate files
+GET  /certificates                 # Get all PKI components for session
+GET  /health                      # API health check
+GET  /stats                       # Session statistics
 
-# 2. Start the beach party (Docker does all the heavy lifting)
+# Download & Export
+POST /downloads/zip-bundle         # Create secure ZIP bundle
+GET  /downloads/ca-certificates   # Download CA certs only
+GET  /downloads/end-entity        # Download end-entity components
+GET  /downloads/full-chain        # Download complete certificate chain
+```
+
+## 📦 Installation (The "Actually Works" Guide)
+
+### Quick Start with Docker (Recommended)
+
+```bash
+# Clone the actual repository
+git clone https://github.com/fuhdan/certificate-tools.git
+cd certificate-tools
+
+# Start everything with Docker Compose
 docker-compose up -d
 
-# 3. Open your browser and crash the party
-# Frontend: http://localhost (the main beach)
-# API Docs: http://localhost/docs (the technical manual for beach activities)
+# Check if it's working
+curl http://localhost:8000/health
+# Should return: {"status": "online", "timestamp": "..."}
+
+# Frontend should be available at: http://localhost:3000
 ```
 
-**That's literally it!** 🎉 No complex installation, no dependency hell, no sacrificing chickens to the IT gods, no PhD in Docker required.
+### Manual Installation (For Developers)
 
-### Example: Your First Certificate Beach Day 🌊
-
-Let's say you have a certificate that's been sitting in your downloads folder like forgotten sunscreen. Here's how to give it the VIP treatment:
-
+#### Backend Setup
 ```bash
-# 1. Start the party (if you haven't already)
-docker-compose up -d
-
-# 2. Open http://localhost in your browser
-# 3. Drag your certificate file onto the upload area
-#    (Files like: my-website.crt, private-key.pem, or mystery-bundle.p12)
-
-# 4. If it's password-protected, enter the password when prompted
-#    (We promise not to judge your password choices)
-
-# 5. Watch the magic happen! ✨
-#    - Certificate details appear instantly
-#    - Validation results show up (green = good, red = needs attention)
-#    - PKI hierarchy builds itself like digital Legos
-
-# 6. Click "View PKI Bundle" to see your complete, organized certificate family
-# 7. Download your properly ordered PKI bundle as a secure ZIP file
-#    (More on this security feature below!)
-```
-
-**Real-world example**: Upload `example.com.crt`, `intermediate-ca.crt`, and `example.com.key`. The tool will:
-- ✅ Verify the private key matches the certificate (like checking if your shoes match)
-- ✅ Build the complete certificate chain (root → intermediate → end entity)
-- ✅ Validate all signatures (trust but verify, then verify again)
-- ✅ Show you exactly what needs to be deployed where
-
-**Pro tip**: If something's wrong, we'll tell you in plain English, not cryptographic hieroglyphics!
-
----
-
-## 📖 How to Use This Magical Certificate Analyzer
-
-### Step 1: Upload Your Certificates 📁
-Drag and drop your certificate files like you're feeding seagulls at the beach. We accept:
-- `.pem` (the classic)
-- `.crt` (also classic)
-- `.der` (binary goodness)
-- `.p12/.pfx` (the secure briefcase)
-- `.key` (the secret sauce)
-- `.csr` (the "pretty please" request)
-
-### Step 2: Watch the Magic Happen ✨
-Our tool automatically:
-- Parses your certificates faster than you can say "X.509"
-- Validates cryptographic relationships (like certificate couples therapy)
-- Builds PKI hierarchies (family reunion time!)
-- Highlights any issues (constructive criticism, not roasting)
-
-### Step 3: Marvel at Your PKI Bundle 📦
-Click "View PKI Bundle" to see your complete, properly ordered certificate chain. It's like getting your certificates to stand in a nice, neat line for a group photo.
-
-### Step 4: Download Your Secure Certificate Package 🔐
-Click "Download PKI Bundle" to get your certificates in a **password-encrypted ZIP file**. Because we're paranoid about security (in a good way):
-
-- 🔒 **Always Encrypted**: Every download is a password-protected ZIP file (no naked certificates wandering around)
-- 🎲 **Random Passwords**: Each download gets a unique, randomly generated password (we're talking cryptographically secure randomness here)
-- 📱 **Password Display**: The encryption password is shown in the app before download (write it down, screenshot it, tattoo it on your arm - whatever works)
-- 🚫 **No Password Reuse**: Every single download gets a brand new password (because recycling passwords is like wearing the same swimsuit for a week)
-
-**Example download flow:**
-```
-1. Click "Download PKI Bundle"
-2. App shows: "Your ZIP password: X9k#mP2$vL8@nQ4!"
-3. Download starts: certificate-bundle-20250810-143052.zip
-4. Enter the password to extract your perfectly organized certificates
-```
-
-This means your certificates travel through the internet wearing a digital bulletproof vest! 🛡️
-
----
-
-## 🔒 Security: Serious Business (With a Smile)
-
-We take security seriously, even if our documentation is fun:
-
-- **JWT Authentication**: Only the cool kids get access to protected features
-- **Session Isolation**: Your certificates don't mingle with other users' certificates (social distancing, but for data)
-- **No Persistent Storage**: Certificates check out when you close your browser (like a good hotel guest)
-- **Input Validation**: We're pickier than a food critic at a 5-star restaurant
-- **HTTPS Ready**: TLS all the things!
-- **🔐 Encrypted Downloads**: All certificate bundles are downloaded as password-encrypted ZIP files
-- **🎲 Random Encryption**: Every download gets a unique, cryptographically secure password (no "password123" nonsense)
-- **🚫 No Password Storage**: We show you the password once, then forget it faster than you forget where you put your car keys
-
-### Download Security Details
-Because we're security nerds who also happen to be fun:
-
-- **Encryption Algorithm**: AES-256 (the same stuff that protects nuclear launch codes)
-- **Password Generation**: Cryptographically secure random strings (entropy levels that would make mathematicians weep tears of joy)
-- **Password Complexity**: Mixed case, numbers, symbols - passwords so strong they could bench press a server rack
-- **Zero Password Persistence**: We generate it, show it to you, then immediately forget it ever existed (like a digital goldfish)
-
-*Fun fact: Our password generator is so random, even we can't predict what it'll create next!* 🎲
-
----
-
-## 🛠️ For the Developers in the House
-
-### Local Development Setup
-```bash
-# Backend development (Python paradise)
 cd backend-fastapi
+
+# Create virtual environment
 python -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
+
+# Install dependencies
 pip install -r requirements.txt
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
-# Frontend development (React beach)
+# Run the FastAPI server
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+# API docs available at: http://localhost:8000/docs
+```
+
+#### Frontend Setup
+```bash
 cd frontend
+
+# Install Node.js dependencies
 npm install
+
+# Start development server
 npm run dev
+
+# Frontend available at: http://localhost:5173
 ```
 
-### Project Structure (The Resort Map)
+## 🎮 Real Usage Examples
+
+### Upload and Analyze a Certificate
+
+```bash
+# Using curl with session isolation
+SESSION_ID=$(uuidgen)
+
+curl -X POST "http://localhost:8000/analyze-certificate" \
+     -H "X-Session-ID: $SESSION_ID" \
+     -F "file=@my-certificate.crt"
+
+# Response includes parsed certificate data
+{
+  "success": true,
+  "component": {
+    "id": "cert_abc123",
+    "type": "Certificate",
+    "filename": "my-certificate.crt",
+    "metadata": {
+      "subject": "CN=example.com",
+      "issuer": "CN=Let's Encrypt Authority X3",
+      "not_valid_before": "2024-01-01T00:00:00Z",
+      "not_valid_after": "2024-12-31T23:59:59Z",
+      "is_ca": false,
+      "public_key_algorithm": "RSA",
+      "public_key_size": 2048
+    }
+  }
+}
 ```
-certificate-analysis-tool/
-├── backend-fastapi/          # The crypto engine room
-├── frontend/                 # The beautiful beach resort
-├── nginx/                    # The main entrance
-├── docker-compose.yml        # The master blueprint
-└── README.md                 # This masterpiece you're reading
+
+### Upload PKCS#12 Bundle with Password
+
+```bash
+# Upload encrypted P12 file
+curl -X POST "http://localhost:8000/analyze-certificate" \
+     -H "X-Session-ID: $SESSION_ID" \
+     -F "file=@certificate.p12" \
+     -F "password=your-password-here"
+
+# Gets certificate + private key from bundle
 ```
 
+### Get All PKI Components with Validation
+
+```bash
+# Retrieve all components for session
+curl -X GET "http://localhost:8000/certificates" \
+     -H "X-Session-ID: $SESSION_ID"
+
+# Response includes validation results
+{
+  "success": true,
+  "components": [
+    {
+      "id": "cert_abc123",
+      "type": "Certificate", 
+      "filename": "my-cert.crt"
+    },
+    {
+      "id": "key_def456",
+      "type": "PrivateKey",
+      "filename": "my-key.key"
+    }
+  ],
+  "validation_results": {
+    "total_validations": 1,
+    "overall_status": "valid",
+    "validations": {
+      "private_key_certificate_match": {
+        "type": "Private Key ↔ Certificate Match",
+        "is_valid": true,
+        "confidence": "high",
+        "components_involved": ["key_def456", "cert_abc123"]
+      }
+    }
+  }
+}
+```
+
+### Download PKI Bundle
+
+```bash
+# Create secure ZIP bundle
+curl -X POST "http://localhost:8000/downloads/zip-bundle" \
+     -H "X-Session-ID: $SESSION_ID" \
+     -H "Content-Type: application/json" \
+     -d '{"zip_password": "secure-password", "p12_password": "p12-password"}' \
+     --output pki-bundle.zip
+```
+
+## 🔧 Configuration
+
+### Backend Environment Variables
+
+```bash
+# config/.env
+APP_NAME="Certificate Analysis API"
+APP_VERSION="1.0.0"
+DEBUG=true
+LOG_LEVEL="INFO"
+
+# Security
+MAX_FILE_SIZE=10485760  # 10MB
+SESSION_TIMEOUT=1800    # 30 minutes
+DEFAULT_SESSION_ID="default-session"
+
+# CORS
+CORS_ORIGINS=["http://localhost:3000", "http://localhost:5173"]
+
+# Authentication (if enabled)
+SECRET_KEY="your-secret-key-here"
+ACCESS_TOKEN_EXPIRE_MINUTES=60
+```
+
+### Frontend Environment Variables
+
+```bash
+# frontend/.env
+VITE_API_URL=http://localhost:8000
+VITE_APP_TITLE="Certificate Tools"
+VITE_DEBUG=true
+```
+
+## 🧪 Testing (What Actually Gets Tested)
+
+### Running Backend Tests
+
+```bash
+cd backend-fastapi
+
+# Install test dependencies
+pip install pytest pytest-cov requests
+
+# Run tests with coverage
+pytest -v --cov=. --cov-report=html tests/
+
+# Run specific test file
+pytest tests/test_live_server.py -v
+```
+
+### Test Script for Live API
+
+```bash
+# Use the included test script
+chmod +x scripts/test_tool.sh
+./scripts/test_tool.sh
+
+# Tests real API endpoints with actual certificates
+# Outputs detailed results to test_results/
+```
+
+### Frontend Testing
+
+```bash
+cd frontend
+
+# Run component tests
+npm test
+
+# Run with coverage
+npm run test:coverage
+```
+
+## 🔒 Security Features
+
+### Session Isolation
+- **UUID-based sessions**: Each user gets isolated storage
+- **Memory-only storage**: No persistent data on disk
+- **Automatic cleanup**: Sessions expire after 30 minutes
+- **No cross-session leakage**: Components cannot access other sessions
+
+### File Security
+- **File type validation**: Strict MIME type checking
+- **Size limits**: Maximum 10MB per file
+- **Memory processing**: Files processed in memory only
+- **Secure cleanup**: Sensitive data cleared after processing
+
+### Example Session Security
+
+```python
+# Every request requires session ID
+@router.post("/analyze-certificate")
+async def analyze_certificate(
+    file: UploadFile = File(...),
+    session_id: str = Depends(get_session_id)  # Validates UUID format
+):
+    # session_id is guaranteed to be valid UUID
+    # Each session has isolated storage
+    result = analyze_uploaded_certificate(file_content, session_id)
+    return result
+```
+
+## 🐛 Troubleshooting (When Reality Hits)
+
+### Common Issues
+
+#### "Session ID Required" Error
+```bash
+# Every API call needs X-Session-ID header
+curl -X GET "http://localhost:8000/certificates" \
+     -H "X-Session-ID: $(uuidgen)"
+```
+
+#### "Password Required" for PKCS#12
+```bash
+# Include password in form data
+curl -X POST "http://localhost:8000/analyze-certificate" \
+     -H "X-Session-ID: $(uuidgen)" \
+     -F "file=@bundle.p12" \
+     -F "password=your-password"
+```
+
+#### Frontend Not Connecting to Backend
+```javascript
+// Check CORS settings in backend config
+CORS_ORIGINS=["http://localhost:3000", "http://localhost:5173"]
+
+// Update frontend API URL
+// frontend/.env
+VITE_API_URL=http://localhost:8000
+```
+
+### Debug Mode
+
+```bash
+# Enable debug logging
+export DEBUG=true
+export LOG_LEVEL=DEBUG
+
+# Start backend
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+# Watch logs for detailed information
+```
+
+## 📊 API Documentation
+
+### Interactive Docs
+- **Swagger UI**: http://localhost:8000/docs
+- **ReDoc**: http://localhost:8000/redoc
+
+### Core Response Formats
+
+#### Certificate Analysis Response
+```json
+{
+  "success": true,
+  "component": {
+    "id": "cert_abc123",
+    "type": "Certificate",
+    "filename": "example.crt",
+    "size": 1234,
+    "uploaded_at": "2024-01-01T12:00:00Z",
+    "metadata": {
+      "subject": "CN=example.com",
+      "issuer": "CN=Let's Encrypt Authority X3",
+      "serial_number": "ABC123",
+      "not_valid_before": "2024-01-01T00:00:00Z",
+      "not_valid_after": "2024-12-31T23:59:59Z",
+      "is_expired": false,
+      "days_until_expiry": 365,
+      "is_ca": false,
+      "is_self_signed": false,
+      "public_key_algorithm": "RSA",
+      "public_key_size": 2048,
+      "signature_algorithm": "SHA256WITHRSA",
+      "fingerprint_sha256": "abc123...",
+      "subject_alt_name": ["example.com", "www.example.com"],
+      "key_usage": ["digitalSignature", "keyEncipherment"],
+      "extended_key_usage": ["serverAuth", "clientAuth"]
+    }
+  }
+}
+```
+
+#### Validation Results Response
+```json
+{
+  "validation_results": {
+    "total_validations": 2,
+    "overall_status": "valid",
+    "passed_validations": 2,
+    "failed_validations": 0,
+    "validations": {
+      "private_key_certificate_match": {
+        "type": "Private Key ↔ Certificate Match",
+        "is_valid": true,
+        "confidence": "high",
+        "components_involved": ["key_def456", "cert_abc123"],
+        "details": {
+          "method": "public_key_comparison",
+          "match_type": "exact"
+        }
+      },
+      "certificate_chain_validation": {
+        "type": "Certificate Chain Validation",
+        "is_valid": true,
+        "confidence": "medium",
+        "components_involved": ["cert_abc123", "ca_cert_789"],
+        "details": {
+          "chain_length": 2,
+          "trust_anchor": "ca_cert_789"
+        }
+      }
+    }
+  }
+}
+```
+
+## 🤝 Contributing (Join the PKI Revolution)
+
+### Development Workflow
+
+1. **Fork the repo** (it's actually useful)
+2. **Create feature branch** (`git checkout -b feature/awesome-pki-feature`)
+3. **Write tests** (we actually run them)
+4. **Test with real certificates** (use `scripts/test_tool.sh`)
+5. **Update documentation** (README and API docs)
+6. **Submit PR** (be ready for code review)
+
+### Code Style
+
+```bash
+# Backend Python formatting
+black . --line-length 88
+isort . --profile black
+
+# Frontend JavaScript formatting  
+npm run format
+
+# Linting
+npm run lint
+```
+
+### Testing with Real Certificates
+
+```bash
+# Create test certificates directory
+mkdir -p test-certificates/
+
+# Add your test certificates (various formats)
+cp your-certificates/* test-certificates/
+
+# Run comprehensive test suite
+./scripts/test_tool.sh
+```
+
+## 📝 License
+
+MIT License - see [LICENSE](LICENSE) file for details.
+
+**Translation**: Use this code however you want, just don't blame us if your production certificates have an identity crisis. 😅
+
+## 🙏 Acknowledgments
+
+- **OpenSSL Team**: For making PKI possible (and complicated)
+- **FastAPI**: For making Python APIs not suck
+- **React Team**: For making UIs bearable to build
+- **Cryptography Library**: For handling the crypto so we don't have to
+- **Coffee**: For making late-night PKI debugging sessions possible
+- **Stack Overflow**: For explaining why certificate validation failed... again
+
+## 🎭 Fun PKI Facts
+
+- 🏗️ Built during 127 different "Why won't this certificate validate?" moments
+- 🐛 Contains approximately 42 edge cases for certificate parsing
+- ⏰ Caused 15 sleepless nights debugging PKCS#12 password handling  
+- 📚 Required reading 23 RFC documents about X.509 certificates
+- ☕ Consumed 284 cups of coffee during development
+- 🤯 Resulted in 3 existential crises about certificate authorities
+
+## 📞 Support & Feedback
+
+- 🐛 **Bug Reports**: [GitHub Issues](https://github.com/fuhdan/certificate-tools/issues)
+- 💬 **Discussions**: [GitHub Discussions](https://github.com/fuhdan/certificate-tools/discussions)  
+- 📧 **Security Issues**: security@danielf.dev (PGP key available)
+- 🐦 **Twitter**: [@DanielFuhrer](https://x.com/DanielFuhrer)
+
 ---
 
-## 🤝 Contributing: Join the Beach Crew
+<div align="center">
 
-Found a bug? Have an idea? Want to make certificates even more fun? We'd love your help!
+**"In certificates we trust, in validation we verify"** 🔐
 
-1. Fork this repo (take it to your private island)
-2. Create a feature branch (`git checkout -b feature/certificate-sunglasses`)
-3. Make your changes (add those sweet features)
-4. Test everything (no broken beach umbrellas allowed)
-5. Submit a PR (invite us to your island)
+Made with ❤️ (and lots of ☕) by [Daniel F](https://github.com/fuhdan)
 
-### Development Guidelines
-- Follow PEP 8 for Python (because readable code is beautiful code)
-- Use ESLint/Prettier for JavaScript (consistency is key)
-- Add tests for new features (trust, but verify)
-- Keep the documentation fun but accurate
+*Remember: A validated certificate is a happy certificate!* ✅
 
----
+![Certificate Tools](https://img.shields.io/badge/Powered%20by-PKI%20%26%20Coffee-brown?style=for-the-badge)
 
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details. Basically, do whatever you want with it, just don't blame us if your certificates start wearing sunglasses.
-
----
-
-## 🙏 Shoutouts and Thank Yous
-
-Big thanks to:
-- [FastAPI](https://fastapi.tiangolo.com/) - For making Python web development not suck
-- [React](https://reactjs.org/) - For component-based sanity
-- [cryptography](https://cryptography.io/) - For doing the heavy crypto lifting
-- [Vite](https://vitejs.dev/) - For builds faster than a Caribbean vacation booking
-- ☀️ **The Sun** - For inspiring our suntan-themed naming convention
-
----
-
-## 📞 Support: We're Here to Help
-
-Need help? Got questions? Want to share your certificate success stories?
-
-- 🐛 **Found a Bug?** Open an issue on GitHub (we promise to fix it faster than you can get a suntan)
-- 📚 **Need Docs?** Check the [Technical Documentation](TECHNICAL.md) for the nerdy details
-- 🔗 **API Reference?** Visit `/docs` endpoint for interactive API documentation
-- 🏖️ **Just Want to Chat?** We're always up for talking about certificates and beach metaphors
-
----
-
-## 🌅 Final Words
-
-Remember: Life's too short for bad certificate management tools. Whether you're validating a single certificate or untangling a complex PKI hierarchy, this tool has your back. So grab your favorite beach drink, fire up those Docker containers, and let's make certificate analysis fun again!
-
-**Certificate Analysis Tool** - *Making PKI management as relaxing as a day at the beach.* 🏖️
-
----
-
-*P.S. - No actual certificates were harmed in the making of this tool. All certificates were treated with the utmost respect and given proper validation before being allowed to bask in the digital sunshine.* ☀️
+</div>

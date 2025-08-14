@@ -26,13 +26,13 @@
 
 ```
 ┌─────────────────┐    HTTPS    ┌──────────────────────┐
-│   React SPA     │◄──────────►│   FastAPI Backend    │
+│   React SPA     │◄───────────►│   FastAPI Backend    │
 │   (Frontend)    │             │   (Certificate API)  │
 ├─────────────────┤             ├──────────────────────┤
 │ • File Upload   │             │ • Certificate Parser │
-│ • PKI Dashboard │             │ • OpenSSL Engine    │
-│ • Validation UI │             │ • Session Storage   │
-│ • Auth System   │             │ • Validation Engine │
+│ • PKI Dashboard │             │ • OpenSSL Engine     │
+│ • Validation UI │             │ • Session Storage    │
+│ • Auth System   │             │ • Validation Engine  │
 └─────────────────┘             └──────────────────────┘
         │                                  │
         │                                  │

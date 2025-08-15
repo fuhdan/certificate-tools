@@ -1,7 +1,7 @@
 // frontend/src/components/Layout/Layout.jsx
-// Updated layout with fixed ValidationPanel - no mock data
 
 import React, { useState, useEffect, useMemo } from 'react'
+import { Helmet } from 'react-helmet' // NEW: ONLY THIS LINE ADDED
 import Header from '../Header/Header'
 import Footer from '../Footer/Footer'
 import FloatingPanel from '../FloatingPanel/FloatingPanel'
@@ -20,6 +20,23 @@ const LayoutContent = () => {
   const [currentUser, setCurrentUser] = useState(null)
   // ADD: State for ValidationPanel toggle
   const [showValidationPanel, setShowValidationPanel] = useState(false)
+
+  // NEW: ONLY ADDED THESE TWO DYNAMIC SEO FUNCTIONS
+  const pageTitle = useMemo(() => {
+    const certCount = Object.keys(certificates).length
+    if (certCount === 0) {
+      return 'SSL Certificate Tools - Professional Certificate Management & Analysis'
+    }
+    return `${certCount} Certificate${certCount > 1 ? 's' : ''} Analyzed - SSL Certificate Tools`
+  }, [certificates])
+
+  const metaDescription = useMemo(() => {
+    const certCount = Object.keys(certificates).length
+    if (certCount === 0) {
+      return 'Upload and analyze SSL/TLS certificates, CSRs, and private keys. Professional certificate validation with detailed analysis and installation guides.'
+    }
+    return `Analyzing ${certCount} SSL certificate${certCount > 1 ? 's' : ''}. Professional certificate validation with detailed cryptographic analysis.`
+  }, [certificates])
 
   // ADD: Handler for ValidationPanel toggle
   const handleToggleValidationPanel = (show) => {
@@ -143,6 +160,19 @@ const LayoutContent = () => {
 
   return (
     <div className={styles.layout}>
+      {/* NEW: ONLY ADDED THIS HELMET SECTION - NOTHING ELSE CHANGED */}
+      <Helmet>
+        <title>{pageTitle}</title>
+        <meta name="description" content={metaDescription} />
+        <meta name="keywords" content="SSL certificate analysis, TLS certificate validation, X.509 certificate parser, CSR analysis, private key validation, certificate chain verification, PKI tools" />
+        <meta property="og:title" content={pageTitle} />
+        <meta property="og:description" content={metaDescription} />
+        <meta property="og:type" content="website" />
+        <meta name="twitter:card" content="summary" />
+        <meta name="twitter:title" content={pageTitle} />
+        <meta name="twitter:description" content={metaDescription} />
+      </Helmet>
+
       <Header 
         isAuthenticated={isAuthenticated}
         onLoginSuccess={handleLoginSuccess}

@@ -89,9 +89,10 @@ web_modules/
 dist
 
 # Gatsby files
-!frontend/public
+!frontend/public/**
 .cache/
 public
+!frontend/public/
 
 # Storybook build outputs
 .out

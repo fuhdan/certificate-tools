@@ -1,4 +1,6 @@
 /* frontend/src/components/Layout/Layout.module.css */
+/* COMPLETE VERSION - Includes hero styles and SEO content styles */
+
 .layout {
   min-height: 100vh;
   display: flex;
@@ -12,28 +14,49 @@
   padding-bottom: 5rem;
 }
 
-.content {
+.container {
   max-width: 1200px;
   margin: 0 auto;
+}
+
+.uploadSection {
   background-color: white;
   border-radius: 10px;
   box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
   padding: 2rem;
-  min-height: 400px;
-  text-align: center;
+  margin-bottom: 2rem;
 }
 
-.content h1 {
+/* Hero content styling */
+.heroContent {
+  text-align: center;
+  margin-bottom: 2rem;
+}
+
+.heroContent h1 {
   color: rgb(1, 111, 157);
-  margin-bottom: 1rem;
   font-size: 2.5rem;
   font-weight: 700;
+  margin-bottom: 1rem;
+  line-height: 1.2;
 }
 
-.content p {
+.heroContent p {
   color: #6b7280;
-  margin-bottom: 2rem;
   font-size: 1.125rem;
+  max-width: 600px;
+  margin: 0 auto;
+  line-height: 1.6;
+}
+
+.validationSection {
+  margin-top: 2rem;
+  margin-bottom: 2rem;
+  background-color: white;
+  border-radius: 10px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  padding: 0; /* Let ValidationPanel handle its own padding */
+  overflow: hidden; /* Prevent content overflow */
 }
 
 .certificatesSection {
@@ -51,17 +74,74 @@
   padding-bottom: 1rem;
 }
 
+/* SEO content section */
+.seoContent {
+  margin-top: 3rem;
+  text-align: left;
+}
+
+.featuresSection {
+  background: #f8fafc;
+  border-radius: 12px;
+  padding: 3rem 2rem;
+  margin: 2rem 0;
+}
+
+.featuresSection h2 {
+  color: rgb(1, 111, 157);
+  font-size: 2rem;
+  font-weight: 600;
+  text-align: center;
+  margin-bottom: 3rem;
+}
+
+.featureGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 2rem;
+  max-width: 1000px;
+  margin: 0 auto;
+}
+
+.feature {
+  background: white;
+  padding: 2rem;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  border: 1px solid #e5e7eb;
+}
+
+.feature h3 {
+  color: rgb(1, 111, 157);
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin-bottom: 1rem;
+}
+
+.feature p {
+  color: #6b7280;
+  line-height: 1.6;
+  margin: 0;
+}
+
+/* Loading states */
+.loadingContainer {
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background-color: whitesmoke;
+}
+
 .loading {
   display: flex;
   flex-direction: column;
   justify-content: center;
   align-items: center;
-  min-height: 100vh;
-  background-color: whitesmoke;
   gap: 1rem;
 }
 
-.loadingSpinner {
+.spinner {
   width: 40px;
   height: 40px;
   border: 4px solid #e5e7eb;
@@ -70,35 +150,36 @@
   animation: spin 1s linear infinite;
 }
 
-@keyframes spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
-}
-
 .loading p {
   color: #6b7280;
   font-size: 1rem;
 }
 
-.validationSection {
-  margin-top: 2rem;
-  margin-bottom: 2rem;
-  background-color: white;
-  border-radius: 10px;
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-  padding: 0; /* Let ValidationPanel handle its own padding */
-  overflow: hidden; /* Prevent content overflow */
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .heroContent h1 {
+    font-size: 2rem;
+  }
+  
+  .heroContent p {
+    font-size: 1rem;
+  }
+  
+  .featuresSection {
+    padding: 2rem 1rem;
+  }
+  
+  .featureGrid {
+    grid-template-columns: 1fr;
+    gap: 1.5rem;
+  }
+  
+  .feature {
+    padding: 1.5rem;
+  }
 }
 
-.container {
-  max-width: 1200px;
-  margin: 0 auto;
-}
-
-.uploadSection {
-  background-color: white;
-  border-radius: 10px;
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-  padding: 2rem;
-  margin-bottom: 2rem;
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
 }

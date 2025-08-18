@@ -478,7 +478,19 @@ const AdvancedModal = ({ onClose }) => {
 
                 <button 
                   className={`${styles.quickActionButton} ${!bundleReqs.privateKey.enabled ? styles.disabled : ''}`}
-                  onClick={() => bundleReqs.privateKey.enabled && downloadAPI.downloadPrivateKey()}
+                  onClick={async () => {
+                    if (bundleReqs.privateKey.enabled) {
+                      try {
+                        const result = await downloadAPI.downloadPrivateKey()
+                        if (result.zipPassword) {
+                          setDownloadResult(result)
+                          setShowPasswordModal(true)  // ← ADD THIS
+                        }
+                      } catch (error) {
+                        console.error('Private key download failed:', error)
+                      }
+                    }
+                  }}
                   disabled={!bundleReqs.privateKey.enabled}
                   title={bundleReqs.privateKey.tooltip}
                 >
@@ -488,7 +500,19 @@ const AdvancedModal = ({ onClose }) => {
 
                 <button 
                   className={`${styles.quickActionButton} ${!bundleReqs.certificate.enabled ? styles.disabled : ''}`}
-                  onClick={() => bundleReqs.certificate.enabled && downloadAPI.downloadCertificate()}
+                  onClick={async () => {
+                    if (bundleReqs.certificate.enabled) {
+                      try {
+                        const result = await downloadAPI.downloadCertificate()
+                        if (result.zipPassword) {
+                          setDownloadResult(result)
+                          setShowPasswordModal(true)  // ← ADD THIS
+                        }
+                      } catch (error) {
+                        console.error('Certificate download failed:', error)
+                      }
+                    }
+                  }}
                   disabled={!bundleReqs.certificate.enabled}
                   title={bundleReqs.certificate.tooltip}
                 >
@@ -498,7 +522,19 @@ const AdvancedModal = ({ onClose }) => {
 
                 <button 
                   className={`${styles.quickActionButton} ${!bundleReqs.chain.enabled ? styles.disabled : ''}`}
-                  onClick={() => bundleReqs.chain.enabled && downloadAPI.downloadCAChain()}
+                  onClick={async () => {
+                    if (bundleReqs.chain.enabled) {
+                      try {
+                        const result = await downloadAPI.downloadCAChain()
+                        if (result.zipPassword) {
+                          setDownloadResult(result)
+                          setShowPasswordModal(true)  // ← ADD THIS
+                        }
+                      } catch (error) {
+                        console.error('CA chain download failed:', error)
+                      }
+                    }
+                  }}
                   disabled={!bundleReqs.chain.enabled}
                   title={bundleReqs.chain.tooltip}
                 >

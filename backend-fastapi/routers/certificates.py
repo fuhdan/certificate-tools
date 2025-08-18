@@ -1,17 +1,16 @@
 # backend-fastapi/routers/certificates.py
-# Enhanced API endpoints with smart chain management and deduplication
+# ALL routes updated to use @require_session decorator
 
 import logging
 import datetime
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Request, Response
 from fastapi.responses import JSONResponse
 
 import uuid
 from config import settings
 from certificates.analyzer import analyze_uploaded_certificate
-from middleware.session_middleware import get_session_id
-from certificates.analyzer import analyze_uploaded_certificate
+from middleware.session_decorator import require_session
 from certificates.storage.session_pki_storage import session_pki_storage, PKIComponentType
 
 logger = logging.getLogger(__name__)
@@ -21,14 +20,16 @@ router = APIRouter()
 MAX_FILE_SIZE = settings.MAX_FILE_SIZE
 
 @router.post("/analyze-certificate")
+@require_session
 async def analyze_certificate(
+    request: Request,
+    response: Response,
     file: UploadFile = File(...),
     password: str = Form(None),
-    session_id_validated: str = Depends(get_session_id)
 ):
-    """
-    Analyze uploaded certificate file with enhanced password handling
-    """
+    """Analyze uploaded certificate file with JWT session management"""
+    session_id_validated = request.state.session_id
+    
     try:
         # Validate file
         if not file.filename:
@@ -44,7 +45,6 @@ async def analyze_certificate(
         
         logger.info(f"[{session_id_validated}] Analyzing certificate: {file.filename}")
         
-        # FIXED: Use the correct function name from analyzer.py
         try:
             analysis_result = analyze_uploaded_certificate(
                 file_content=file_content,
@@ -53,11 +53,9 @@ async def analyze_certificate(
                 session_id=session_id_validated
             )
             
-            # FIXED: Handle the success/failure based on analyzer response format
             success = analysis_result.get("success", False)
             
             if not success:
-                # Analysis failed - check if it's a password issue
                 error_msg = analysis_result.get("message", "Unknown analysis error")
                 if "password required" in error_msg.lower():
                     logger.info(f"[{session_id_validated}] Password required for {file.filename}")
@@ -84,12 +82,9 @@ async def analyze_certificate(
                         }
                     )
                 else:
-                    # Other analysis error
                     logger.error(f"[{session_id_validated}] Analysis failed for {file.filename}: {error_msg}")
                     raise HTTPException(status_code=400, detail=error_msg)
-                    
             else:
-                # Success - file was processed successfully
                 components_created = analysis_result.get("components_created", 0)
                 logger.info(f"[{session_id_validated}] Successfully analyzed: {file.filename} ({components_created} components)")
                 return {
@@ -103,7 +98,6 @@ async def analyze_certificate(
                 }
                 
         except ValueError as ve:
-            # Handle password-related ValueErrors from analyzer
             error_msg = str(ve)
             if any(keyword in error_msg.lower() for keyword in ["password required", "password was not given"]):
                 logger.info(f"[{session_id_validated}] Password required for {file.filename}")
@@ -128,17 +122,13 @@ async def analyze_certificate(
                     }
                 )
             else:
-                # Other ValueError
                 logger.error(f"[{session_id_validated}] Analysis failed for {file.filename}: {error_msg}")
                 raise HTTPException(status_code=400, detail=error_msg)
         except Exception as analysis_error:
             logger.error(f"[{session_id_validated}] Certificate analysis exception: {analysis_error}")
             import traceback
             logger.error(f"Full traceback: {traceback.format_exc()}")
-            raise HTTPException(
-                status_code=500, 
-                detail=f"Analysis failed: {str(analysis_error)}"
-            )
+            raise HTTPException(status_code=500, detail=f"Analysis failed: {str(analysis_error)}")
         
     except HTTPException:
         raise
@@ -146,23 +136,19 @@ async def analyze_certificate(
         logger.error(f"[{session_id_validated}] Validation error for {file.filename if file else 'unknown'}: {e}")
         raise HTTPException(status_code=400, detail=str(e))
 
+
 @router.get("/certificates", tags=["certificates"])
-def get_certificates(
-    include_chain_info: bool = False,
-    session_id: str = Depends(get_session_id)
+@require_session
+async def get_certificates(
+    request: Request,
+    include_chain_info: bool = False
 ):
-    """
-    Get all PKI components for session with validation results always included
-    
-    MIGRATION COMPLETE: Validation results are now always included in this response.
-    The separate /certificates/validation and /certificates/validation-status endpoints 
-    have been removed as they were broken and redundant.
-    """
+    """Get all PKI components for session with validation results"""
+    session_id = request.state.session_id
     
     logger.info(f"[{session_id}] Retrieving PKI components with validation results")
     
     try:
-        # Get components from session storage
         components = session_pki_storage.get_session_components(session_id)
         
         response_data = {
@@ -173,13 +159,11 @@ def get_certificates(
             "timestamp": datetime.datetime.now().isoformat()
         }
         
-        # ALWAYS include validation results (migration complete)
         validation_results = session_pki_storage.get_validation_results(session_id)
         if validation_results:
             response_data["validation_results"] = validation_results
             logger.info(f"[{session_id}] Included validation results: {validation_results.get('total_validations', 0)} checks")
         else:
-            # Even if no validation results, include empty structure for consistency
             response_data["validation_results"] = {
                 "computed_at": datetime.datetime.now().isoformat(),
                 "validation_engine_version": "2.0",
@@ -193,28 +177,26 @@ def get_certificates(
             }
             logger.info(f"[{session_id}] No validation results available")
         
-        # Add chain information if requested
         if include_chain_info:
             chain_summary = session_pki_storage.get_chain_summary(session_id)
             response_data["chain_info"] = chain_summary
             
-            # Add component type breakdown
             component_counts = session_pki_storage.get_component_count(session_id)
             response_data["component_breakdown"] = component_counts
         
         logger.info(f"[{session_id}] Retrieved {len(components)} PKI components")
-        
         return response_data
         
     except Exception as e:
         logger.error(f"[{session_id}] Error retrieving components: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to retrieve components: {str(e)}")
 
+
 @router.get("/certificates/chains", tags=["certificates"])
-def get_certificate_chains(
-    session_id: str = Depends(get_session_id)
-):
+@require_session
+async def get_certificate_chains(request: Request):
     """Get detailed certificate chain information"""
+    session_id = request.state.session_id
     
     logger.info(f"[{session_id}] Requesting chain information")
     
@@ -222,7 +204,6 @@ def get_certificate_chains(
         chain_summary = session_pki_storage.get_chain_summary(session_id)
         session = session_pki_storage.get_or_create_session(session_id)
         
-        # Enhance chain info with component details
         enhanced_chains = {}
         for chain_id, chain_info in chain_summary.get('chains', {}).items():
             enhanced_chain = {
@@ -260,13 +241,16 @@ def get_certificate_chains(
         logger.error(f"[{session_id}] Chain info error: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get chain information: {str(e)}")
 
+
 @router.get("/certificates/{component_id}", tags=["certificates"])
-def get_certificate_component(
+@require_session
+async def get_certificate_component(
+    request: Request,
     component_id: str,
-    include_related: bool = False,
-    session_id: str = Depends(get_session_id)
+    include_related: bool = False
 ):
     """Get specific PKI component by ID with optional related components"""
+    session_id = request.state.session_id
     
     logger.info(f"[{session_id}] Retrieving component: {component_id}")
     
@@ -282,7 +266,6 @@ def get_certificate_component(
             "session_id": session_id
         }
         
-        # Add related components if requested
         if include_related and component.chain_id:
             session = session_pki_storage.get_or_create_session(session_id)
             related_components = []
@@ -309,12 +292,15 @@ def get_certificate_component(
         logger.error(f"[{session_id}] Error retrieving component {component_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to retrieve component: {str(e)}")
 
+
 @router.delete("/certificates/{component_id}", tags=["certificates"])
-def delete_certificate_component(
-    component_id: str,
-    session_id: str = Depends(get_session_id)
+@require_session
+async def delete_certificate_component(
+    request: Request,
+    component_id: str
 ):
     """Delete specific PKI component"""
+    session_id = request.state.session_id
     
     logger.info(f"[{session_id}] Deleting component: {component_id}")
     
@@ -328,8 +314,6 @@ def delete_certificate_component(
         component_type = component.type.type_name
         chain_id = component.chain_id
         
-        # FIXED: Use session_pki_storage.remove_component() instead of session_pki_storage.remove_component()
-        # This ensures validation recomputation is triggered after deletion
         success = session_pki_storage.remove_component(session_id, component_id)
         
         if success:
@@ -342,9 +326,7 @@ def delete_certificate_component(
                 "session_id": session_id
             }
             
-            # Add chain impact information
             if chain_id:
-                # Get updated session after deletion for accurate chain count
                 updated_session = session_pki_storage.get_or_create_session(session_id)
                 remaining_in_chain = len(updated_session.chains.get(chain_id, set()))
                 response_data["chain_impact"] = {
@@ -363,12 +345,15 @@ def delete_certificate_component(
         logger.error(f"[{session_id}] Component deletion error: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to delete component: {str(e)}")
 
+
 @router.delete("/certificates/chains/{chain_id}", tags=["certificates"])
-def delete_certificate_chain(
-    chain_id: str,
-    session_id: str = Depends(get_session_id)
+@require_session
+async def delete_certificate_chain(
+    request: Request,
+    chain_id: str
 ):
     """Delete an entire certificate chain"""
+    session_id = request.state.session_id
     
     logger.info(f"[{session_id}] Deleting chain: {chain_id}")
     
@@ -399,16 +384,16 @@ def delete_certificate_chain(
         logger.error(f"[{session_id}] Chain deletion error: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to delete chain: {str(e)}")
 
+
 @router.post("/certificates/clear", tags=["certificates"])
-def clear_all_components(
-    session_id: str = Depends(get_session_id)
-):
+@require_session
+async def clear_all_components(request: Request):
     """Clear all PKI components from session"""
+    session_id = request.state.session_id
     
     logger.info(f"[{session_id}] Clearing all components")
     
     try:
-        # Get counts before clearing
         pre_clear_summary = session_pki_storage.get_chain_summary(session_id)
         component_count = pre_clear_summary.get('total_components', 0)
         chain_count = len(pre_clear_summary.get('chains', {}))
@@ -436,14 +421,18 @@ def clear_all_components(
         logger.error(f"[{session_id}] Component clearing error: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to clear components: {str(e)}")
 
+
 @router.post("/certificates/replace/{component_id}", tags=["certificates"])
+@require_session
 async def replace_component(
+    request: Request,
+    response: Response,
     component_id: str,
     file: UploadFile = File(...),
-    password: str = Form(None),
-    session_id: str = Depends(get_session_id)
+    password: str = Form(None)
 ):
     """Replace an existing PKI component with a new one"""
+    session_id = request.state.session_id
     
     filename = file.filename or "unknown_file"
     logger.info(f"[{session_id}] Replacing component: {component_id}")
@@ -457,13 +446,11 @@ async def replace_component(
         old_component = session.components[component_id]
         old_type = old_component.type
         
-        # Read new file content
         file_content = await file.read()
         
         if len(file_content) == 0:
             raise HTTPException(status_code=400, detail="Empty file uploaded")
         
-        # For replacement, we temporarily analyze the new file
         temp_session_id = f"temp_{session_id}_{datetime.datetime.now().timestamp()}"
         analysis_result = analyze_uploaded_certificate(
             file_content=file_content,
@@ -472,11 +459,9 @@ async def replace_component(
             session_id=temp_session_id
         )
         
-        # Get the temporary components
         temp_session = session_pki_storage.get_or_create_session(temp_session_id)
         temp_components = list(temp_session.components.values())
         
-        # Find a component of the same type to replace with
         replacement_component = None
         for comp in temp_components:
             if comp.type == old_type:
@@ -484,21 +469,17 @@ async def replace_component(
                 break
         
         if not replacement_component:
-            # Clean up temp session
             session_pki_storage.clear_session(temp_session_id)
             raise HTTPException(
                 status_code=400, 
                 detail=f"No {old_type.type_name} found in uploaded file"
             )
         
-        # Update the component with new content
         replacement_component.filename = filename
         replacement_component.uploaded_at = datetime.datetime.now().isoformat()
         
-        # Replace in main session
         success = session.replace_component(component_id, replacement_component)
         
-        # Clean up temp session
         session_pki_storage.clear_session(temp_session_id)
         
         if success:
@@ -520,11 +501,12 @@ async def replace_component(
         logger.error(f"[{session_id}] Component replacement error: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to replace component: {str(e)}")
 
+
 @router.get("/certificates/session-summary", tags=["certificates"])
-def get_session_summary(
-    session_id: str = Depends(get_session_id)
-):
+@require_session
+async def get_session_summary(request: Request):
     """Get comprehensive PKI session summary with enhanced chain information"""
+    session_id = request.state.session_id
     
     logger.info(f"[{session_id}] Requesting session summary")
     
@@ -533,7 +515,6 @@ def get_session_summary(
         chain_summary = session_pki_storage.get_chain_summary(session_id)
         component_counts = session_pki_storage.get_component_count(session_id)
         
-        # Check PKI completeness
         has_private_key = component_counts.get("PrivateKey", 0) > 0
         has_certificate = component_counts.get("Certificate", 0) > 0
         has_issuing_ca = component_counts.get("IssuingCA", 0) > 0
@@ -586,9 +567,12 @@ def get_session_summary(
         logger.error(f"[{session_id}] Session summary error: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get session summary: {str(e)}")
 
+
 @router.get("/certificates/types", tags=["certificates"])
-def get_available_component_types():
+@require_session
+async def get_available_component_types(request: Request):
     """Get list of available PKI component types with descriptions"""
+    session_id = request.state.session_id
     
     types = []
     for component_type in PKIComponentType:
@@ -601,9 +585,11 @@ def get_available_component_types():
     
     return {
         "success": True,
+        "session_id": session_id,
         "component_types": sorted(types, key=lambda x: x["order"]),
         "total_types": len(types)
     }
+
 
 def _get_type_description(component_type: PKIComponentType) -> str:
     """Get human-readable description for component type"""
@@ -616,6 +602,7 @@ def _get_type_description(component_type: PKIComponentType) -> str:
         PKIComponentType.ROOT_CA: "Root Certificate Authority - top of the trust chain"
     }
     return descriptions.get(component_type, "PKI component")
+
 
 def _get_typical_extensions(component_type: PKIComponentType) -> List[str]:
     """Get typical file extensions for component type"""

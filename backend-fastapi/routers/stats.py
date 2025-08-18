@@ -4,10 +4,10 @@
 import datetime
 import time
 import logging
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Request
 
 from config import settings
-from middleware.session_middleware import get_session_id
+from middleware.session_decorator import require_session
 
 logger = logging.getLogger(__name__)
 
@@ -30,9 +30,8 @@ def get_uptime():
         return int(time.time() - _local_start_time)
 
 @router.get("/stats", tags=["statistics"])
-def get_system_stats(
-    session_id: str = Depends(get_session_id)
-):
+def get_system_stats(request: Request):
+    session_id = request.state.session_id
     """Get system statistics"""
     from certificates.storage.session_pki_storage import session_pki_storage
     

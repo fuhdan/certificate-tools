@@ -11,6 +11,10 @@ class Settings:
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
     
+    # JWT Session Settings
+    JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
+    SESSION_EXPIRE_HOURS: int = int(os.getenv("SESSION_EXPIRE_HOURS", "1"))
+
     # Application
     APP_NAME: str = "Certificate Analysis API"
     APP_VERSION: str = "1.0.0"

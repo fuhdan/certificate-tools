@@ -1,7 +1,6 @@
 // frontend/src/services/api.js
 
 import axios from 'axios'
-import { sessionManager } from './sessionManager'
 
 // Create axios instance with base configuration
 const api = axios.create({
@@ -9,18 +8,16 @@ const api = axios.create({
   timeout: 30000, // Increased for downloads
   headers: {
     'Content-Type': 'application/json'
-  }
+  },
+  withCredentials: true  // 🔑 CRITICAL: Include JWT cookies automatically
 })
 
-// Request interceptor to add session ID
+// Request interceptor - REMOVED session ID header logic
 api.interceptors.request.use(
   (config) => {
-    // Add session ID to all requests
-    const sessionId = sessionManager.getSessionId()
-    if (sessionId) {
-      config.headers['X-Session-ID'] = sessionId
-    }
-
+    // JWT cookies are sent automatically by browser with withCredentials: true
+    // No need to add X-Session-ID headers anymore
+    console.log('📤 API Request:', config.method?.toUpperCase(), config.url)
     return config
   },
   (error) => {
@@ -28,23 +25,22 @@ api.interceptors.request.use(
   }
 )
 
-// Response interceptor for unified error handling
+// Response interceptor for unified error handling - SIMPLIFIED
 api.interceptors.response.use(
   (response) => {
     return response
   },
   (error) => {
-    // Handle session-related errors
-    if (error.response?.status === 400 && error.response?.data?.detail?.includes('session')) {
-      sessionManager.generateNewSession()
-    }
-
+    // JWT session errors are handled automatically by the decorator
+    // No manual session regeneration needed
+    console.error('📥 API Error:', error.response?.status, error.response?.data)
     return Promise.reject(error)
   }
 )
 
 /**
  * Map backend PKI component to frontend certificate object
+ * (Unchanged - no session management here)
  */
 function mapPKIComponentToCertificate(component) {
   console.log('🗺️ Mapping component:', component)
@@ -133,6 +129,7 @@ function mapPKIComponentToCertificate(component) {
 }
 
 // ===== HELPER FUNCTIONS FOR CUSTOM DOWNLOADS =====
+// (Unchanged - no session management in these helpers)
 
 /**
  * Get component ID by type from current session
@@ -174,7 +171,7 @@ export const downloadAPI = {
    */
   async downloadApacheBundle(includeInstructions = true) {
     try {
-      const sessionId = sessionManager.getSessionId()
+      // Session ID no longer needed - handled by JWT cookies
       const result = await this.downloadBundle('apache', {
         includeInstructions
       })
@@ -193,7 +190,7 @@ export const downloadAPI = {
    */
   async downloadIISBundle(includeInstructions = true) {
     try {
-      const sessionId = sessionManager.getSessionId()
+      // Session ID no longer needed - handled by JWT cookies
       const result = await this.downloadBundle('iis', {
         includeInstructions
       })
@@ -212,7 +209,7 @@ export const downloadAPI = {
    */
   async downloadNginxBundle(includeInstructions = true) {
     try {
-      const sessionId = sessionManager.getSessionId()
+      // Session ID no longer needed - handled by JWT cookies
       const result = await this.downloadBundle('nginx', {
         includeInstructions
       })
@@ -407,7 +404,7 @@ export const downloadAPI = {
    */
   async downloadCustomBundle(config) {
     try {
-      const sessionId = sessionManager.getSessionId()
+      // Session ID no longer needed - handled by JWT cookies
       const result = await this.downloadBundle('custom', config)
       
       console.log('Custom bundle downloaded successfully')
@@ -420,13 +417,12 @@ export const downloadAPI = {
 
   /**
    * Core download method - handles all bundle types
+   * 🚀 UPDATED: Clean URLs without session ID
    * @param {string} bundleType - Type of bundle to download
    * @param {Object} options - Download options
    */
   async downloadBundle(bundleType, options = {}) {
     try {
-      const sessionId = sessionManager.getSessionId()
-      
       // Build query parameters
       const params = new URLSearchParams()
       
@@ -443,7 +439,8 @@ export const downloadAPI = {
       }
       
       const queryString = params.toString()
-      const url = `/downloads/download/${bundleType}/${sessionId}${queryString ? '?' + queryString : ''}`
+      // 🚀 NEW: Clean URL without session ID
+      const url = `/downloads/download/${bundleType}${queryString ? '?' + queryString : ''}`
       
       console.log(`Downloading ${bundleType} bundle from:`, url)
       
@@ -461,7 +458,7 @@ export const downloadAPI = {
       
       // Create download filename from Content-Disposition header
       const contentDisposition = response.headers['content-disposition']
-      let filename = `${bundleType}-bundle-${sessionId.substring(0, 8)}.zip`
+      let filename = `${bundleType}-bundle.zip`  // Simplified default filename
       if (contentDisposition) {
         const filenameMatch = contentDisposition.match(/filename=([^;]+)/)
         if (filenameMatch) {
@@ -501,11 +498,12 @@ export const downloadAPI = {
 
   /**
    * Get available bundle types for current session
+   * 🚀 UPDATED: Clean URL without session ID
    */
   async getAvailableBundleTypes() {
     try {
-      const sessionId = sessionManager.getSessionId()
-      const response = await api.get(`/downloads/bundle-types/${sessionId}`)
+      // 🚀 NEW: Clean URL without session ID
+      const response = await api.get('/downloads/bundle-types')
       return response.data
     } catch (error) {
       console.error('Error getting available bundle types:', error)

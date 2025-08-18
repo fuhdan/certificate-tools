@@ -22,6 +22,8 @@ const FileUpload = () => {
   // Extract password state
   const { needsPassword, password, passwordRequiredFiles, isAnalyzing } = passwordState
 
+  const passwordInputRef = useRef(null)
+
   // Cleanup timeout on unmount
   useEffect(() => {
     return () => {
@@ -200,9 +202,20 @@ const FileUpload = () => {
     if (passwordRequiredFiles.length === 0) return
     
     console.log('🔑 FileUpload: Retrying with password for', passwordRequiredFiles.length, 'files')
+
+    // Store the current focus state
+    const hadFocus = passwordInputRef.current === document.activeElement
     
     // Try with the password - if it works, files will be processed normally
     await handleFiles(passwordRequiredFiles, testPassword, true)
+
+    // Restore focus if the password field had focus before and still needs password
+    if (hadFocus && needsPassword && passwordInputRef.current) {
+      // Use setTimeout to ensure React has finished re-rendering
+      setTimeout(() => {
+        passwordInputRef.current?.focus()
+      }, 0)
+    } 
   }
 
   // Drag and drop handlers
@@ -311,6 +324,7 @@ const FileUpload = () => {
           <div className={styles.passwordField}>
             <Key size={16} className={styles.keyIcon} />
             <input
+              ref={passwordInputRef}
               type="password"
               placeholder="Enter password for protected files"
               value={password}

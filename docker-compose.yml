@@ -32,7 +32,7 @@ services:
         protocol: TCP
     environment:
       - PYTHONPATH=/app
-      - DEBUG=ON
+      - DEBUG=OFF
     networks:
       - app-network
     restart: unless-stopped

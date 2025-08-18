@@ -3,6 +3,7 @@
 
 import logging
 from fastapi import FastAPI
+from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
@@ -21,6 +22,24 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ============================================================================
+# APPLICATION LIFESPAN MANAGEMENT
+# ============================================================================
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan management - replaces on_event startup/shutdown"""
+    # Startup
+    logger.info(f"Starting {settings.APP_NAME} v{settings.APP_VERSION}")
+    logger.info(f"Debug mode: {settings.DEBUG}")
+    logger.info("SecureZipCreator service initialized and ready")
+    
+    yield
+    
+    # Shutdown
+    logger.info(f"Shutting down {settings.APP_NAME}")
+    logger.info("SecureZipCreator service cleanup completed")
+
+# ============================================================================
 # FASTAPI APPLICATION SETUP
 # ============================================================================
 
@@ -28,7 +47,8 @@ app = FastAPI(
     title=settings.APP_NAME,
     description="FastAPI backend for certificate analysis and management",
     version=settings.APP_VERSION,
-    debug=settings.DEBUG
+    debug=settings.DEBUG,
+    lifespan=lifespan
 )
 
 # Add CORS middleware
@@ -67,23 +87,6 @@ def read_root():
             "docs": "/docs"
         }
     }
-
-# ============================================================================
-# APPLICATION STARTUP/SHUTDOWN
-# ============================================================================
-
-@app.on_event("startup")
-async def startup_event():
-    """Application startup tasks"""
-    logger.info(f"Starting {settings.APP_NAME} v{settings.APP_VERSION}")
-    logger.info(f"Debug mode: {settings.DEBUG}")
-    logger.info("SecureZipCreator service initialized and ready")
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Application shutdown tasks"""
-    logger.info(f"Shutting down {settings.APP_NAME}")
-    logger.info("SecureZipCreator service cleanup completed")
 
 # ============================================================================
 # DEVELOPMENT SERVER

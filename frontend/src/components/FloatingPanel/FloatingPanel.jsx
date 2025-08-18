@@ -45,7 +45,7 @@ const FloatingPanel = ({ showValidationPanel, onToggleValidationPanel }) => {
   const [connectionStatus, setConnectionStatus] = useState('checking')
   const [isMinimized, setIsMinimized] = useState(false)
   const [savedPosition, setSavedPosition] = useState({ x: 0, y: 0 })
-  const [savedSize, setSavedSize] = useState({ width: 250, height: 400 })
+  const [savedSize, setSavedSize] = useState({ width: 250, height: 500 })
   const [minimizedPosition, setMinimizedPosition] = useState({ x: 16, y: window.innerHeight - 80 })
 
   const panelRef = useRef(null)
@@ -57,7 +57,7 @@ const FloatingPanel = ({ showValidationPanel, onToggleValidationPanel }) => {
     const initialY = window.innerHeight * 0.2
     return { x: initialX, y: initialY }
   })
-  const [panelSize, setPanelSize] = useState({ width: 250, height: 400 })
+  const [panelSize, setPanelSize] = useState({ width: 250, height: 500 })
 
   // Initialize starting position based on visual CSS defaults
   useEffect(() => {

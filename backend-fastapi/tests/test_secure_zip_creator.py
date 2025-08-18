@@ -1,10 +1,16 @@
 """
-Tests for SecureZipCreator service
+Tests for SecureZipCreator service - Updated to use pyzipper
 """
 
 import pytest
-import zipfile
+import pyzipper
 import tempfile
+import sys
+import os
+
+# Add the parent directory (backend-fastapi) to Python path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from services.secure_zip_creator import (
     SecureZipCreator,
     ZipCreationError,
@@ -87,18 +93,12 @@ class TestSecureZipCreator:
         assert is_valid is True
     
     def test_zip_validation_wrong_password(self, zip_creator, sample_files):
-        """Test ZIP validation - handles both encrypted and unencrypted scenarios"""
+        """Test ZIP validation with wrong password - should fail with AES encryption"""
         zip_data, _ = zip_creator.create_protected_zip(sample_files)
         
-        if zip_creator._has_encryption:
-            # With encryption library: should properly fail with wrong password
-            is_valid = zip_creator.validate_zip_integrity(zip_data, "wrongpassword")
-            assert is_valid is False
-        else:
-            # Without encryption library: falls back to unencrypted ZIP
-            # This is expected behavior - test should pass
-            is_valid = zip_creator.validate_zip_integrity(zip_data, "wrongpassword")
-            assert is_valid is True
+        # With pyzipper AES encryption: should properly fail with wrong password
+        is_valid = zip_creator.validate_zip_integrity(zip_data, "wrongpassword")
+        assert is_valid is False
     
     def test_zip_validation_empty_data_error(self, zip_creator):
         """Test ZIP validation fails with empty data"""
@@ -114,12 +114,12 @@ class TestSecureZipCreator:
         """Test that ZIP contains correct files with correct content"""
         zip_data, password = zip_creator.create_protected_zip(sample_files)
         
-        # Extract and verify content
+        # Extract and verify content using pyzipper
         with tempfile.NamedTemporaryFile() as temp_file:
             temp_file.write(zip_data)
             temp_file.flush()
             
-            with zipfile.ZipFile(temp_file.name, 'r') as zip_file:
+            with pyzipper.AESZipFile(temp_file.name, 'r') as zip_file:
                 zip_file.setpassword(password.encode('utf-8'))
                 
                 # Check all files are present
@@ -153,19 +153,20 @@ class TestSecureZipCreator:
         assert isinstance(zip_data, bytes)
         assert len(password) >= zip_creator.MIN_PASSWORD_LENGTH
         
-        # Verify ZIP contents
+        # Verify ZIP contents using pyzipper
         with tempfile.NamedTemporaryFile() as temp_file:
             temp_file.write(zip_data)
             temp_file.flush()
             
-            with zipfile.ZipFile(temp_file.name, 'r') as zip_file:
+            with pyzipper.AESZipFile(temp_file.name, 'r') as zip_file:
                 zip_file.setpassword(password.encode('utf-8'))
                 files = zip_file.namelist()
                 
+                # Based on actual implementation using File Naming Service
                 expected_files = [
-                    'certificate.crt',
-                    'private-key.key', 
-                    'ca-bundle.crt',
+                    'certificate.crt',        # get_standard_filename(CERTIFICATE, "PEM")
+                    'private-key.pem',        # get_standard_filename(PRIVATE_KEY, "PEM") 
+                    'ca-bundle.crt',          # Hardcoded CA bundle name
                     'APACHE_INSTALLATION_GUIDE.txt',
                     'NGINX_INSTALLATION_GUIDE.txt'
                 ]
@@ -177,28 +178,28 @@ class TestSecureZipCreator:
         """Test IIS bundle creation"""
         p12_bundle = b'PKCS12 bundle data'
         iis_guide = "IIS installation guide"
-        cert_info = "Certificate information"
         
         zip_data, password = zip_creator.create_iis_bundle(
-            p12_bundle, iis_guide, cert_info
+            p12_bundle, iis_guide
         )
         
         assert isinstance(zip_data, bytes)
         assert len(password) >= zip_creator.MIN_PASSWORD_LENGTH
         
-        # Verify ZIP contents
+        # Verify ZIP contents using pyzipper
         with tempfile.NamedTemporaryFile() as temp_file:
             temp_file.write(zip_data)
             temp_file.flush()
             
-            with zipfile.ZipFile(temp_file.name, 'r') as zip_file:
+            with pyzipper.AESZipFile(temp_file.name, 'r') as zip_file:
                 zip_file.setpassword(password.encode('utf-8'))
                 files = zip_file.namelist()
                 
+                # Based on actual implementation - IIS bundle only includes P12 and guide
+                # No CERTIFICATE_INFO.txt is created by default
                 expected_files = [
-                    'certificate-bundle.p12',
-                    'IIS_INSTALLATION_GUIDE.txt',
-                    'CERTIFICATE_INFO.txt'
+                    'certificate-bundle.p12',  # get_standard_filename(CERTIFICATE, "PKCS12")
+                    'IIS_INSTALLATION_GUIDE.txt'
                 ]
                 
                 for expected_file in expected_files:
@@ -234,6 +235,11 @@ class TestSecureZipCreator:
         # Verify integrity
         is_valid = zip_creator.validate_zip_integrity(zip_data, password)
         assert is_valid is True
+
+
+if __name__ == "__main__":
+    # Run tests when executed directly
+    pytest.main([__file__, "-v"])
     
     def test_string_content_handling(self, zip_creator):
         """Test handling of string content (auto-conversion to bytes)"""
@@ -245,12 +251,12 @@ class TestSecureZipCreator:
         
         zip_data, password = zip_creator.create_protected_zip(files)
         
-        # Verify all content types are handled correctly
+        # Verify all content types are handled correctly using pyzipper
         with tempfile.NamedTemporaryFile() as temp_file:
             temp_file.write(zip_data)
             temp_file.flush()
             
-            with zipfile.ZipFile(temp_file.name, 'r') as zip_file:
+            with pyzipper.AESZipFile(temp_file.name, 'r') as zip_file:
                 zip_file.setpassword(password.encode('utf-8'))
                 
                 # Check text file

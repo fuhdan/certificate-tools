@@ -331,8 +331,7 @@ class SecureZipCreator:
             manifest = self._generate_content_manifest(
                 manifest_components, 
                 "Apache/Nginx", 
-                session_id, 
-                password  # Now has actual password!
+                session_id
             )
             files['CONTENT_MANIFEST.txt'] = manifest
         
@@ -394,8 +393,7 @@ class SecureZipCreator:
             manifest = self._generate_content_manifest(
                 manifest_components, 
                 bundle_type,  # Use dynamic bundle type
-                session_id, 
-                password,
+                session_id,
                 bundle_password
             )
             files['CONTENT_MANIFEST.txt'] = manifest
@@ -499,7 +497,6 @@ class SecureZipCreator:
         selected_components: List, 
         bundle_type: str, 
         session_id: str, 
-        zip_password: Optional[str] = None,
         bundle_password: Optional[str] = None
     ) -> str:
         """Generate content manifest using ContentManifestGenerator"""
@@ -508,13 +505,11 @@ class SecureZipCreator:
         manifest_generator = ContentManifestGenerator()
         
         # Generate actual password if not provided
-        actual_zip_password = zip_password or "WILL_BE_GENERATED"
         
         manifest = manifest_generator.generate_manifest(
             selected_components=selected_components,
             bundle_type=bundle_type,
             session_id=session_id,
-            zip_password=actual_zip_password,
             bundle_password=bundle_password
         )
         
@@ -692,8 +687,8 @@ class SecureZipCreator:
             # Temporarily monkey-patch the manifest generator to handle custom password types
             original_prepare = manifest_generator._prepare_template_variables
             
-            def custom_prepare_template_variables(selected_components, bundle_type, session_id, zip_password, bundle_password):
-                variables = original_prepare(selected_components, bundle_type, session_id, zip_password, bundle_password)
+            def custom_prepare_template_variables(selected_components, bundle_type, session_id, bundle_password):
+                variables = original_prepare(selected_components, bundle_type, session_id, bundle_password)
                 
                 # Override the bundle password line for custom types
                 if bundle_password:
@@ -715,7 +710,6 @@ class SecureZipCreator:
             selected_components=selected_components,
             bundle_type=bundle_type,
             session_id=session_id,
-            zip_password=actual_zip_password,
             bundle_password=bundle_password
         )
         

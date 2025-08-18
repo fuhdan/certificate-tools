@@ -27,7 +27,6 @@ class ContentManifestGenerator:
                          selected_components: List[PKIComponent],
                          bundle_type: str,
                          session_id: str,
-                         zip_password: Optional[str] = None,
                          bundle_password: Optional[str] = None) -> str:
         """
         Generate content manifest from selected PKI components
@@ -50,7 +49,7 @@ class ContentManifestGenerator:
             
             # Prepare template variables
             variables = self._prepare_template_variables(
-                selected_components, bundle_type, session_id, zip_password, bundle_password
+                selected_components, bundle_type, session_id, bundle_password
             )
             
             # Replace variables in template  
@@ -83,7 +82,6 @@ class ContentManifestGenerator:
                                    selected_components: List[PKIComponent],
                                    bundle_type: str,
                                    session_id: str,
-                                   zip_password: Optional[str],
                                    bundle_password: Optional[str]) -> Dict[str, str]:
         """Prepare all template variables from PKI components"""
         
@@ -92,7 +90,6 @@ class ContentManifestGenerator:
             'bundle_type': bundle_type,
             'session_id': session_id,
             'generation_timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC'),
-            'zip_password': zip_password or 'N/A',
             'tool_version': '2.0-PKI'
         }
         

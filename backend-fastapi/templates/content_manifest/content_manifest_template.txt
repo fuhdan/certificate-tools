@@ -7,7 +7,6 @@ Bundle Information:
 - Session ID: {session_id}
 - Generated: {generation_timestamp}
 - Domain: {primary_domain}
-- ZIP Password: {zip_password}
 {bundle_password_line}
 
 {certificate_details_section}

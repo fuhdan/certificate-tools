@@ -7,7 +7,7 @@ class Settings:
     """Application settings"""
     
     # Security
-    SECRET_KEY: str = os.getenv("SECRET_KEY", "your-secret-key-change-in-production")
+    SECRET_KEY: str = os.getenv("SECRET_KEY", "splfhkkivbulcykgqogycpeumvhdcjxprrvvnqqwiofgnpfknxaruyreszdmlkft")
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
     
@@ -22,9 +22,11 @@ class Settings:
     
     # API
     API_PREFIX: str = "/api"
-    
-    # Session Management
-    DEFAULT_SESSION_ID: str = "00000000-0000-4000-8000-000000000000"
+
+    # Cookie Security Settings
+    COOKIE_SECURE: bool = os.getenv("COOKIE_SECURE", "true" if not DEBUG else "false").lower() == "true"
+    COOKIE_SAMESITE: str = os.getenv("COOKIE_SAMESITE", "strict")
+    COOKIE_HTTPONLY: bool = True  # Always True for security
     
     # File upload limits
     MAX_FILE_SIZE: int = 10 * 1024 * 1024  # 10MB

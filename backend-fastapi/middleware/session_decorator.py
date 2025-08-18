@@ -113,15 +113,22 @@ def require_session(func: Callable) -> Callable:
     return wrapper
 
 
-def _set_session_cookie(response: Response, jwt_token: str, secure: bool = True):
+def _set_session_cookie(response: Response, jwt_token: str, secure: bool = None):
     """
     Set HTTP-only session cookie with JWT
     
     Args:
         response: FastAPI Response object
         jwt_token: JWT token to store in cookie
-        secure: Use secure flag (HTTPS only)
+        secure: Use secure flag (auto-detect if None)
     """
+    from config import settings
+    
+    # Auto-detect secure flag based on environment
+    if secure is None:
+        # Use secure cookies in production, allow non-secure in development
+        secure = not settings.DEBUG
+    
     response.set_cookie(
         key="session_token",
         value=jwt_token,
@@ -131,7 +138,8 @@ def _set_session_cookie(response: Response, jwt_token: str, secure: bool = True)
         max_age=86400,             # 24 hours (matches JWT expiration)
         path="/"                   # Available for all routes
     )
-    logger.debug("Set session JWT cookie")
+    
+    logger.debug(f"Set session JWT cookie (secure={secure})")
 
 
 def clear_session_cookie(response: Response):
@@ -141,11 +149,13 @@ def clear_session_cookie(response: Response):
     Args:
         response: FastAPI Response object
     """
+    from config import settings
+    
     response.delete_cookie(
         key="session_token",
         path="/",
         httponly=True,
-        secure=True,
+        secure=not settings.DEBUG,  # Match production settings
         samesite="strict"
     )
     logger.debug("Cleared session cookie")

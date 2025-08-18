@@ -31,6 +31,10 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info(f"Starting {settings.APP_NAME} v{settings.APP_VERSION}")
     logger.info(f"Debug mode: {settings.DEBUG}")
+    logger.info(f"JWT Algorythm: {settings.JWT_ALGORITHM}")
+    logger.info(f"Secure Cookie: {settings.COOKIE_SECURE}")
+    logger.info(f"Cookie Samesite: {settings.COOKIE_SAMESITE}")
+    logger.info(f"Cookie HTTP only: {settings.COOKIE_HTTPONLY}")
     logger.info("SecureZipCreator service initialized and ready")
     
     yield

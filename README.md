@@ -4,6 +4,8 @@
 ![FastAPI](https://img.shields.io/badge/FastAPI-Backend-teal?style=for-the-badge)
 ![React](https://img.shields.io/badge/React-Frontend-blue?style=for-the-badge)
 ![PKI](https://img.shields.io/badge/PKI-Analysis-red?style=for-the-badge)
+![Cookie Auth](https://img.shields.io/badge/Cookie-Auth-green?style=for-the-badge)
+![JWT](https://img.shields.io/badge/JWT-Sessions-blue?style=for-the-badge)
 
 🌐 **[Try it live at certificate.danielf.ch](https://certificate.danielf.ch)** 🌐
 
@@ -21,7 +23,7 @@
 - **🏗️ PKI Hierarchy Detection**: Intelligently identifies Root CA, Intermediate CA, and End-Entity certificates
 - **🔐 Encrypted File Support**: Handles password-protected PKCS#12 bundles and encrypted private keys
 - **📊 Visual Dashboard**: React-based UI with real-time validation results and PKI component relationships
-- **🧹 Session Management**: UUID-based sessions for secure, isolated analysis
+- **🧹 Session Management**: UUID-based sessions for secure, isolated analysis 🆕 **Now with HTTP-only cookie authentication!**
 - **📦 Bundle Downloads**: Generate secure ZIP bundles of your PKI components
 
 ## 🏗️ Architecture Overview
@@ -34,7 +36,7 @@
 │ • File Upload   │             │ • Certificate Parser │
 │ • PKI Dashboard │             │ • OpenSSL Engine     │
 │ • Validation UI │             │ • Session Storage    │
-│ • Auth System   │             │ • Validation Engine  │
+│ • 🆕 Cookie Auth│             │ • 🆕 JWT Middleware  │
 └─────────────────┘             └──────────────────────┘
         │                                 │
         │                                 │
@@ -52,6 +54,7 @@
 - **Cryptography**: Python cryptographic library for advanced operations
 - **Session Management**: UUID-based sessions with automatic cleanup
 - **Memory Storage**: No persistent storage - everything in memory for security
+- **🆕 Cookie-Auth + JWT**: HTTP-only secure cookies with HMAC-SHA256 signed JWT tokens
 
 ### Frontend (React) 🎨
 - **React 18**: Modern React with hooks and context
@@ -60,10 +63,38 @@
 - **Lucide Icons**: Beautiful, consistent icon library
 - **Axios**: HTTP client with interceptors and error handling
 
+## 🆕 Cookie-Based Authentication & JWT Sessions
+
+The tool now features enterprise-grade session management with HTTP-only secure cookies!
+
+### How It Works
+- **Automatic Session Creation**: No login required - sessions created automatically on first request
+- **JWT Session Tokens**: Cryptographically signed tokens stored in secure HTTP-only cookies
+- **Session Isolation**: Each browser gets a unique UUID session with isolated PKI data (same as before!)
+- **CSRF Protection**: SameSite=Strict cookies prevent cross-site attacks
+- **24-Hour Expiration**: Sessions automatically expire for security
+
+### Security Features
+```python
+# Backend decorator automatically handles everything
+@router.post("/analyze-certificate")
+@require_session  # This magic decorator handles all JWT validation
+async def upload_certificate(request: Request, file: UploadFile):
+    session_id = request.state.session_id  # Automatically available
+    # Your upload logic here - same session isolation as before!
+```
+
+### Cookie Security Settings
+- ✅ **HttpOnly**: JavaScript cannot access cookies (prevents XSS)
+- ✅ **Secure**: HTTPS-only transmission in production
+- ✅ **SameSite=Strict**: Prevents CSRF attacks
+- ✅ **Path=/**: Available for all application routes
+- ✅ **Max-Age=86400**: 24-hour automatic expiration
+
 ### Real API Endpoints (What Actually Works)
 
 ```bash
-# Core Certificate Analysis
+# Core Certificate Analysis (now use cookie-based sessions automatically)
 POST /analyze-certificate          # Upload & analyze certificate files
 GET  /certificates                 # Get all PKI components for session
 GET  /health                      # API health check
@@ -133,14 +164,14 @@ npm run dev
 
 ## 🎮 Real Usage Examples
 
-### Upload and Analyze a Certificate
+### Upload and Analyze a Certificate (🆕 Now with Cookie Auth!)
 
 ```bash
-# Using curl with session isolation
-SESSION_ID=$(uuidgen)
+# Frontend automatically handles cookie sessions!
+# No more manual session management needed
 
 curl -X POST "http://localhost:8000/analyze-certificate" \
-     -H "X-Session-ID: $SESSION_ID" \
+     -c cookies.txt \
      -F "file=@my-certificate.crt"
 
 # Response includes parsed certificate data
@@ -166,9 +197,9 @@ curl -X POST "http://localhost:8000/analyze-certificate" \
 ### Upload PKCS#12 Bundle with Password
 
 ```bash
-# Upload encrypted P12 file
+# Upload encrypted P12 file (cookie session automatic)
 curl -X POST "http://localhost:8000/analyze-certificate" \
-     -H "X-Session-ID: $SESSION_ID" \
+     -b cookies.txt \
      -F "file=@certificate.p12" \
      -F "password=your-password-here"
 
@@ -178,9 +209,9 @@ curl -X POST "http://localhost:8000/analyze-certificate" \
 ### Get All PKI Components with Validation
 
 ```bash
-# Retrieve all components for session
+# Retrieve all components for session (cookie automatic)
 curl -X GET "http://localhost:8000/certificates" \
-     -H "X-Session-ID: $SESSION_ID"
+     -b cookies.txt
 
 # Response includes validation results
 {
@@ -215,9 +246,9 @@ curl -X GET "http://localhost:8000/certificates" \
 ### Download PKI Bundle
 
 ```bash
-# Create secure ZIP bundle
+# Create secure ZIP bundle (cookie session automatic)
 curl -X POST "http://localhost:8000/downloads/zip-bundle" \
-     -H "X-Session-ID: $SESSION_ID" \
+     -b cookies.txt \
      -H "Content-Type: application/json" \
      -d '{"zip_password": "secure-password", "p12_password": "p12-password"}' \
      --output pki-bundle.zip
@@ -234,17 +265,18 @@ APP_VERSION="1.0.0"
 DEBUG=true
 LOG_LEVEL="INFO"
 
-# Security
-MAX_FILE_SIZE=10485760  # 10MB
-SESSION_TIMEOUT=1800    # 30 minutes
-DEFAULT_SESSION_ID="default-session"
+# 🆕 Security (Cookie-Auth + JWT)
+SECRET_KEY="your-secret-key-here"               # 256-bit secret for JWT signing
+SESSION_EXPIRE_HOURS=24                         # Session lifetime in hours
+SESSION_COOKIE_NAME="session_token"             # Cookie name for session
+
+# File handling
+MAX_FILE_SIZE=10485760                          # 10MB
+SESSION_TIMEOUT=1800                            # 30 minutes
+DEFAULT_SESSION_ID="default-session"           # Fallback session
 
 # CORS
 CORS_ORIGINS=["http://localhost:3000", "http://localhost:5173"]
-
-# Authentication (if enabled)
-SECRET_KEY="your-secret-key-here"
-ACCESS_TOKEN_EXPIRE_MINUTES=60
 ```
 
 ### Frontend Environment Variables
@@ -254,6 +286,10 @@ ACCESS_TOKEN_EXPIRE_MINUTES=60
 VITE_API_URL=http://localhost:8000
 VITE_APP_TITLE="Certificate Tools"
 VITE_DEBUG=true
+
+# 🆕 Authentication (Cookie-based sessions)
+VITE_SESSION_COOKIE_NAME="session_token"       # Must match backend
+VITE_AUTO_LOGIN=true                           # Auto-create sessions
 ```
 
 ## 🧪 Testing (What Actually Gets Tested)
@@ -268,6 +304,10 @@ pip install pytest pytest-cov requests
 
 # Run tests with coverage
 pytest -v --cov=. --cov-report=html tests/
+
+# 🆕 Test cookie-auth and JWT system
+pytest tests/test_auth.py -v
+pytest tests/test_sessions.py -v
 
 # Run specific test file
 pytest tests/test_live_server.py -v
@@ -298,10 +338,16 @@ npm run test:coverage
 
 ## 🔒 Security Features
 
-### Session Isolation
-- **UUID-based sessions**: Each user gets isolated storage
+### 🆕 Cookie-Based Session Management
+- **HTTP-only JWT cookies**: Sessions stored in secure, XSS-proof cookies
+- **CSRF protection**: SameSite=Strict prevents cross-site attacks  
+- **Automatic session creation**: No manual session management needed
+- **24-hour expiration**: Sessions automatically expire for security
+
+### Session Isolation (Still UUID-based!)
+- **UUID-based sessions**: Each user gets isolated storage (same as before!)
 - **Memory-only storage**: No persistent data on disk
-- **Automatic cleanup**: Sessions expire after 30 minutes
+- **Automatic cleanup**: Sessions expire after 24 hours
 - **No cross-session leakage**: Components cannot access other sessions
 
 ### File Security
@@ -310,17 +356,20 @@ npm run test:coverage
 - **Memory processing**: Files processed in memory only
 - **Secure cleanup**: Sensitive data cleared after processing
 
-### Example Session Security
+### 🆕 Session Decorator Example
 
 ```python
-# Every request requires session ID
+# NEW: @require_session decorator handles everything automatically
 @router.post("/analyze-certificate")
+@require_session  # This decorator handles JWT validation & session injection
 async def analyze_certificate(
-    file: UploadFile = File(...),
-    session_id: str = Depends(get_session_id)  # Validates UUID format
+    request: Request,
+    file: UploadFile = File(...)
 ):
-    # session_id is guaranteed to be valid UUID
-    # Each session has isolated storage
+    # session_id automatically available from cookie JWT
+    session_id = request.state.session_id  # Injected by decorator
+    
+    # Each session has isolated storage (same concept, secure delivery!)
     result = analyze_uploaded_certificate(file_content, session_id)
     return result
 ```
@@ -331,16 +380,17 @@ async def analyze_certificate(
 
 #### "Session ID Required" Error
 ```bash
-# Every API call needs X-Session-ID header
+# Frontend automatically handles cookies - no manual session needed!
+# For manual curl usage, save cookies on first request:
 curl -X GET "http://localhost:8000/certificates" \
-     -H "X-Session-ID: $(uuidgen)"
+     -c cookies.txt -b cookies.txt
 ```
 
 #### "Password Required" for PKCS#12
 ```bash
-# Include password in form data
+# Include password in form data (cookies handled automatically)
 curl -X POST "http://localhost:8000/analyze-certificate" \
-     -H "X-Session-ID: $(uuidgen)" \
+     -b cookies.txt \
      -F "file=@bundle.p12" \
      -F "password=your-password"
 ```
@@ -503,6 +553,7 @@ MIT License - see [LICENSE](LICENSE) file for details.
 - 📚 Required reading 23 RFC documents about X.509 certificates
 - ☕ Consumed 284 cups of coffee during development
 - 🤯 Resulted in 3 existential crises about certificate authorities
+- 🆕 Added 37 more edge cases when implementing JWT session management
 
 ## 📞 Support & Feedback
 

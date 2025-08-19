@@ -3,7 +3,7 @@
 ## Table of Contents
 
 1. [System Architecture](#system-architecture)
-2. [Session Management](#session-management)
+2. [🆕 Cookie-Based Session Management](#cookie-based-session-management)
 3. [Certificate Processing Pipeline](#certificate-processing-pipeline)
 4. [Cryptographic Validation Engine](#cryptographic-validation-engine)
 5. [Security Implementation](#security-implementation)
@@ -34,7 +34,7 @@ graph TB
     
     subgraph "Application Layer"
         Frontend[React SPA<br/>Port 80]
-        Backend[FastAPI Service<br/>Port 8000]
+        Backend[FastAPI Service<br/>Port 8000<br/>🆕 JWT Middleware]
     end
     
     subgraph "Storage Layer"
@@ -64,6 +64,7 @@ sequenceDiagram
     participant N as Nginx
     participant F as Frontend
     participant B as Backend
+    participant J as JWT Middleware
     participant S as Session Manager
     participant V as Validation Service
     participant C as Crypto Engine
@@ -73,32 +74,53 @@ sequenceDiagram
     F->>U: Serve React SPA
     
     U->>F: Upload Certificate
-    F->>N: POST /api/upload
+    F->>N: POST /api/upload (with cookies)
     N->>B: Forward to Backend
-    B->>S: Create/Get Session
+    B->>J: @require_session decorator
+    J->>J: Validate/Create JWT Cookie
+    J->>S: Extract/Create Session ID
     B->>C: Parse Certificate
     C->>B: Return Analysis
     B->>V: Compute Validations
     V->>B: Return Validation Results
     B->>S: Store Results
-    B->>F: Return Analysis JSON
+    B->>F: Return Analysis JSON + Set Cookie
     F->>U: Display Results
 ```
 
 ---
 
-## Session Management
+## 🆕 Cookie-Based Session Management
 
-### Session Architecture
+### JWT Session Architecture
 
-The session management system provides multi-user isolation with automatic cleanup and thread safety.
+The session management system now uses HTTP-only secure cookies with JWT tokens:
+
+```python
+# backend-fastapi/middleware/session_decorator.py
+
+@require_session
+async def upload_certificate(request: Request, file: UploadFile):
+    """
+    @require_session decorator automatically:
+    1. Reads JWT from 'session_token' cookie
+    2. Validates JWT signature and expiration
+    3. Creates new session if JWT missing/invalid
+    4. Sets HTTP-only cookie with JWT on response
+    5. Injects session_id into request.state
+    """
+    session_id = request.state.session_id  # Automatically available
+    # Your route logic here
+```
+
+### PKI Session with JWT Integration
 
 ```python
 # backend-fastapi/certificates/storage/session_pki_storage.py
 
 class PKISession:
     def __init__(self, session_id: str):
-        self.session_id = session_id
+        self.session_id = session_id  # Same UUID-based isolation!
         self.components: Dict[str, PKIComponent] = {}
         self.validation_results: Optional[Dict[str, Any]] = None
         self.created_at = datetime.utcnow().isoformat()
@@ -112,32 +134,81 @@ class SessionPKIStorage:
         self._start_cleanup_thread()
 ```
 
+### 🆕 JWT Session Manager
+
+```python
+# backend-fastapi/middleware/jwt_session.py
+
+class SimpleSessionManager:
+    """Session manager using HMAC-SHA256 signed JWT tokens"""
+    
+    def __init__(self):
+        self.secret_key = settings.SECRET_KEY.encode()
+        self.session_expire_hours = settings.SESSION_EXPIRE_HOURS
+        
+    def create_session_jwt(self, session_id: Optional[str] = None) -> tuple[str, str]:
+        """Create session token using HMAC signature"""
+        if not session_id:
+            session_id = str(uuid.uuid4())  # Same UUID concept!
+            
+        payload = {
+            "session_id": session_id,
+            "exp": (datetime.utcnow() + timedelta(hours=self.session_expire_hours)).timestamp(),
+            "type": "session"
+        }
+        
+        # Encode payload and create HMAC signature
+        payload_json = json.dumps(payload, separators=(',', ':'))
+        payload_b64 = base64.urlsafe_b64encode(payload_json.encode()).decode().rstrip('=')
+        
+        signature = hmac.new(
+            self.secret_key, 
+            payload_b64.encode(), 
+            hashlib.sha256
+        ).hexdigest()
+        
+        token = f"{payload_b64}.{signature}"
+        return session_id, token
+```
+
 ### Key Features
 
-- **UUID-based session isolation**: Each user gets a unique session
+- **🆕 HTTP-only JWT cookies**: Sessions transmitted via secure cookies
+- **🆕 CSRF protection**: SameSite=Strict prevents cross-site attacks
+- **🆕 Automatic session management**: @require_session decorator handles everything
+- **UUID-based session isolation**: Each user gets isolated storage (same as before!)
 - **Thread safety**: Concurrent access protection with locks
-- **Automatic cleanup**: Sessions expire after 1 hour of inactivity
+- **Automatic cleanup**: Sessions expire after 24 hours
 - **Real-time validation**: Automatic validation computation on changes
 
 ### Session Lifecycle Flow
 
 ```mermaid
 flowchart TD
-    A[Browser Opens Tab] --> B[Generate UUID Session ID]
-    B --> C[Create Session Storage]
-    C --> D[Set Session Headers]
-    D --> E[Upload Certificates]
-    E --> F{Session Active?}
-    F -->|Yes| G[Process Certificate]
-    F -->|No| H[Create New Session]
-    H --> G
-    G --> I[Store in Session]
-    I --> J{User Action?}
-    J -->|Upload More| E
-    J -->|Download Bundle| K[Generate Encrypted ZIP]
-    J -->|Close Tab| L[Session Expires]
-    L --> M[Automatic Cleanup]
-    K --> J
+    A[Browser Opens Tab] --> B[First Request to API]
+    B --> C[@require_session Decorator]
+    C --> D{JWT Cookie Present?}
+    D -->|No| E[Create New UUID Session]
+    D -->|Yes| F[Validate JWT Token]
+    F --> G{JWT Valid?}
+    G -->|No| E
+    G -->|Yes| H[Extract Session ID]
+    E --> I[Generate JWT Token]
+    I --> J[Set HTTP-only Cookie]
+    H --> K[Process Request]
+    J --> K
+    K --> L[Upload Certificates]
+    L --> M{Session Active?}
+    M -->|Yes| N[Process Certificate]
+    M -->|No| O[Cookie Expired - Create New]
+    O --> N
+    N --> P[Store in Session]
+    P --> Q{User Action?}
+    Q -->|Upload More| L
+    Q -->|Download Bundle| R[Generate Encrypted ZIP]
+    Q -->|Close Tab| S[Session Expires (24h)]
+    S --> T[Automatic Cleanup]
+    R --> Q
 ```
 
 ---
@@ -386,32 +457,60 @@ flowchart TD
 
 ## Security Implementation
 
-### Session-Based Security
+### 🆕 Cookie-Based Security Architecture
 
-The application uses session-based isolation for security rather than user authentication:
+The application uses secure HTTP-only cookies with JWT tokens for session management:
 
 ```python
-# backend-fastapi/middleware/session_middleware.py
-def get_session_id(x_session_id: str = Header(None)):
+# backend-fastapi/middleware/session_decorator.py
+
+def _set_session_cookie(response: Response, jwt_token: str, secure: bool = True):
     """
-    Extract session ID from headers with validation
+    Set HTTP-only session cookie with JWT
     """
-    if not x_session_id:
-        raise HTTPException(
-            status_code=400,
-            detail="Session ID required. Include 'X-Session-ID' header."
-        )
+    response.set_cookie(
+        key="session_token",
+        value=jwt_token,
+        httponly=True,              # Prevent XSS - JavaScript cannot access
+        secure=secure,              # HTTPS only in production
+        samesite="strict",          # CSRF protection
+        max_age=86400,             # 24 hours (matches JWT expiration)
+        path="/"                   # Available for all routes
+    )
+
+def clear_session_cookie(response: Response):
+    """
+    Clear session cookie (for logout functionality)
+    """
+    response.delete_cookie(
+        key="session_token",
+        path="/",
+        httponly=True,
+        secure=True,
+        samesite="strict"
+    )
+```
+
+### 🆕 Session Decorator System
+
+```python
+# backend-fastapi/middleware/session_decorator.py
+
+@require_session
+async def analyze_certificate(request: Request, file: UploadFile):
+    """
+    @require_session decorator automatically handles:
+    1. JWT cookie validation
+    2. Session creation if needed
+    3. Session ID injection into request.state
+    4. Cookie setting on response
+    """
+    # session_id automatically available from decorator
+    session_id = request.state.session_id
     
-    # Validate UUID format
-    try:
-        uuid.UUID(x_session_id)
-    except ValueError:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid session ID format. Must be a valid UUID."
-        )
-    
-    return x_session_id
+    # Each session has isolated storage (same concept, secure delivery!)
+    result = analyze_uploaded_certificate(file_content, session_id)
+    return result
 ```
 
 ### Secure ZIP Download Implementation
@@ -456,20 +555,25 @@ class SecureZipCreator:
 
 ```mermaid
 flowchart TD
-    A[Client Request] --> B[Session ID Check]
-    B --> C{Valid Session?}
-    C -->|Yes| D[Process Request]
-    C -->|No| E[Return 400 Bad Request]
+    A[Client Request] --> B[Cookie JWT Check]
+    B --> C{Valid JWT Cookie?}
+    C -->|Yes| D[Extract Session ID]
+    C -->|No| E[Create New Session]
     
-    D --> F{Download Request?}
-    F -->|Yes| G[Generate Random Password]
-    F -->|No| H[Normal Response]
+    E --> F[Generate JWT Token]
+    F --> G[Set HTTP-only Cookie]
+    G --> H[Process Request]
     
-    G --> I[Create Encrypted ZIP]
-    I --> J[Return ZIP + Password]
-    J --> K[Client Downloads ZIP]
-    K --> L[Password Shown Once]
-    L --> M[Password Forgotten by System]
+    D --> H
+    H --> I{Download Request?}
+    I -->|Yes| J[Generate Random Password]
+    I -->|No| K[Normal Response]
+    
+    J --> L[Create Encrypted ZIP]
+    L --> M[Return ZIP + Password]
+    M --> N[Client Downloads ZIP]
+    N --> O[Password Shown Once]
+    O --> P[Password Forgotten by System]
 ```
 
 ---
@@ -478,7 +582,7 @@ flowchart TD
 
 ### Updated API Architecture
 
-The API uses centralized service classes:
+The API uses centralized service classes and cookie-based authentication:
 
 ```python
 # backend-fastapi/main.py
@@ -497,27 +601,39 @@ The API uses centralized service classes:
 ```http
 GET /certificates
 # Returns all PKI components in session with validation results
-# Requires: X-Session-ID header
+# 🆕 Uses cookie-based authentication automatically
 
-POST /upload-certificate
-# Upload and analyze new PKI component
-# Requires: X-Session-ID header
+POST /analyze-certificate
+# Upload and analyze new PKI component  
+# 🆕 Uses cookie-based authentication automatically
 
 DELETE /certificates/{component_id}
 # Remove specific component from session
-# Requires: X-Session-ID header
+# 🆕 Uses cookie-based authentication automatically
 
 POST /clear-session
 # Clear all components from session
-# Requires: X-Session-ID header
+# 🆕 Uses cookie-based authentication automatically
 ```
 
 #### 2. Download System
 
 ```http
-POST /downloads/download/{bundle_type}/{session_id}
-# Download bundles (apache, nginx, iis, custom)
-# No authentication required - session-based access only
+POST /downloads/zip-bundle
+# Create secure ZIP bundle
+# 🆕 Session validation via JWT cookies
+
+GET /downloads/ca-certificates
+# Download CA certs only
+# 🆕 Uses cookie-based authentication automatically
+
+GET /downloads/end-entity
+# Download end-entity components
+# 🆕 Uses cookie-based authentication automatically
+
+GET /downloads/full-chain
+# Download complete certificate chain
+# 🆕 Uses cookie-based authentication automatically
 ```
 
 #### 3. Validation
@@ -525,7 +641,7 @@ POST /downloads/download/{bundle_type}/{session_id}
 ```http
 GET /validate
 # Get current validation results for session
-# Requires: X-Session-ID header
+# 🆕 Uses cookie-based authentication automatically
 ```
 
 ### RESTful Endpoint Structure
@@ -545,7 +661,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
-    allow_credentials=True,
+    allow_credentials=True,  # 🆕 Required for cookie authentication
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -568,10 +684,6 @@ def read_root():
             "certificates": "/certificates", 
             "downloads": "/downloads",
             "docs": "/docs"
-        }
-    }
-```
-
 ### API Response Format
 
 All API responses follow a consistent structure:
@@ -592,26 +704,31 @@ All API responses follow a consistent structure:
 sequenceDiagram
     participant C as Client
     participant A as API Gateway
+    participant J as JWT Middleware
     participant S as Session Manager
     participant V as Validator
     participant D as Download Service
     
-    C->>A: POST /upload-certificate (with X-Session-ID)
-    A->>S: Get/Create Session
-    S->>A: Session Data
+    C->>A: POST /analyze-certificate (with session cookie)
+    A->>J: @require_session decorator
+    J->>J: Validate JWT from cookie
+    J->>S: Get/Create Session
+    S->>A: Session Data + Set Cookie
     A->>A: Parse Certificate
     A->>V: Run Validations
     V->>A: Validation Results
     A->>S: Store Results
-    A->>C: Analysis + Validations
+    A->>C: Analysis + Validations + Cookie
     
-    C->>A: GET /certificates (with X-Session-ID)
-    A->>S: Get Session Data
+    C->>A: GET /certificates (with session cookie)
+    A->>J: @require_session decorator
+    J->>S: Get Session Data from JWT
     S->>A: PKI Components
     A->>C: Complete PKI Bundle
     
-    C->>A: POST /downloads/download/apache/{session_id}
-    A->>D: Generate Apache Bundle
+    C->>A: POST /downloads/zip-bundle (with session cookie)
+    A->>J: Validate JWT Cookie
+    J->>D: Generate Bundle
     D->>D: Create Random Password
     D->>D: Create ZIP File
     D->>A: ZIP Data + Password
@@ -624,24 +741,34 @@ sequenceDiagram
 
 ### React Architecture
 
-The frontend uses centralized API services:
+The frontend uses centralized API services with automatic cookie handling:
 
 ```javascript
 // frontend/src/services/api.js
 
-// Centralized API service
+// 🆕 Axios automatically handles cookies
+const api = axios.create({
+  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:8000',
+  timeout: 30000,
+  withCredentials: true,  // 🆕 Required for cookie authentication
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
+
+// Centralized API service (no more manual session headers!)
 const certificateAPI = {
   getCertificates: () => api.get('/certificates'),
-  uploadCertificate: (file, password) => uploadWithFile('/upload-certificate', file, password),
+  uploadCertificate: (file, password) => uploadWithFile('/analyze-certificate', file, password),
   deleteCertificate: (componentId) => api.delete(`/certificates/${componentId}`),
   clearSession: () => api.post('/clear-session')
 };
 
 const downloadAPI = {
-  downloadApacheBundle: (options) => downloadBundle('apache', options),
-  downloadNginxBundle: (options) => downloadBundle('nginx', options),
-  downloadIISBundle: (options) => downloadBundle('iis', options),
-  downloadCustomBundle: (componentIds, options) => downloadCustom(componentIds, options)
+  downloadZipBundle: (options) => downloadBundle('zip-bundle', options),
+  downloadCACertificates: () => api.get('/downloads/ca-certificates'),
+  downloadEndEntity: () => api.get('/downloads/end-entity'),
+  downloadFullChain: () => api.get('/downloads/full-chain')
 };
 ```
 
@@ -658,6 +785,7 @@ export const CertificateProvider = ({ children }) => {
   const refreshFiles = useCallback(async () => {
     try {
       setIsLoading(true)
+      // 🆕 No manual session management - cookies handled automatically
       const result = await certificateAPI.getCertificates()
       if (result.success) {
         const sortedComponents = (result.certificates || []).sort((a, b) => {
@@ -726,8 +854,7 @@ const certificateReducer = (state, action) => {
     case 'CLEAR_SESSION':
       return {
         certificates: {},
-        validations: {},
-        sessionId: null
+        validations: {}
       }
     
     default:
@@ -738,8 +865,7 @@ const certificateReducer = (state, action) => {
 export const CertificateProvider = ({ children }) => {
   const [state, dispatch] = useReducer(certificateReducer, {
     certificates: {},
-    validations: {},
-    sessionId: null
+    validations: {}
   })
   
   return (
@@ -764,11 +890,11 @@ export const useCertificates = () => {
 stateDiagram-v2
     [*] --> Initial: App Starts
     Initial --> FileSelected: User Selects File
-    FileSelected --> Uploading: POST /upload
+    FileSelected --> Uploading: POST /analyze-certificate (cookie auto-sent)
     Uploading --> PasswordRequired: Server Requests Password
     Uploading --> Analyzing: File Uploaded Successfully
     PasswordRequired --> PasswordProvided: User Enters Password
-    PasswordProvided --> Uploading: Retry Upload
+    PasswordProvided --> Uploading: Retry Upload (cookie maintained)
     Analyzing --> DisplayResults: Analysis Complete
     DisplayResults --> ValidationRunning: Run Validations
     ValidationRunning --> ValidationComplete: Validations Done
@@ -790,11 +916,12 @@ graph TD
     subgraph "Frontend Layer"
         UI[React Components]
         CTX[Certificate Context]
-        API[API Service Layer]
+        API[API Service Layer<br/>🆕 Cookie Handling]
     end
     
     subgraph "Backend Layer"
         MAIN[FastAPI Main]
+        JWT[🆕 JWT Middleware]
         SVC[Service Layer]
         STORE[Session Storage]
     end
@@ -807,12 +934,14 @@ graph TD
     UI --> CTX
     CTX --> API
     API --> MAIN
-    MAIN --> SVC
+    MAIN --> JWT
+    JWT --> SVC
     SVC --> VS
     SVC --> DS
     SVC --> STORE
     STORE --> SVC
-    SVC --> MAIN
+    SVC --> JWT
+    JWT --> MAIN
     MAIN --> API
     API --> CTX
     CTX --> UI
@@ -822,7 +951,7 @@ graph TD
 
 ```mermaid
 stateDiagram-v2
-    [*] --> SessionCreated: User visits site
+    [*] --> SessionCreated: User visits site (cookie auto-created)
     SessionCreated --> ComponentUploaded: Upload certificate
     ComponentUploaded --> ValidationComputed: Auto-validation
     ValidationComputed --> ComponentUploaded: Upload more
@@ -831,7 +960,7 @@ stateDiagram-v2
     ComponentUploaded --> SessionCleared: Clear all
     ValidationComputed --> SessionCleared: Clear all
     SessionCleared --> SessionCreated: Start fresh
-    ValidationComputed --> SessionExpired: 1 hour timeout
+    ValidationComputed --> SessionExpired: 24 hour timeout
     SessionExpired --> [*]: Session destroyed
 ```
 
@@ -845,16 +974,16 @@ flowchart TD
     end
     
     subgraph "Network Layer"
-        C --> D[HTTP POST to /upload]
+        C --> D[HTTP POST to /analyze-certificate<br/>🆕 With session cookie]
         D --> E[Nginx Reverse Proxy]
         E --> F[FastAPI Backend]
     end
     
     subgraph "Backend Processing"
-        F --> G[Session Manager]
-        G --> H{Session Exists?}
-        H -->|No| I[Create New Session]
-        H -->|Yes| J[Use Existing Session]
+        F --> G[🆕 @require_session Decorator]
+        G --> H{JWT Cookie Valid?}
+        H -->|No| I[Create New JWT Session]
+        H -->|Yes| J[Extract Session ID from JWT]
         I --> K[Certificate Analyzer]
         J --> K
         K --> L[Multi-Format Parser]
@@ -863,7 +992,7 @@ flowchart TD
     end
     
     subgraph "Response Flow"
-        N --> O[JSON Response]
+        N --> O[JSON Response<br/>🆕 + Set-Cookie Header]
         O --> P[Nginx Proxy Response]
         P --> Q[React State Update]
         Q --> R[UI Components Re-render]
@@ -873,7 +1002,7 @@ flowchart TD
     
     subgraph "Download Flow"
         T --> U{User Requests Download?}
-        U -->|Yes| V[Session ID Check]
+        U -->|Yes| V[🆕 JWT Cookie Validation]
         V --> W[Generate Random Password]
         W --> X[Create Encrypted ZIP]
         X --> Y[Base64 Encode ZIP]
@@ -913,6 +1042,9 @@ services:
       - "80"
     environment:
       - NODE_ENV=production
+      # 🆕 Cookie-based session config
+      - VITE_SESSION_COOKIE_NAME=session_token
+      - VITE_AUTO_LOGIN=true
     networks:
       - certificate-network
     restart: unless-stopped
@@ -923,7 +1055,10 @@ services:
     expose:
       - "8000"
     environment:
+      # 🆕 JWT and cookie authentication settings
       - SECRET_KEY=${SECRET_KEY:-your-secret-key-change-in-production}
+      - SESSION_EXPIRE_HOURS=24
+      - SESSION_COOKIE_NAME=session_token
       - DEBUG=OFF
       - MAX_FILE_SIZE=10485760  # 10MB
     networks:
@@ -965,6 +1100,8 @@ http {
       proxy_pass http://frontend;
       proxy_set_header Host $host;
       proxy_set_header X-Real-IP $remote_addr;
+      # 🆕 Cookie forwarding for session management
+      proxy_set_header Cookie $http_cookie;
     }
 
     # API Proxy
@@ -974,6 +1111,9 @@ http {
       proxy_set_header X-Real-IP $remote_addr;
       proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
       proxy_set_header X-Forwarded-Proto $scheme;
+      # 🆕 Cookie handling for JWT authentication
+      proxy_set_header Cookie $http_cookie;
+      proxy_pass_header Set-Cookie;
     }
     
     # TODO: SSL Configuration section
@@ -982,6 +1122,7 @@ http {
     # - Configure SSL/TLS protocols and ciphers
     # - Add security headers
     # - Redirect HTTP to HTTPS
+    # - Set Secure flag on cookies for HTTPS
   }
 }
 ```
@@ -1012,6 +1153,13 @@ async def health_check():
         uptime = datetime.utcnow() - app_start_time
         active_sessions = len(session_manager.sessions)
         
+        # 🆕 JWT authentication status
+        jwt_config = {
+            "secret_key_configured": bool(os.getenv("SECRET_KEY")),
+            "session_expire_hours": os.getenv("SESSION_EXPIRE_HOURS", "24"),
+            "cookie_name": os.getenv("SESSION_COOKIE_NAME", "session_token")
+        }
+        
         health_status = {
             "status": "healthy",
             "timestamp": datetime.utcnow().isoformat(),
@@ -1025,7 +1173,8 @@ async def health_check():
             "application": {
                 "active_sessions": active_sessions,
                 "version": "1.0.0",
-                "environment": os.getenv("ENVIRONMENT", "development")
+                "environment": os.getenv("ENVIRONMENT", "development"),
+                "authentication": jwt_config
             }
         }
         
@@ -1069,7 +1218,11 @@ class PerformanceManager:
             'requests_per_second': 0,
             'average_response_time': 0,
             'memory_usage': 0,
-            'active_sessions': 0
+            'active_sessions': 0,
+            # 🆕 JWT metrics
+            'jwt_validations_per_minute': 0,
+            'session_cookie_hits': 0,
+            'session_cookie_misses': 0
         }
         
         # Start background cleanup thread
@@ -1102,13 +1255,15 @@ class PerformanceManager:
     def _cleanup_expired_sessions(self):
         """
         Remove sessions that haven't been accessed recently
+        🆕 Updated for 24-hour session expiration
         """
         current_time = datetime.utcnow()
         expired_sessions = []
         
         for session_id, session_data in session_manager.sessions.items():
             last_accessed = session_data.get('last_accessed', current_time)
-            if current_time - last_accessed > timedelta(minutes=30):
+            # 🆕 Updated to 24 hours instead of 30 minutes
+            if current_time - last_accessed > timedelta(hours=24):
                 expired_sessions.append(session_id)
         
         for session_id in expired_sessions:
@@ -1202,9 +1357,6 @@ def validate_certificate_chain(certificates: list) -> dict:
     Expensive validation operation that benefits from caching
     """
     # Perform complex validation logic
-    return validation_results
-```
-
 ### Performance Monitoring
 
 ```mermaid
@@ -1226,16 +1378,29 @@ graph TD
         K --> G
     end
     
-    subgraph "Auto-Scaling Triggers"
-        L[CPU > 70%] --> M[Scale Up Decision]
-        N[Memory > 80%] --> M
-        O[Response Time > 2s] --> M
-        P[Error Rate > 5%] --> M
+    subgraph "🆕 JWT Performance Monitoring"
+        L[Cookie Validation Rate] --> M[JWT Decode Performance]
+        N[Session Creation Rate] --> M
+        O[Cookie Expiry Rate] --> M
+        P[CSRF Attack Attempts] --> M
         
-        M --> Q[Deploy New Instance]
-        Q --> R[Update Load Balancer]
-        R --> S[Health Check New Instance]
-        S --> T[Route Traffic]
+        M --> Q[Authentication Health Score]
+        Q --> R{Auth Performance OK?}
+        R -->|No| S[Alert Security Team]
+        R -->|Yes| T[Continue Monitoring]
+    end
+    
+    subgraph "Auto-Scaling Triggers"
+        U[CPU > 70%] --> V[Scale Up Decision]
+        W[Memory > 80%] --> V
+        X[Response Time > 2s] --> V
+        Y[Error Rate > 5%] --> V
+        Z[🆕 JWT Validation Failures > 10%] --> V
+        
+        V --> AA[Deploy New Instance]
+        AA --> BB[Update Load Balancer]
+        BB --> CC[Health Check New Instance]
+        CC --> DD[Route Traffic]
     end
 ```
 
@@ -1302,6 +1467,21 @@ class StructuredLogger:
         
         self.logger.info(json.dumps(log_data))
     
+    # 🆕 JWT and session logging
+    def log_session_event(self, event_type: str, session_id: str, details: Dict[str, Any]):
+        """
+        Log session and authentication events
+        """
+        log_data = {
+            "event": "session_event",
+            "event_type": event_type,  # "session_created", "jwt_validated", "session_expired"
+            "session_id": session_id,
+            "timestamp": datetime.utcnow().isoformat(),
+            "details": details
+        }
+        
+        self.logger.info(json.dumps(log_data))
+    
     def log_security_event(self, event_type: str, session_id: str, details: Dict[str, Any]):
         """
         Log security-related events
@@ -1338,6 +1518,14 @@ ACTIVE_SESSIONS = Gauge('certificate_analysis_active_sessions',
 CERTIFICATE_UPLOADS = Counter('certificate_uploads_total',
                              'Total certificate uploads', ['format'])
 
+# 🆕 JWT and authentication metrics
+JWT_VALIDATIONS = Counter('jwt_validations_total',
+                         'Total JWT validations', ['result'])
+SESSION_COOKIES = Counter('session_cookies_total',
+                         'Session cookie operations', ['operation'])
+AUTH_ERRORS = Counter('authentication_errors_total',
+                     'Authentication errors', ['error_type'])
+
 def track_performance(func):
     """
     Decorator to track API performance metrics
@@ -1358,6 +1546,24 @@ def track_performance(func):
     
     return wrapper
 
+# 🆕 JWT tracking decorator
+def track_jwt_validation(func):
+    """
+    Decorator to track JWT validation metrics
+    """
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            result = func(*args, **kwargs)
+            JWT_VALIDATIONS.labels(result='success').inc()
+            return result
+        except Exception as e:
+            JWT_VALIDATIONS.labels(result='failure').inc()
+            AUTH_ERRORS.labels(error_type=type(e).__name__).inc()
+            raise
+    
+    return wrapper
+
 # Start metrics server
 def start_metrics_server(port: int = 8001):
     start_http_server(port)
@@ -1375,12 +1581,14 @@ def start_metrics_server(port: int = 8001):
 - Implement comprehensive error handling with try-catch blocks
 - Add docstrings to all public methods and classes
 - Use structured logging for all important events
+- 🆕 Always use @require_session decorator for protected endpoints
 
 **Frontend (JavaScript/React):**
 - Use ESLint and Prettier for code formatting
 - Implement proper error boundaries for React components
 - Follow React hooks best practices
 - Implement proper loading and error states
+- 🆕 Use withCredentials: true for all API calls
 
 ### Testing Strategy
 
@@ -1415,6 +1623,36 @@ class TestValidationService:
         assert 'certificate_chain_validation' in results['validations']
         chain_validation = results['validations']['certificate_chain_validation']
         assert chain_validation['status'] in ['valid', 'warning']
+
+# 🆕 JWT Authentication Testing
+class TestJWTAuthentication:
+    
+    def test_jwt_session_creation(self):
+        """Test JWT session creation and validation"""
+        from middleware.jwt_session import jwt_session_manager
+        
+        # Create session
+        session_id, jwt_token = jwt_session_manager.create_session_jwt()
+        
+        # Validate session
+        validated_session_id = jwt_session_manager.validate_session_jwt(jwt_token)
+        
+        assert session_id == validated_session_id
+        assert len(session_id) == 36  # UUID length
+    
+    def test_session_decorator(self):
+        """Test @require_session decorator"""
+        from fastapi.testclient import TestClient
+        
+        # Test request without cookie
+        response = client.post("/analyze-certificate")
+        assert response.status_code == 200  # Should create new session
+        assert "Set-Cookie" in response.headers
+        
+        # Extract cookie and test subsequent request
+        cookie = response.headers["Set-Cookie"]
+        response = client.get("/certificates", headers={"Cookie": cookie})
+        assert response.status_code == 200
 ```
 
 **Frontend Testing:**
@@ -1443,16 +1681,27 @@ describe('CertificateUpload', () => {
       expect(screen.getByText(/certificate uploaded/i)).toBeInTheDocument()
     })
   })
+  
+  // 🆕 Cookie authentication testing
+  it('should handle session cookies automatically', async () => {
+    const mockApi = jest.fn().mockResolvedValue({ success: true })
+    
+    render(<CertificateUpload />)
+    
+    // Verify axios is configured with withCredentials
+    expect(api.defaults.withCredentials).toBe(true)
+  })
 })
 ```
 
 ### Security Considerations
 
-**Session-Based Security:**
-- All endpoints require X-Session-ID header for access
-- Session isolation prevents cross-user data access
-- Passwords are never stored or logged
-- ZIP downloads with one-time passwords
+**🆕 Cookie-Based Security:**
+- All endpoints use @require_session decorator for automatic authentication
+- JWT tokens are cryptographically signed with HMAC-SHA256
+- HTTP-only cookies prevent XSS attacks
+- SameSite=Strict prevents CSRF attacks
+- Sessions expire automatically after 24 hours
 
 **Input Validation:**
 - File size limits enforced (10MB default)
@@ -1461,31 +1710,42 @@ describe('CertificateUpload', () => {
 - XSS protection with Content Security Policy headers
 
 **Data Protection:**
-- Sessions expire automatically after 1 hour
+- Sessions expire automatically after 24 hours
 - Certificate data stored only in memory (no persistent storage)
 - Secure random password generation for downloads
-- HTTP-only (HTTPS can be configured in production)
+- HTTPS recommended for production (HTTP-only cookies become Secure)
 
 ### Troubleshooting Guide
 
 **Common Issues and Solutions:**
 
-1. **Session Not Found Errors**
+1. **🆕 Cookie Authentication Issues**
    ```
-   Problem: "Session not found" errors in API calls
-   Solution: Check X-Session-ID header is being sent correctly
+   Problem: Sessions not persisting between requests
+   Solution: Check cookie configuration and CORS settings
    
-   // Verify session ID is present
-   console.log('Session ID:', sessionManager.getSessionId())
+   # Verify cookie settings
+   console.log('Cookies:', document.cookie)  // Should show session_token
+   
+   # Backend CORS configuration
+   app.add_middleware(
+       CORSMiddleware,
+       allow_credentials=True,  # Required for cookies
+       allow_origins=["http://localhost:3000"]
+   )
    ```
 
-2. **Validation Service Errors**
+2. **🆕 JWT Validation Errors**
    ```
-   Problem: ValidationService import errors
-   Solution: Ensure new validation service is properly imported
+   Problem: JWT signature validation failing
+   Solution: Ensure SECRET_KEY is consistent and properly configured
    
-   # Check validation service import
-   from services.validation_service import validation_service
+   # Check SECRET_KEY configuration
+   echo $SECRET_KEY
+   # Should be 32+ character string
+   
+   # Verify JWT middleware is loaded
+   from middleware.jwt_session import jwt_session_manager
    ```
 
 3. **Upload Failures**
@@ -1501,11 +1761,15 @@ describe('CertificateUpload', () => {
 4. **Frontend API Errors**
    ```
    Problem: API calls failing after frontend refactoring
-   Solution: Update to use new certificateAPI service
+   Solution: Update to use new certificateAPI service with cookies
    
-   // Use centralized API
+   // Use centralized API with cookie support
    import { certificateAPI } from '../services/api'
-   const result = await certificateAPI.getCertificates()
+   
+   // Ensure withCredentials is set
+   const api = axios.create({
+     withCredentials: true  // Required for cookie auth
+   })
    ```
 
 ### Performance Optimization Tips
@@ -1515,12 +1779,14 @@ describe('CertificateUpload', () => {
 - Implement session cleanup to prevent memory leaks
 - Use async/await for I/O operations
 - Monitor memory usage with health checks
+- 🆕 Cache JWT validation results for repeated requests
 
 **Frontend Optimization:**
 - Implement lazy loading for certificate details
 - Use React.memo for expensive components
 - Debounce user input for search functionality
 - Optimize bundle size with code splitting
+- 🆕 Minimize cookie size by using session references
 
 **Database/Storage Optimization:**
 - Use Redis for distributed session storage in multi-instance deployments
@@ -1535,7 +1801,8 @@ describe('CertificateUpload', () => {
 ### Pre-Deployment
 
 - [ ] Update environment variables in `.env` file
-- [ ] Generate secure SECRET_KEY for session management
+- [ ] 🆕 Generate secure SECRET_KEY for JWT signing (256-bit minimum)
+- [ ] 🆕 Configure SESSION_EXPIRE_HOURS and SESSION_COOKIE_NAME
 - [ ] Configure SSL certificates for HTTPS (optional)
 - [ ] Set up monitoring and logging
 - [ ] Run security audit on dependencies
@@ -1544,12 +1811,13 @@ describe('CertificateUpload', () => {
 ### Production Deployment
 
 - [ ] Deploy with Docker Compose
-- [ ] Configure Nginx reverse proxy
+- [ ] Configure Nginx reverse proxy with cookie forwarding
 - [ ] Set up health check endpoints
 - [ ] Configure log aggregation
 - [ ] Set up monitoring dashboards
 - [ ] Test SSL/TLS configuration (if enabled)
-- [ ] Verify session management
+- [ ] 🆕 Verify JWT cookie authentication is working
+- [ ] 🆕 Test session persistence across browser restarts
 - [ ] Test download functionality
 
 ### Post-Deployment
@@ -1560,30 +1828,43 @@ describe('CertificateUpload', () => {
 - [ ] Test auto-scaling if configured
 - [ ] Monitor memory usage and cleanup
 - [ ] Verify security headers
+- [ ] 🆕 Monitor JWT authentication metrics
+- [ ] 🆕 Verify cookie security settings (HttpOnly, Secure, SameSite)
+- [ ] 🆕 Test session expiration behavior (24-hour timeout)
 - [ ] Test backup and recovery procedures
 
 ---
 
 ## Important Notes
 
-### No Authentication System
-- **The application does NOT have user authentication**
-- **No JWT tokens, no login system, no user accounts**
-- Security is based on session isolation using UUID session IDs
-- All endpoints require `X-Session-ID` header for access
-- Downloads are protected by session ownership only
+### 🆕 Cookie-Based Authentication System
+- **The application uses HTTP-only JWT cookies for session management**
+- **No manual session ID headers required - cookies handled automatically**
+- **JWT tokens are cryptographically signed with HMAC-SHA256**
+- Security is based on session isolation using UUID session IDs (same concept!)
+- All endpoints use `@require_session` decorator for automatic authentication
+- Downloads are protected by JWT cookie validation
 
-### Session-Based Architecture
-- Each browser session gets a unique UUID
-- Sessions automatically expire after 1 hour of inactivity
+### Session-Based Architecture (Updated)
+- Each browser session gets a unique UUID (same as before!)
+- 🆕 Sessions automatically expire after 24 hours (updated from 1 hour)
 - All certificate data is stored in memory only
 - No persistent storage or database required
+- 🆕 Sessions transmitted via secure HTTP-only cookies instead of headers
 
-### Download Security
+### Download Security (Enhanced)
 - ZIP files are password-protected with random passwords
 - Passwords are generated per download and forgotten by system
-- Downloads are tied to session ID, not user authentication
+- 🆕 Downloads are protected by JWT cookie validation instead of session ownership
+- 🆕 Cross-site request forgery (CSRF) protection via SameSite=Strict cookies
+
+### 🆕 Cookie Security Features
+- **HttpOnly**: Prevents XSS attacks - JavaScript cannot access cookies
+- **Secure**: HTTPS-only transmission in production
+- **SameSite=Strict**: Prevents CSRF attacks
+- **24-hour expiration**: Automatic session timeout
+- **HMAC-SHA256 signatures**: Cryptographically secure JWT tokens
 
 ---
 
-This comprehensive technical documentation covers all major aspects of the Certificate Analysis Tool with accurate information based on the actual codebase implementation. The documentation provides developers with complete understanding of the current session-based architecture and best practices for maintenance and further development.
+This comprehensive technical documentation covers all major aspects of the Certificate Analysis Tool with the updated cookie-based authentication system. The core session isolation concept remains the same - each user gets isolated UUID-based storage - but now with enterprise-grade security via HTTP-only JWT cookies instead of plain-text headers.

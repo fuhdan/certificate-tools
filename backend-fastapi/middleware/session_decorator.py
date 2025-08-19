@@ -8,6 +8,7 @@ from functools import wraps
 from typing import Callable, Any
 from fastapi import Request, Response, HTTPException
 from middleware.jwt_session import jwt_session_manager
+from config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +21,8 @@ def require_session(func: Callable) -> Callable:
     2. Validates JWT and extracts session ID
     3. Creates new session if JWT is missing/invalid
     4. Sets HTTP-only cookie with JWT on response
-    5. Injects session_id into request.state for route access
+    5. Deletes expired cookies automatically
+    6. Injects session_id into request.state for route access
     
     Usage:
         @router.post("/upload")
@@ -57,6 +59,7 @@ def require_session(func: Callable) -> Callable:
         jwt_token = request.cookies.get("session_token")
         session_id = None
         needs_new_cookie = False
+        clear_expired_cookie = False
         
         if jwt_token:
             # Try to validate existing JWT
@@ -64,8 +67,9 @@ def require_session(func: Callable) -> Callable:
             if session_id:
                 logger.debug(f"Valid session found: {session_id[:8]}...")
             else:
-                logger.info("Invalid/expired JWT token, creating new session")
+                logger.info("Invalid/expired JWT token, deleting expired cookie and creating new session")
                 needs_new_cookie = True
+                clear_expired_cookie = True  # Always clear expired/invalid cookies
         else:
             logger.info("No session token found, creating new session")
             needs_new_cookie = True
@@ -82,9 +86,9 @@ def require_session(func: Callable) -> Callable:
         # Call the original function
         result = await func(*args, **kwargs)
         
-        # Set cookie on response if needed
-        if needs_new_cookie:
-            # Create new JWT for the session
+        # Handle cookie operations on response
+        if clear_expired_cookie or needs_new_cookie:
+            # Create new JWT for the session if not already created
             if 'new_jwt' not in locals():
                 _, new_jwt = jwt_session_manager.create_session_jwt(session_id)
             
@@ -100,68 +104,67 @@ def require_session(func: Callable) -> Callable:
                     # We'll add a hook to set the cookie after the response is created
                     pass
             
-            # Set HTTP-only cookie
+            # Handle cookie operations
             if response:
-                _set_session_cookie(response, new_jwt)
+                if clear_expired_cookie:
+                    # Always clear expired/invalid cookies first
+                    clear_session_cookie(response)
+                    logger.info("Deleted expired/invalid session cookie")
+                
+                if needs_new_cookie:
+                    # Then set the new cookie
+                    _set_session_cookie(response, new_jwt)
             else:
                 # For routes that return data directly, we need to use a different approach
                 # Store the JWT in the request state for middleware to handle
                 request.state.new_session_jwt = new_jwt
+                if clear_expired_cookie:
+                    request.state.clear_expired_cookie = True
         
         return result
     
     return wrapper
 
 
-def _set_session_cookie(response: Response, jwt_token: str, secure: bool = None):
+def _set_session_cookie(response: Response, jwt_token: str, secure: bool = True):
     """
     Set HTTP-only session cookie with JWT
     
     Args:
         response: FastAPI Response object
         jwt_token: JWT token to store in cookie
-        secure: Use secure flag (auto-detect if None)
+        secure: Use secure flag (HTTPS only)
     """
-    from config import settings
-    
-    # Auto-detect secure flag based on environment
-    if secure is None:
-        # Use secure cookies in production, allow non-secure in development
-        secure = not settings.DEBUG
-    
     response.set_cookie(
         key="session_token",
         value=jwt_token,
         httponly=True,              # Prevent XSS - JavaScript cannot access
         secure=secure,              # HTTPS only in production
         samesite="strict",          # CSRF protection
-        max_age=86400,             # 24 hours (matches JWT expiration)
+        max_age=settings.SESSION_EXPIRE_HOURS * 3600,  # Convert hours to seconds
         path="/"                   # Available for all routes
     )
-    
-    logger.debug(f"Set session JWT cookie (secure={secure})")
+    logger.debug("Set session JWT cookie")
 
 
 def clear_session_cookie(response: Response):
     """
-    Clear session cookie (for logout functionality)
+    Clear session cookie (for logout functionality or expired/invalid sessions)
     
     Args:
         response: FastAPI Response object
     """
-    from config import settings
-    
     response.delete_cookie(
         key="session_token",
         path="/",
         httponly=True,
-        secure=not settings.DEBUG,  # Match production settings
+        secure=True,
         samesite="strict"
     )
-    logger.debug("Cleared session cookie")
+    logger.debug("Deleted session cookie")
 
 
-# Optional: Response middleware to handle cookie setting for direct returns
+# Enhanced Response middleware to handle cookie setting for direct returns
 class SessionCookieMiddleware:
     """
     Middleware that automatically sets session cookies when decorator can't
@@ -184,13 +187,26 @@ class SessionCookieMiddleware:
             nonlocal request_state
             
             if message["type"] == "http.response.start":
-                # Check if we need to set a session cookie
-                if hasattr(scope.get('state', {}), 'new_session_jwt'):
+                # Check if we need to handle cookies
+                state = scope.get('state', {})
+                
+                # Handle expired cookie clearing
+                if hasattr(state, 'clear_expired_cookie') and state.clear_expired_cookie:
+                    headers = dict(message.get("headers", []))
+                    # Add cookie deletion header - force immediate expiration
+                    clear_cookie_value = "session_token=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT"
+                    headers[b"set-cookie"] = clear_cookie_value.encode()
+                    message["headers"] = list(headers.items())
+                    logger.debug("Deleted expired session cookie via middleware")
+                
+                # Check if we need to set a new session cookie
+                elif hasattr(state, 'new_session_jwt'):
                     headers = dict(message.get("headers", []))
                     
                     # Add session cookie header
-                    jwt_token = scope['state'].new_session_jwt
-                    cookie_value = f"session_token={jwt_token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400"
+                    jwt_token = state.new_session_jwt
+                    max_age = settings.SESSION_EXPIRE_HOURS * 3600
+                    cookie_value = f"session_token={jwt_token}; HttpOnly; SameSite=Strict; Path=/; Max-Age={max_age}"
                     
                     headers[b"set-cookie"] = cookie_value.encode()
                     message["headers"] = list(headers.items())

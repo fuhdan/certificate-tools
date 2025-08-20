@@ -23,15 +23,19 @@ class SimpleSessionManager:
         self.session_expire_hours = settings.SESSION_EXPIRE_HOURS
         
     def create_session_jwt(self, session_id: Optional[str] = None) -> tuple[str, str]:
-        """Create session token using simple HMAC"""
+        """Create session token using simple HMAC - ENHANCED to extend existing sessions"""
         if not session_id:
             session_id = str(uuid.uuid4())
+            logger.debug(f"Creating NEW session: {session_id[:8]}...")
+        else:
+            logger.debug(f"Extending EXISTING session: {session_id[:8]}...")
             
-        # Simple payload
+        # Simple payload with FRESH expiration time
         payload = {
             "session_id": session_id,
             "exp": (datetime.utcnow() + timedelta(hours=self.session_expire_hours)).timestamp(),
-            "type": "session"
+            "type": "session",
+            "iat": datetime.utcnow().timestamp()  # Issued at time
         }
         
         # Encode payload
@@ -48,7 +52,11 @@ class SimpleSessionManager:
         # Simple token format: payload.signature
         token = f"{payload_b64}.{signature}"
         
-        logger.debug(f"Created simple session token for {session_id[:8]}...")
+        if session_id != str(uuid.uuid4()):
+            logger.debug(f"Extended session token for {session_id[:8]}... (new expiry: +{self.session_expire_hours}h)")
+        else:
+            logger.debug(f"Created new session token for {session_id[:8]}...")
+        
         return session_id, token
     
     def validate_session_jwt(self, token: str) -> Optional[str]:

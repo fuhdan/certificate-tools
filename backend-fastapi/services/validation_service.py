@@ -593,8 +593,11 @@ class ValidationService:
                         warning_reason = "Key size below 2048 bits detected"
                         break
                     elif key_size == 2048:
-                        overall_strength = "acceptable"
-                        warning_reason = "2048-bit keys have limited future lifespan"
+                        # Only set to acceptable if we haven't found a stronger key yet
+                        if overall_strength == "strong":
+                            overall_strength = "acceptable"
+                            warning_reason = "2048-bit keys have limited future lifespan"
+                    # Keys >= 3072 bits remain "strong" - no warning needed
             
             details = {
                 "signature_algorithm": {

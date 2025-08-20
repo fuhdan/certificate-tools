@@ -23,6 +23,7 @@ MAX_FILE_SIZE = settings.MAX_FILE_SIZE
 @require_session
 async def analyze_certificate(
     request: Request,
+    response: Response,
     file: UploadFile = File(...),
     password: str = Form(None),
 ):

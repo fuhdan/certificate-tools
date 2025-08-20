@@ -126,30 +126,29 @@ def require_session(func: Callable) -> Callable:
     return wrapper
 
 
-def _set_session_cookie(response: Response, jwt_token: str, secure: bool = False):  # Changed default to False
+def _set_session_cookie(response: Response, jwt_token: str):
     """
-    Set HTTP-only session cookie with JWT
+    Set HTTP-only session cookie with JWT using config settings
     
     Args:
         response: FastAPI Response object
         jwt_token: JWT token to store in cookie
-        secure: Use secure flag (HTTPS only) - False for development
     """
     response.set_cookie(
         key="session_token",
         value=jwt_token,
-        httponly=True,              # Prevent XSS - JavaScript cannot access
-        secure=secure,              # FALSE for development over HTTP
-        samesite="strict",          # CSRF protection
-        max_age=settings.SESSION_EXPIRE_HOURS * 3600,  # Convert hours to seconds
-        path="/"                   # Available for all routes
+        httponly=settings.COOKIE_HTTPONLY,      # Always True for security
+        secure=settings.COOKIE_SECURE,          # From config: False in DEBUG, True in production
+        samesite=settings.COOKIE_SAMESITE,      # From config: "strict"
+        max_age=settings.SESSION_EXPIRE_HOURS * 3600,  # From config
+        path="/"
     )
-    logger.debug("Set session JWT cookie")
+    logger.debug(f"Set session JWT cookie (secure={settings.COOKIE_SECURE})")
 
 
 def clear_session_cookie(response: Response):
     """
-    Clear session cookie (for logout functionality or expired/invalid sessions)
+    Clear session cookie using config settings
     
     Args:
         response: FastAPI Response object
@@ -157,9 +156,9 @@ def clear_session_cookie(response: Response):
     response.delete_cookie(
         key="session_token",
         path="/",
-        httponly=True,
-        secure=False,      # Changed to False for development
-        samesite="strict"
+        httponly=settings.COOKIE_HTTPONLY,
+        secure=settings.COOKIE_SECURE,          # From config
+        samesite=settings.COOKIE_SAMESITE       # From config
     )
     logger.debug("Deleted session cookie")
 

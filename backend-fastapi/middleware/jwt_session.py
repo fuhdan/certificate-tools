@@ -26,11 +26,21 @@ class SimpleSessionManager:
         """Create session token using simple HMAC"""
         if not session_id:
             session_id = str(uuid.uuid4())
-            
+        
+        # Calculate expiration time
+        now = datetime.utcnow()
+        expiry = now + timedelta(hours=self.session_expire_hours)
+        
+        # DEBUG: Log the times
+        logger.error(f"🕐 JWT DEBUG - Current time: {now}")
+        logger.error(f"🕐 JWT DEBUG - Expiry time: {expiry}")
+        logger.error(f"🕐 JWT DEBUG - Session expire hours: {self.session_expire_hours}")
+        logger.error(f"🕐 JWT DEBUG - Expiry timestamp: {expiry.timestamp()}")
+        
         # Simple payload
         payload = {
             "session_id": session_id,
-            "exp": (datetime.utcnow() + timedelta(hours=self.session_expire_hours)).timestamp(),
+            "exp": expiry.timestamp(),
             "type": "session"
         }
         
@@ -74,8 +84,17 @@ class SimpleSessionManager:
             payload_json = base64.urlsafe_b64decode(payload_b64 + '==').decode()
             payload = json.loads(payload_json)
             
+            # DEBUG: Check expiration
+            now = datetime.utcnow()
+            token_exp = payload.get('exp', 0)
+            
+            logger.error(f"🕐 VALIDATION DEBUG - Current time: {now}")
+            logger.error(f"🕐 VALIDATION DEBUG - Token exp timestamp: {token_exp}")
+            logger.error(f"🕐 VALIDATION DEBUG - Token exp datetime: {datetime.utcfromtimestamp(token_exp)}")
+            logger.error(f"🕐 VALIDATION DEBUG - Time diff seconds: {token_exp - now.timestamp()}")
+            
             # Check expiration
-            if datetime.utcnow().timestamp() > payload.get('exp', 0):
+            if now.timestamp() > token_exp:
                 logger.info("Session token expired")
                 return None
                 

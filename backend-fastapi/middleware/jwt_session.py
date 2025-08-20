@@ -32,10 +32,10 @@ class SimpleSessionManager:
         expiry = now + timedelta(hours=self.session_expire_hours)
         
         # DEBUG: Log the times
-        logger.error(f"🕐 JWT DEBUG - Current time: {now}")
-        logger.error(f"🕐 JWT DEBUG - Expiry time: {expiry}")
-        logger.error(f"🕐 JWT DEBUG - Session expire hours: {self.session_expire_hours}")
-        logger.error(f"🕐 JWT DEBUG - Expiry timestamp: {expiry.timestamp()}")
+        logger.debug(f"🕐 Create Session JWT Cookie - Current time: {now}")
+        logger.debug(f"🕐 Create Session JWT Cookie - Expiry time: {expiry}")
+        logger.debug(f"🕐 Create Session JWT Cookie - Session expire hours: {self.session_expire_hours}")
+        logger.debug(f"🕐 Create Session JWT Cookie - Expiry timestamp: {expiry.timestamp()}")
         
         # Simple payload
         payload = {
@@ -88,10 +88,10 @@ class SimpleSessionManager:
             now = datetime.utcnow()
             token_exp = payload.get('exp', 0)
             
-            logger.error(f"🕐 VALIDATION DEBUG - Current time: {now}")
-            logger.error(f"🕐 VALIDATION DEBUG - Token exp timestamp: {token_exp}")
-            logger.error(f"🕐 VALIDATION DEBUG - Token exp datetime: {datetime.utcfromtimestamp(token_exp)}")
-            logger.error(f"🕐 VALIDATION DEBUG - Time diff seconds: {token_exp - now.timestamp()}")
+            logger.debug(f"🕐 Validate Session JWT Cookie - Current time: {now}")
+            logger.debug(f"🕐 Validate Session JWT Cookie - Token exp timestamp: {token_exp}")
+            logger.debug(f"🕐 Validate Session JWT Cookie - Token exp datetime: {datetime.utcfromtimestamp(token_exp)}")
+            logger.debug(f"🕐 Validate Session JWT Cookie - Time diff seconds: {token_exp - now.timestamp()}")
             
             # Check expiration
             if now.timestamp() > token_exp:

@@ -126,20 +126,20 @@ def require_session(func: Callable) -> Callable:
     return wrapper
 
 
-def _set_session_cookie(response: Response, jwt_token: str, secure: bool = True):
+def _set_session_cookie(response: Response, jwt_token: str, secure: bool = False):  # Changed default to False
     """
     Set HTTP-only session cookie with JWT
     
     Args:
         response: FastAPI Response object
         jwt_token: JWT token to store in cookie
-        secure: Use secure flag (HTTPS only)
+        secure: Use secure flag (HTTPS only) - False for development
     """
     response.set_cookie(
         key="session_token",
         value=jwt_token,
         httponly=True,              # Prevent XSS - JavaScript cannot access
-        secure=secure,              # HTTPS only in production
+        secure=secure,              # FALSE for development over HTTP
         samesite="strict",          # CSRF protection
         max_age=settings.SESSION_EXPIRE_HOURS * 3600,  # Convert hours to seconds
         path="/"                   # Available for all routes
@@ -158,7 +158,7 @@ def clear_session_cookie(response: Response):
         key="session_token",
         path="/",
         httponly=True,
-        secure=True,
+        secure=False,      # Changed to False for development
         samesite="strict"
     )
     logger.debug("Deleted session cookie")
@@ -190,14 +190,24 @@ class SessionCookieMiddleware:
                 # Check if we need to handle cookies
                 state = scope.get('state', {})
                 
-                # Handle expired cookie clearing
+                # Handle expired cookie clearing - FORCE CLEAR OLD COOKIES
                 if hasattr(state, 'clear_expired_cookie') and state.clear_expired_cookie:
                     headers = dict(message.get("headers", []))
-                    # Add cookie deletion header - force immediate expiration
-                    clear_cookie_value = "session_token=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT"
-                    headers[b"set-cookie"] = clear_cookie_value.encode()
+                    # Add cookie deletion header - force immediate expiration with multiple methods
+                    clear_cookie_values = [
+                        "session_token=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT",
+                        "session_token=deleted; HttpOnly; SameSite=Strict; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT"
+                    ]
+                    
+                    # Set multiple clear cookie headers to ensure deletion
+                    if b"set-cookie" in headers:
+                        existing = headers[b"set-cookie"].decode()
+                        headers[b"set-cookie"] = f"{existing}, {', '.join(clear_cookie_values)}".encode()
+                    else:
+                        headers[b"set-cookie"] = ", ".join(clear_cookie_values).encode()
+                    
                     message["headers"] = list(headers.items())
-                    logger.debug("Deleted expired session cookie via middleware")
+                    logger.error("🍪 FORCE CLEARED expired session cookie via middleware")
                 
                 # Check if we need to set a new session cookie
                 elif hasattr(state, 'new_session_jwt'):
@@ -210,10 +220,9 @@ class SessionCookieMiddleware:
                     
                     headers[b"set-cookie"] = cookie_value.encode()
                     message["headers"] = list(headers.items())
+                    logger.error(f"🍪 SET NEW session cookie via middleware")
             
             await original_send(message)
-        
-        await self.app(scope, receive, send_wrapper)
 
 
 # Convenience functions for manual session management

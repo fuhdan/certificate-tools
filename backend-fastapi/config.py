@@ -24,7 +24,8 @@ class Settings:
     API_PREFIX: str = "/api"
 
     # Cookie Security Settings
-    COOKIE_SECURE: bool = os.getenv("COOKIE_SECURE", "true" if not DEBUG else "false").lower() == "true"
+    # COOKIE_SECURE: bool = os.getenv("COOKIE_SECURE", "true" if not DEBUG else "false").lower() == "true"
+    COOKIE_SECURE: bool = True  # Always True for security
     COOKIE_SAMESITE: str = os.getenv("COOKIE_SAMESITE", "strict")
     COOKIE_HTTPONLY: bool = True  # Always True for security
     

@@ -1,53 +1,171 @@
 // frontend/src/services/api.js
+// Clean API with proper logging system
 
 import axios from 'axios'
+import { 
+  apiInfo, apiDebug, apiError, apiWarn,
+  sessionInfo, sessionDebug, sessionWarn, sessionError, sessionTransition, sessionExpired, sessionCreated,
+  cookieInfo, cookieDebug, cookieWarn, cookieStateChange,
+  downloadInfo, downloadDebug, downloadError,
+  time, timeEnd
+} from '../utils/logger'
+
+// Helper function to log cookie information
+function logCookieInfo(prefix) {
+  const allCookies = document.cookie.split(';').reduce((cookies, cookie) => {
+    const [name, value] = cookie.trim().split('=')
+    cookies[name] = value
+    return cookies
+  }, {})
+  
+  const sessionToken = allCookies.session_token
+  
+  cookieDebug(`${prefix} Cookie State:`)
+  cookieDebug(`   - Has session_token: ${!!sessionToken}`)
+  if (sessionToken) {
+    cookieDebug(`   - Token preview: ${sessionToken.substring(0, 20)}...${sessionToken.substring(sessionToken.length - 10)}`)
+    cookieDebug(`   - Token length: ${sessionToken.length}`)
+  }
+  cookieDebug(`   - All cookies: ${Object.keys(allCookies).join(', ') || 'none'}`)
+  
+  return { allCookies, sessionToken }
+}
+
+// Helper function to detect session changes
+let lastKnownSessionToken = null
+
+function detectSessionChange(context) {
+  const { sessionToken } = logCookieInfo(`SESSION CHECK - ${context}`)
+  
+  if (lastKnownSessionToken !== sessionToken) {
+    if (lastKnownSessionToken === null) {
+      sessionInfo(`Initial session detected: ${sessionToken ? sessionToken.substring(0, 20) + '...' : 'none'}`)
+    } else if (sessionToken === null || sessionToken === undefined) {
+      sessionError(`Session token LOST! Previous: ${lastKnownSessionToken.substring(0, 20)}...`)
+      cookieStateChange('TOKEN_LOST')
+    } else {
+      sessionTransition(
+        lastKnownSessionToken ? lastKnownSessionToken.substring(0, 20) + '...' : 'none',
+        sessionToken.substring(0, 20) + '...',
+        'TOKEN_CHANGED'
+      )
+      cookieStateChange('TOKEN_CHANGED')
+    }
+    lastKnownSessionToken = sessionToken
+    return true
+  }
+  return false
+}
 
 // Create axios instance with base configuration
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || '/api',
-  timeout: 30000, // Increased for downloads
+  timeout: 30000,
   headers: {
     'Content-Type': 'application/json'
   },
-  withCredentials: true  // 🔑 CRITICAL: Include JWT cookies automatically
+  withCredentials: true
 })
 
-// Request interceptor - REMOVED session ID header logic
+// Request interceptor with clean logging
 api.interceptors.request.use(
   (config) => {
-    // JWT cookies are sent automatically by browser with withCredentials: true
-    // No need to add X-Session-ID headers anymore
-    console.log('📤 API Request:', config.method?.toUpperCase(), config.url)
+    apiInfo(`${config.method?.toUpperCase()} ${config.url}`)
+    
+    // Check session state before request (debug only)
+    const sessionChanged = detectSessionChange('PRE-REQUEST')
+    if (sessionChanged) {
+      sessionWarn(`Session change detected before ${config.method?.toUpperCase()} ${config.url}`)
+    }
+    
+    // Log request timing (debug only)
+    config.metadata = { startTime: Date.now() }
+    
     return config
   },
   (error) => {
+    apiError('Request error:', error)
     return Promise.reject(error)
   }
 )
 
-// Response interceptor for unified error handling - SIMPLIFIED
+// Response interceptor with clean logging
 api.interceptors.response.use(
   (response) => {
+    // Calculate request duration (debug only)
+    const duration = response.config.metadata ? Date.now() - response.config.metadata.startTime : 'unknown'
+    
+    apiDebug(`${response.status} ${response.config.method?.toUpperCase()} ${response.config.url} (${duration}ms)`)
+    
+    // Check for Set-Cookie headers in response (debug only)
+    const setCookieHeader = response.headers['set-cookie'] || response.headers['Set-Cookie']
+    if (setCookieHeader) {
+      cookieInfo(`Server sent Set-Cookie header: ${setCookieHeader}`)
+    }
+    
+    // Check session state after response (debug only)
+    setTimeout(() => {
+      const sessionChanged = detectSessionChange('POST-RESPONSE')
+      if (sessionChanged) {
+        sessionWarn(`Session changed after ${response.config.method?.toUpperCase()} ${response.config.url}`)
+      }
+    }, 100)
+    
     return response
   },
   (error) => {
-    // JWT session errors are handled automatically by the decorator
-    // No manual session regeneration needed
-    console.error('📥 API Error:', error.response?.status, error.response?.data)
+    const status = error.response?.status
+    const url = error.config?.url
+    const method = error.config?.method?.toUpperCase()
+    
+    apiError(`${status || 'NETWORK'} ${method} ${url}`)
+    apiDebug('Error details:', error.response?.data)
+    
+    // Check if this might be session-related
+    if (status === 401 || status === 403) {
+      sessionError(`Potential session issue - ${status} error`)
+      detectSessionChange('ERROR-RESPONSE')
+    }
+    
+    // Check for Set-Cookie headers even in error responses (debug only)
+    const setCookieHeader = error.response?.headers?.['set-cookie'] || error.response?.headers?.['Set-Cookie']
+    if (setCookieHeader) {
+      cookieWarn(`Server sent Set-Cookie in error response: ${setCookieHeader}`)
+    }
+    
     return Promise.reject(error)
   }
 )
 
+// Enhanced session monitoring - only in debug mode
+if (import.meta.env.VITE_DEBUG === 'true' || localStorage.getItem('certificate_debug') === 'true') {
+  // Check every 30 seconds
+  setInterval(() => {
+    detectSessionChange('PERIODIC-CHECK')
+  }, 30000)
+
+  // Monitor page visibility changes
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      sessionDebug('Page became visible - checking session')
+      detectSessionChange('PAGE-VISIBLE')
+    }
+  })
+
+  // Initialize session tracking
+  setTimeout(() => {
+    detectSessionChange('INITIAL-LOAD')
+  }, 1000)
+}
+
 /**
  * Map backend PKI component to frontend certificate object
- * (Unchanged - no session management here)
  */
 function mapPKIComponentToCertificate(component) {
-  console.log('🗺️ Mapping component:', component)
+  apiDebug('Mapping component:', component)
   
   try {
     const metadata = component.metadata || {}
-    console.log('🗺️ Component metadata:', metadata)
     
     // Base certificate object
     const certificate = {
@@ -118,36 +236,28 @@ function mapPKIComponentToCertificate(component) {
       }
     }
     
-    console.log('✅ Mapped certificate:', certificate)
+    apiDebug('Mapped certificate:', certificate)
     return certificate
     
   } catch (error) {
-    console.error('💥 Error in mapPKIComponentToCertificate:', error)
-    console.error('💥 Component that failed:', component)
+    apiError('Error in mapPKIComponentToCertificate:', error)
+    apiError('Component that failed:', component)
     throw error
   }
 }
 
-// ===== HELPER FUNCTIONS FOR CUSTOM DOWNLOADS =====
-// (Unchanged - no session management in these helpers)
-
-/**
- * Get component ID by type from current session
- */
+// Helper functions for downloads
 async function getComponentIdByType(targetType) {
   try {
     const certificates = await certificateAPI.getCertificates()
     const component = certificates.certificates.find(cert => cert.type === targetType)
     return component?.id || null
   } catch (error) {
-    console.error(`Error finding ${targetType} component:`, error)
+    apiError(`Error finding ${targetType} component:`, error)
     return null
   }
 }
 
-/**
- * Get CA component IDs from current session
- */
 async function getCAComponentIds() {
   try {
     const certificates = await certificateAPI.getCertificates()
@@ -156,76 +266,56 @@ async function getCAComponentIds() {
     )
     return caComponents.map(cert => cert.id)
   } catch (error) {
-    console.error('Error finding CA components:', error)
+    apiError('Error finding CA components:', error)
     return []
   }
 }
 
-// ===== UNIFIED DOWNLOAD API =====
-// All downloads now use the unified endpoint
-
+// Download API
 export const downloadAPI = {
-  /**
-   * Download Apache server bundle
-   * @param {boolean} includeInstructions - Whether to include installation guides
-   */
   async downloadApacheBundle(includeInstructions = true) {
     try {
-      // Session ID no longer needed - handled by JWT cookies
+      downloadInfo('Starting Apache bundle download')
+      detectSessionChange('DOWNLOAD-START')
+      
       const result = await this.downloadBundle('apache', {
         includeInstructions
       })
       
-      console.log('Apache bundle downloaded successfully')
+      downloadInfo('Apache bundle downloaded successfully')
+      detectSessionChange('DOWNLOAD-SUCCESS')
       return result
     } catch (error) {
-      console.error('Error downloading Apache bundle:', error)
+      downloadError('Apache bundle failed:', error)
+      detectSessionChange('DOWNLOAD-ERROR')
       throw new Error(error.response?.data?.detail || 'Apache download failed')
     }
   },
 
-  /**
-   * Download IIS server bundle
-   * @param {boolean} includeInstructions - Whether to include installation guides
-   */
   async downloadIISBundle(includeInstructions = true) {
     try {
-      // Session ID no longer needed - handled by JWT cookies
-      const result = await this.downloadBundle('iis', {
-        includeInstructions
-      })
-      
-      console.log('IIS bundle downloaded successfully')
+      downloadInfo('Starting IIS bundle download')
+      const result = await this.downloadBundle('iis', { includeInstructions })
+      downloadInfo('IIS bundle downloaded successfully')
       return result
     } catch (error) {
-      console.error('Error downloading IIS bundle:', error)
+      downloadError('IIS bundle failed:', error)
       throw new Error(error.response?.data?.detail || 'IIS download failed')
     }
   },
 
-  /**
-   * Download Nginx server bundle
-   * @param {boolean} includeInstructions - Whether to include installation guides
-   */
   async downloadNginxBundle(includeInstructions = true) {
     try {
-      // Session ID no longer needed - handled by JWT cookies
-      const result = await this.downloadBundle('nginx', {
-        includeInstructions
-      })
-      
-      console.log('Nginx bundle downloaded successfully')
+      downloadInfo('Starting Nginx bundle download')
+      const result = await this.downloadBundle('nginx', { includeInstructions })
+      downloadInfo('Nginx bundle downloaded successfully')
       return result
     } catch (error) {
-      console.error('Error downloading Nginx bundle:', error)
+      downloadError('Nginx bundle failed:', error)
       throw new Error(error.response?.data?.detail || 'Nginx download failed')
     }
   },
 
-  /**
-   * Download private key only - UPDATED: Now uses custom endpoint
-   * @param {string} format - Format for private key (pem, der, pkcs8, pkcs8_encrypted, pem_encrypted)
-   */
   async downloadPrivateKey(format = 'pem') {
     try {
       const componentId = await getComponentIdByType('PrivateKey')
@@ -239,21 +329,16 @@ export const downloadAPI = {
         includeInstructions: false
       }
       
-      console.log('Downloading private key with custom endpoint:', config)
+      downloadDebug('Downloading private key with custom endpoint:', config)
       const result = await this.downloadCustomBundle(config)
-      
-      console.log('Private key downloaded successfully')
+      downloadInfo('Private key downloaded successfully')
       return result
     } catch (error) {
-      console.error('Error downloading private key:', error)
+      downloadError('Error downloading private key:', error)
       throw new Error(error.response?.data?.detail || 'Private key download failed')
     }
   },
 
-  /**
-   * Download certificate only - UPDATED: Now uses custom endpoint
-   * @param {string} format - Format for certificate (pem, der)
-   */
   async downloadCertificate(format = 'pem') {
     try {
       const componentId = await getComponentIdByType('Certificate')
@@ -267,21 +352,16 @@ export const downloadAPI = {
         includeInstructions: false
       }
       
-      console.log('Downloading certificate with custom endpoint:', config)
+      downloadDebug('Downloading certificate with custom endpoint:', config)
       const result = await this.downloadCustomBundle(config)
-      
-      console.log('Certificate downloaded successfully')
+      downloadInfo('Certificate downloaded successfully')
       return result
     } catch (error) {
-      console.error('Error downloading certificate:', error)
+      downloadError('Error downloading certificate:', error)
       throw new Error(error.response?.data?.detail || 'Certificate download failed')
     }
   },
 
-  /**
-   * Download CA certificate chain - UPDATED: Now uses custom endpoint
-   * @param {string} format - Format for CA certificates (pem, der)
-   */
   async downloadCAChain(format = 'pem') {
     try {
       const componentIds = await getCAComponentIds()
@@ -289,7 +369,6 @@ export const downloadAPI = {
         throw new Error('No CA certificates found in session')
       }
 
-      // Create format mapping for all CA components
       const formats = {}
       componentIds.forEach(id => {
         formats[id] = format
@@ -301,24 +380,18 @@ export const downloadAPI = {
         includeInstructions: false
       }
       
-      console.log('Downloading CA chain with custom endpoint:', config)
+      downloadDebug('Downloading CA chain with custom endpoint:', config)
       const result = await this.downloadCustomBundle(config)
-      
-      console.log('CA chain downloaded successfully')
+      downloadInfo('CA chain downloaded successfully')
       return result
     } catch (error) {
-      console.error('Error downloading CA chain:', error)
+      downloadError('Error downloading CA chain:', error)
       throw new Error(error.response?.data?.detail || 'CA chain download failed')
     }
   },
 
-  /**
-   * Download PKCS7 bundle - UPDATED: Now uses custom endpoint with chain creation
-   * @param {string} format - Format for PKCS7 (pem, der)
-   */
   async downloadPKCS7Bundle(format = 'pem') {
     try {
-      // Get all certificate components (end-entity + CA certificates)
       const certificates = await certificateAPI.getCertificates()
       const certComponents = certificates.certificates.filter(cert => 
         cert.type === 'Certificate' || ['IssuingCA', 'IntermediateCA', 'RootCA'].includes(cert.type)
@@ -328,13 +401,10 @@ export const downloadAPI = {
         throw new Error('No certificates found for PKCS7 bundle')
       }
 
-      // Create format mapping for all certificates
       const formats = {}
       certComponents.forEach(cert => {
         formats[cert.id] = format
       })
-
-      // Use special bundle format key for PKCS7
       formats['bundle_pkcs7'] = format
 
       const config = {
@@ -343,21 +413,16 @@ export const downloadAPI = {
         includeInstructions: false
       }
       
-      console.log('PKCS7 bundle downloaded successfully with custom endpoint')
+      downloadInfo('PKCS7 bundle downloaded successfully')
       return await this.downloadCustomBundle(config)
     } catch (error) {
-      console.error('Error downloading PKCS7 bundle:', error)
+      downloadError('Error downloading PKCS7 bundle:', error)
       throw new Error(error.response?.data?.detail || 'PKCS7 download failed')
     }
   },
 
-  /**
-   * Download PKCS12 bundle - UPDATED: Now uses custom endpoint with bundle creation
-   * @param {string} encryption - Encryption type (encrypted, unencrypted)
-   */
   async downloadPKCS12Bundle(encryption = 'encrypted') {
     try {
-      // Get required components for PKCS12
       const certificates = await certificateAPI.getCertificates()
       const certificate = certificates.certificates.find(cert => cert.type === 'Certificate')
       const privateKey = certificates.certificates.find(cert => cert.type === 'PrivateKey')
@@ -369,16 +434,12 @@ export const downloadAPI = {
         throw new Error('Private key required for PKCS12 bundle')
       }
 
-      // Find CA certificates
       const caCerts = certificates.certificates.filter(cert => 
         ['IssuingCA', 'IntermediateCA', 'RootCA'].includes(cert.type)
       )
 
-      // Build component list and formats
       const componentIds = [certificate.id, privateKey.id, ...caCerts.map(ca => ca.id)]
       const formats = {}
-      
-      // Use special bundle format key for PKCS12
       formats['bundle_pkcs12'] = encryption
 
       const config = {
@@ -387,43 +448,31 @@ export const downloadAPI = {
         includeInstructions: false
       }
       
-      console.log('PKCS12 bundle downloaded successfully with custom endpoint')
+      downloadInfo('PKCS12 bundle downloaded successfully')
       return await this.downloadCustomBundle(config)
     } catch (error) {
-      console.error('Error downloading PKCS12 bundle:', error)
+      downloadError('Error downloading PKCS12 bundle:', error)
       throw new Error(error.response?.data?.detail || 'PKCS12 download failed')
     }
   },
 
-  /**
-   * Download custom bundle with specific components and formats
-   * @param {Object} config - Download configuration
-   * @param {string[]} config.components - Array of component IDs
-   * @param {Object} config.formats - Format selections for components
-   * @param {boolean} config.includeInstructions - Whether to include instructions
-   */
   async downloadCustomBundle(config) {
     try {
-      // Session ID no longer needed - handled by JWT cookies
       const result = await this.downloadBundle('custom', config)
-      
-      console.log('Custom bundle downloaded successfully')
+      downloadInfo('Custom bundle downloaded successfully')
       return result
     } catch (error) {
-      console.error('Error downloading custom bundle:', error)
+      downloadError('Error downloading custom bundle:', error)
       throw new Error(error.response?.data?.detail || 'Custom download failed')
     }
   },
 
-  /**
-   * Core download method - handles all bundle types
-   * 🚀 UPDATED: Clean URLs without session ID
-   * @param {string} bundleType - Type of bundle to download
-   * @param {Object} options - Download options
-   */
   async downloadBundle(bundleType, options = {}) {
     try {
-      // Build query parameters
+      downloadInfo(`Starting ${bundleType} bundle download`)
+      time(`download-${bundleType}`)
+      detectSessionChange('DOWNLOAD-BUNDLE-START')
+      
       const params = new URLSearchParams()
       
       if (options.includeInstructions !== undefined) {
@@ -439,26 +488,23 @@ export const downloadAPI = {
       }
       
       const queryString = params.toString()
-      // 🚀 NEW: Clean URL without session ID
       const url = `/downloads/download/${bundleType}${queryString ? '?' + queryString : ''}`
       
-      console.log(`Downloading ${bundleType} bundle from:`, url)
+      downloadDebug(`Download URL: ${url}`)
       
-      // Make API call
       const response = await api.post(url, {}, {
         responseType: 'blob',
-        timeout: 60000, // 60 seconds for large downloads
+        timeout: 60000,
       })
 
-      console.log(`${bundleType} bundle response received:`, response.status, response.headers)
+      downloadDebug(`Response: ${response.status}`, response.headers)
+      detectSessionChange('DOWNLOAD-BUNDLE-SUCCESS')
 
-      // Extract passwords from response headers
       const zipPassword = response.headers['x-zip-password']
       const encryptionPassword = response.headers['x-encryption-password']
       
-      // Create download filename from Content-Disposition header
       const contentDisposition = response.headers['content-disposition']
-      let filename = `${bundleType}-bundle.zip`  // Simplified default filename
+      let filename = `${bundleType}-bundle.zip`
       if (contentDisposition) {
         const filenameMatch = contentDisposition.match(/filename=([^;]+)/)
         if (filenameMatch) {
@@ -466,7 +512,6 @@ export const downloadAPI = {
         }
       }
 
-      // Trigger download
       const blob = new Blob([response.data], { type: 'application/zip' })
       const downloadUrl = window.URL.createObjectURL(blob)
       
@@ -477,8 +522,8 @@ export const downloadAPI = {
       link.click()
       document.body.removeChild(link)
       
-      // Clean up
       window.URL.revokeObjectURL(downloadUrl)
+      timeEnd(`download-${bundleType}`)
 
       return {
         success: true,
@@ -489,87 +534,34 @@ export const downloadAPI = {
       }
 
     } catch (error) {
-      console.error(`Error downloading ${bundleType} bundle:`, error)
-      console.error('Error response:', error.response?.data)
-      console.error('Error status:', error.response?.status)
+      downloadError(`${bundleType} bundle failed:`, error)
+      timeEnd(`download-${bundleType}`)
+      detectSessionChange('DOWNLOAD-BUNDLE-ERROR')
       throw error
     }
   },
 
-  /**
-   * Get available bundle types for current session
-   * 🚀 UPDATED: Clean URL without session ID
-   */
   async getAvailableBundleTypes() {
     try {
-      // 🚀 NEW: Clean URL without session ID
       const response = await api.get('/downloads/bundle-types')
       return response.data
     } catch (error) {
-      console.error('Error getting available bundle types:', error)
+      downloadError('Error getting available bundle types:', error)
       throw new Error(error.response?.data?.detail || 'Failed to get available bundle types')
     }
   }
 }
 
-// ===== BACKWARD COMPATIBILITY WRAPPERS =====
-// These maintain compatibility with existing frontend code
-
-export const advancedDownloadAPI = {
-  /**
-   * Get available download formats for session components
-   * @deprecated Use downloadAPI.getAvailableBundleTypes() instead
-   */
-  async getAvailableFormats() {
-    try {
-      const bundleTypes = await downloadAPI.getAvailableBundleTypes()
-      
-      // Convert new format to old format for compatibility
-      return {
-        success: true,
-        session_id: bundleTypes.session_id,
-        components: [], // Would need to be populated from session data
-        bundle_options: bundleTypes.custom_available ? [
-          { type: 'custom', name: 'Custom Selection', description: 'Select specific components and formats' }
-        ] : [],
-        message: "Use downloadAPI.getAvailableBundleTypes() for full information"
-      }
-    } catch (error) {
-      console.error('Error getting available formats:', error)
-      throw new Error(error.response?.data?.detail || 'Failed to get available formats')
-    }
-  },
-
-  /**
-   * Download advanced bundle with custom format selections
-   * @deprecated Use downloadAPI.downloadCustomBundle() instead
-   */
-  async downloadAdvancedBundle(downloadConfig) {
-    try {
-      console.log('🔥 Advanced download (legacy) with config:', downloadConfig)
-      
-      // Convert legacy format to new format
-      const config = {
-        components: downloadConfig.component_ids || [],
-        formats: downloadConfig.format_selections || {},
-        includeInstructions: false // Advanced downloads typically don't include instructions
-      }
-      
-      return await downloadAPI.downloadCustomBundle(config)
-    } catch (error) {
-      console.error('❌ Error in legacy advanced download:', error)
-      throw error
-    }
-  }
-}
-
-// ===== CERTIFICATE API =====
-
+// Certificate API
 export const certificateAPI = {
   async uploadCertificate(file, password = null) {
     try {
+      apiInfo(`Starting certificate upload: ${file.name}`)
+      time('upload-certificate')
+      detectSessionChange('UPLOAD-START')
+      
       const formData = new FormData()
-      formData.append('file', file)  // Backend expects 'file' field name
+      formData.append('file', file)
       if (password) {
         formData.append('password', password)
       }
@@ -580,34 +572,30 @@ export const certificateAPI = {
         }
       })
 
-      if (response.data.success) {
-        return response.data
-      }
+      apiInfo('Upload completed successfully')
+      timeEnd('upload-certificate')
+      detectSessionChange('UPLOAD-SUCCESS')
 
-      return response.data
+      return response.data.success ? response.data : response.data
     } catch (error) {
-      // Check if this is a password requirement, not an actual error
+      apiError('Upload failed:', error)
+      timeEnd('upload-certificate')
+      detectSessionChange('UPLOAD-ERROR')
+      
       if (error.response?.status === 400 && error.response?.data?.requiresPassword) {
-        // Return the password requirement response instead of throwing an error
         return error.response.data
       }
       
-      console.error('Error uploading certificate:', error)
       throw new Error(error.response?.data?.detail || error.response?.data?.message || 'Upload failed')
     }
   },
 
-  /**
-   * Get certificates with optional validation results
-   * @param {boolean} includeValidation - Whether to include validation results
-   * @param {boolean} includeChainInfo - Whether to include chain information
-   * @returns {Promise<Object>} API response with certificates and validation
-   */
   async getCertificates(options = {}) {
     try {
-      console.log('🔄 API: Getting certificates from /certificates endpoint...')
+      apiInfo('Getting certificates from /certificates endpoint')
+      time('get-certificates')
+      detectSessionChange('GET-CERTIFICATES-START')
       
-      // Build query parameters
       const params = new URLSearchParams()
       if (options.include_validation) {
         params.append('include_validation', 'true')
@@ -617,37 +605,35 @@ export const certificateAPI = {
       }
       
       const url = `/certificates${params.toString() ? '?' + params.toString() : ''}`
-      console.log('🔗 API: Request URL:', url)
+      apiDebug('Request URL:', url)
       
       const response = await api.get(url)
 
-      console.log('📥 API: Raw /certificates response:', response.data)
-      console.log('📥 API: Components array:', response.data.components)
-      console.log('📥 API: Components length:', response.data.components?.length)
-      console.log('📥 API: Validation results:', response.data.validation_results)
+      apiDebug('Raw /certificates response:', response.data)
+      apiDebug('Components array:', response.data.components)
+      apiDebug('Components length:', response.data.components?.length)
+      apiDebug('Validation results:', response.data.validation_results)
+      
+      timeEnd('get-certificates')
+      detectSessionChange('GET-CERTIFICATES-SUCCESS')
 
       if (response.data.success && response.data.components) {
-        console.log('🔄 API: Starting component mapping...')
+        apiDebug('Starting component mapping...')
 
         const certificates = response.data.components.map((component, index) => {
-          console.log(`🔍 API: Mapping component ${index}:`, component)
-          console.log(`🔍 API: Component keys:`, Object.keys(component))
-          console.log(`🔍 API: Component type:`, component.type)
-          console.log(`🔍 API: Component metadata:`, component.metadata)
+          apiDebug(`Mapping component ${index}:`, component)
 
           try {
             const mapped = mapPKIComponentToCertificate(component)
-            console.log(`✅ API: Mapped component ${index}:`, mapped)
-            console.log(`✅ API: Mapped component type:`, mapped?.type)
+            apiDebug(`Mapped component ${index}:`, mapped)
             return mapped
           } catch (mapError) {
-            console.error(`💥 API: Mapping failed for component ${index}:`, mapError)
+            apiError(`Mapping failed for component ${index}:`, mapError)
             return null
           }
-        }).filter(cert => cert !== null) // Remove any failed mappings
+        }).filter(cert => cert !== null)
 
-        console.log('🎯 API: Final mapped certificates:', certificates)
-        console.log('🎯 API: Final certificates count:', certificates.length)
+        apiInfo(`Final mapped certificates: ${certificates.length}`)
 
         const result = {
           success: true,
@@ -655,15 +641,14 @@ export const certificateAPI = {
           total: certificates.length
         }
         
-        // Include validation results if present
         if (response.data.validation_results) {
           result.validation_results = response.data.validation_results
-          console.log('✅ API: Added validation results to response:', result.validation_results)
+          apiDebug('Added validation results to response:', result.validation_results)
         }
         
         return result
       } else {
-        console.log('❌ API: No components found or response unsuccessful')
+        apiInfo('No components found or response unsuccessful')
         return {
           success: true,
           certificates: [],
@@ -671,27 +656,43 @@ export const certificateAPI = {
         }
       }
     } catch (error) {
-      console.error('💥 API: Error fetching certificates:', error)
+      apiError('Error fetching certificates:', error)
+      timeEnd('get-certificates')
+      detectSessionChange('GET-CERTIFICATES-ERROR')
       throw new Error(error.response?.data?.message || 'Failed to fetch certificates')
     }
   },
 
   async deleteCertificate(certificateId) {
     try {
+      apiInfo(`Deleting certificate: ${certificateId}`)
+      detectSessionChange('DELETE-START')
+      
       await api.delete(`/certificates/${certificateId}`)
+      
+      apiInfo('Certificate deleted successfully')
+      detectSessionChange('DELETE-SUCCESS')
       return { success: true }
     } catch (error) {
-      console.error('Error deleting certificate:', error)
+      apiError('Error deleting certificate:', error)
+      detectSessionChange('DELETE-ERROR')
       throw new Error(error.response?.data?.message || 'Delete failed')
     }
   },
 
   async clearSession() {
     try {
+      apiInfo('Clearing session')
+      detectSessionChange('CLEAR-START')
+      
       await api.post('/certificates/clear')
+      
+      apiInfo('Session cleared successfully')
+      detectSessionChange('CLEAR-SUCCESS')
       return { success: true }
     } catch (error) {
-      console.error('Error clearing session:', error)
+      apiError('Error clearing session:', error)
+      detectSessionChange('CLEAR-ERROR')
       throw new Error(error.response?.data?.message || 'Clear session failed')
     }
   }
@@ -700,13 +701,127 @@ export const certificateAPI = {
 // Health check API
 export const healthAPI = {
   async checkHealth() {
-    const response = await api.get('/health')
-    return response.data
+    try {
+      apiDebug('Checking API health')
+      const response = await api.get('/health')
+      apiDebug('API health check successful')
+      return response.data
+    } catch (error) {
+      apiError('API health check failed:', error)
+      throw error
+    }
   },
 
   async getStats() {
-    const response = await api.get('/stats')
-    return response.data
+    try {
+      apiDebug('Getting API stats')
+      const response = await api.get('/stats')
+      apiDebug('API stats retrieved successfully')
+      return response.data
+    } catch (error) {
+      apiError('API stats failed:', error)
+      throw error
+    }
+  }
+}
+
+// Session debugging utilities
+export const sessionDebugUtils = {
+  getCurrentSessionInfo() {
+    return logCookieInfo('MANUAL-CHECK')
+  },
+  
+  checkSessionNow() {
+    return detectSessionChange('MANUAL-TRIGGER')
+  },
+  
+  getLastKnownToken() {
+    return lastKnownSessionToken
+  },
+  
+  monitorSession(durationMinutes = 5) {
+    sessionInfo(`Starting ${durationMinutes} minute session monitoring`)
+    
+    const startTime = Date.now()
+    const endTime = startTime + (durationMinutes * 60 * 1000)
+    
+    const monitor = setInterval(() => {
+      const currentTime = Date.now()
+      const elapsed = Math.round((currentTime - startTime) / 1000)
+      
+      sessionDebug(`${elapsed}s elapsed - checking session`)
+      const changed = detectSessionChange(`MONITOR-${elapsed}s`)
+      
+      if (changed) {
+        sessionWarn(`Session change detected at ${elapsed}s!`)
+      }
+      
+      if (currentTime >= endTime) {
+        clearInterval(monitor)
+        sessionInfo(`Monitoring complete after ${elapsed}s`)
+      }
+    }, 10000)
+    
+    return monitor
+  },
+  
+  setupHourlySessionTest() {
+    sessionInfo('Setting up hourly session behavior test')
+    
+    const hourlyCheck = setInterval(() => {
+      const now = new Date()
+      const minutes = now.getMinutes()
+      
+      if (minutes >= 55 || minutes <= 5) {
+        sessionWarn(`Critical time check at ${now.toLocaleTimeString()}`)
+        const changed = detectSessionChange(`HOURLY-${minutes}min`)
+        
+        if (changed) {
+          sessionError(`Session changed at ${now.toLocaleTimeString()}!`)
+        }
+      }
+    }, 30000)
+    
+    return hourlyCheck
+  }
+}
+
+// Backward compatibility
+export const advancedDownloadAPI = {
+  async getAvailableFormats() {
+    try {
+      const bundleTypes = await downloadAPI.getAvailableBundleTypes()
+      
+      return {
+        success: true,
+        session_id: bundleTypes.session_id,
+        components: [],
+        bundle_options: bundleTypes.custom_available ? [
+          { type: 'custom', name: 'Custom Selection', description: 'Select specific components and formats' }
+        ] : [],
+        message: "Use downloadAPI.getAvailableBundleTypes() for full information"
+      }
+    } catch (error) {
+      downloadError('Error getting available formats:', error)
+      throw new Error(error.response?.data?.detail || 'Failed to get available formats')
+    }
+  },
+
+  async downloadAdvancedBundle(downloadConfig) {
+    try {
+      apiDebug('Advanced download (legacy) with config:', downloadConfig)
+      
+      const config = {
+        components: downloadConfig.component_ids || [],
+        formats: downloadConfig.format_selections || {},
+        includeInstructions: false
+      }
+      
+      return await downloadAPI.downloadCustomBundle(config)
+    } catch (error) {
+      downloadError('Error in legacy advanced download:', error)
+      throw error
+    }
   }
 }
 

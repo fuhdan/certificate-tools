@@ -19,6 +19,8 @@ services:
     build: ./frontend
     environment:
       - VITE_API_URL=/api
+      - VITE_DEBUG=false
+      - VITE_LOG_LEVEL=INFO
     networks:
       - app-network
     restart: unless-stopped

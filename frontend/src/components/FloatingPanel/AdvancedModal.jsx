@@ -1,11 +1,26 @@
 // frontend/src/components/FloatingPanel/AdvancedModal.jsx
+// ENHANCED WITH COMPREHENSIVE DOWNLOAD MODAL LOGGING
 
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useEffect } from 'react'
 import { X, Download, FileText, Key, Package, AlertCircle, CheckSquare, Square } from 'lucide-react'
 import styles from './AdvancedModal.module.css'
 import SecurePasswordModal from './SecurePasswordModal'
 import { useCertificates } from '../../contexts/CertificateContext'
 import { downloadAPI } from '../../services/api'
+
+// Import comprehensive logging system
+import {
+  downloadModalError,
+  downloadModalWarn,
+  downloadModalInfo,
+  downloadModalDebug,
+  downloadModalLifecycle,
+  downloadModalSelection,
+  downloadModalFormat,
+  downloadModalOperation,
+  downloadModalRequirement,
+  downloadModalQuickAction
+} from '../../utils/logger'
 
 const AdvancedModal = ({ onClose }) => {
   const { certificates } = useCertificates()
@@ -23,8 +38,61 @@ const AdvancedModal = ({ onClose }) => {
   const [pkcs7Format, setPkcs7Format] = useState('pem')
   const [pkcs12Format, setPkcs12Format] = useState('encrypted')
 
+  // Component lifecycle logging
+  useEffect(() => {
+    downloadModalLifecycle('MOUNT', {
+      certificates_count: certificates?.length || 0,
+      has_certificates: !!certificates && certificates.length > 0
+    })
+
+    return () => {
+      downloadModalLifecycle('UNMOUNT', {
+        selected_components: selectedComponents.size,
+        was_downloading: isDownloading,
+        had_error: !!downloadError
+      })
+    }
+  }, [])
+
+  // Log state changes
+  useEffect(() => {
+    downloadModalSelection('COMPONENTS_CHANGED', {
+      selected_count: selectedComponents.size,
+      selected_ids: Array.from(selectedComponents),
+      total_available: certificates?.length || 0
+    })
+  }, [selectedComponents])
+
+  useEffect(() => {
+    downloadModalFormat('FORMATS_CHANGED', {
+      format_count: Object.keys(formatSelections).length,
+      formats: formatSelections
+    })
+  }, [formatSelections])
+
+  useEffect(() => {
+    if (downloadError) {
+      downloadModalError('Download error set', {
+        error_message: downloadError
+      })
+    }
+  }, [downloadError])
+
+  useEffect(() => {
+    downloadModalDebug('Download state changed', {
+      is_downloading: isDownloading,
+      has_error: !!downloadError,
+      show_password_modal: showPasswordModal,
+      has_download_result: !!downloadResult
+    })
+  }, [isDownloading, downloadError, showPasswordModal, downloadResult])
+
   // Get format options for component types
   const getFormatOptions = (componentType) => {
+    downloadModalDebug('Getting format options', {
+      component_type: componentType
+    })
+
     if (componentType === 'PrivateKey') {
       return [
         { value: 'pem', label: 'PEM (Unencrypted)', description: 'Base64 encoded, unencrypted' },
@@ -60,6 +128,10 @@ const AdvancedModal = ({ onClose }) => {
       case 'IssuingCA':
         return <Package size={16} />
       default:
+        downloadModalWarn('Unknown component type for icon', {
+          type,
+          fallback_icon: 'FileText'
+        })
         return <FileText size={16} />
     }
   }
@@ -80,12 +152,22 @@ const AdvancedModal = ({ onClose }) => {
       case 'RootCA':
         return 'Root CA'
       default:
+        downloadModalWarn('Unknown component type for display name', {
+          type: component.type,
+          fallback: component.type
+        })
         return component.type
     }
   }
 
   // Handle component selection toggle
   const handleComponentToggle = (componentId) => {
+    downloadModalSelection('TOGGLE_COMPONENT', {
+      component_id: componentId,
+      current_selected: selectedComponents.has(componentId),
+      total_selected_before: selectedComponents.size
+    })
+
     const newSelected = new Set(selectedComponents)
     if (newSelected.has(componentId)) {
       newSelected.delete(componentId)
@@ -93,6 +175,11 @@ const AdvancedModal = ({ onClose }) => {
       const newFormats = { ...formatSelections }
       delete newFormats[componentId]
       setFormatSelections(newFormats)
+
+      downloadModalFormat('FORMAT_REMOVED', {
+        component_id: componentId,
+        remaining_formats: Object.keys(newFormats).length
+      })
     } else {
       newSelected.add(componentId)
       // Set default format when selecting
@@ -102,6 +189,12 @@ const AdvancedModal = ({ onClose }) => {
           ...prev,
           [componentId]: 'pem' // Default to PEM
         }))
+
+        downloadModalFormat('FORMAT_SET_DEFAULT', {
+          component_id: componentId,
+          component_type: component.type,
+          default_format: 'pem'
+        })
       }
     }
     setSelectedComponents(newSelected)
@@ -109,6 +202,12 @@ const AdvancedModal = ({ onClose }) => {
 
   // Handle format change for a component
   const handleFormatChange = (componentId, format) => {
+    downloadModalFormat('FORMAT_CHANGED', {
+      component_id: componentId,
+      old_format: formatSelections[componentId],
+      new_format: format
+    })
+
     setFormatSelections(prev => ({
       ...prev,
       [componentId]: format
@@ -117,10 +216,21 @@ const AdvancedModal = ({ onClose }) => {
 
   // Handle select all / deselect all
   const handleSelectAll = () => {
+    const isSelectingAll = selectedComponents.size !== certificates.length
+
+    downloadModalSelection('SELECT_ALL_TOGGLE', {
+      action: isSelectingAll ? 'select_all' : 'deselect_all',
+      current_selected: selectedComponents.size,
+      total_available: certificates.length
+    })
+
     if (selectedComponents.size === certificates.length) {
       // Deselect all
       setSelectedComponents(new Set())
       setFormatSelections({})
+      downloadModalFormat('ALL_FORMATS_CLEARED', {
+        cleared_count: Object.keys(formatSelections).length
+      })
     } else {
       // Select all
       const allIds = certificates.map(c => c.id)
@@ -132,18 +242,26 @@ const AdvancedModal = ({ onClose }) => {
         defaultFormats[cert.id] = 'pem'
       })
       setFormatSelections(defaultFormats)
+      downloadModalFormat('ALL_FORMATS_SET_DEFAULT', {
+        components_count: certificates.length,
+        default_format: 'pem'
+      })
     }
   }
 
   // Check bundle requirements
   const getBundleRequirements = () => {
+    downloadModalRequirement('CHECKING_REQUIREMENTS', {
+      certificates_count: certificates?.length || 0
+    })
+
     const hasEndEntityCert = certificates.some(c => c.type === 'Certificate')
     const hasPrivateKey = certificates.some(c => c.type === 'PrivateKey')
     const hasCACerts = certificates.some(c => 
       c.type === 'RootCA' || c.type === 'IntermediateCA' || c.type === 'IssuingCA'
     )
     
-    return {
+    const requirements = {
       apache: {
         enabled: hasEndEntityCert && hasPrivateKey,
         tooltip: hasEndEntityCert && hasPrivateKey 
@@ -162,7 +280,7 @@ const AdvancedModal = ({ onClose }) => {
           ? "Download PKCS#7 certificate chain"
           : `Missing: ${!hasEndEntityCert ? 'End-entity Certificate' : ''} ${!hasCACerts ? 'CA Certificates' : ''}`.trim()
       },
-      pkcs12: {  // ← ADD THIS
+      pkcs12: {
         enabled: hasEndEntityCert && hasPrivateKey,
         tooltip: hasEndEntityCert && hasPrivateKey
           ? "Download PKCS#12 bundle with certificate and private key"
@@ -181,25 +299,61 @@ const AdvancedModal = ({ onClose }) => {
         tooltip: hasCACerts ? "Download CA certificate chain" : "Missing: CA Certificates"
       }
     }
+
+    downloadModalRequirement('REQUIREMENTS_CALCULATED', {
+      has_end_entity_cert: hasEndEntityCert,
+      has_private_key: hasPrivateKey,
+      has_ca_certs: hasCACerts,
+      enabled_bundles: Object.entries(requirements).filter(([, req]) => req.enabled).map(([name]) => name)
+    })
+    
+    return requirements
   }
 
   const bundleReqs = getBundleRequirements()
+
   // Check if all selected components have format selections
   const allFormatsSelected = useMemo(() => {
-    return Array.from(selectedComponents).every(componentId => 
+    const result = Array.from(selectedComponents).every(componentId => 
       formatSelections[componentId]
     )
+
+    downloadModalFormat('FORMAT_VALIDATION', {
+      all_formats_selected: result,
+      selected_count: selectedComponents.size,
+      formats_count: Object.keys(formatSelections).length
+    })
+
+    return result
   }, [selectedComponents, formatSelections])
 
   // Handle download
   const handleDownload = async () => {
+    downloadModalOperation('DOWNLOAD_INITIATED', {
+      selected_components: selectedComponents.size,
+      has_formats: allFormatsSelected,
+      download_config: {
+        components: Array.from(selectedComponents),
+        formats: formatSelections
+      }
+    })
+
     if (selectedComponents.size === 0) {
-      setDownloadError('Please select at least one component to download')
+      const errorMsg = 'Please select at least one component to download'
+      setDownloadError(errorMsg)
+      downloadModalError('Download validation failed - no components', {
+        selected_count: selectedComponents.size
+      })
       return
     }
 
     if (!allFormatsSelected) {
-      setDownloadError('Please select a format for all selected components')
+      const errorMsg = 'Please select a format for all selected components'
+      setDownloadError(errorMsg)
+      downloadModalError('Download validation failed - missing formats', {
+        selected_count: selectedComponents.size,
+        formats_count: Object.keys(formatSelections).length
+      })
       return
     }
 
@@ -214,28 +368,48 @@ const AdvancedModal = ({ onClose }) => {
         includeInstructions: false // Advanced downloads don't include instructions
       }
 
-      console.log('Starting custom download with config:', downloadConfig)
+      downloadModalOperation('API_CALL_START', {
+        config: downloadConfig
+      })
       
       // Use unified download API
       const result = await downloadAPI.downloadCustomBundle(downloadConfig)
 
-      console.log('Custom download completed:', result)
+      downloadModalOperation('API_CALL_SUCCESS', {
+        has_zip_password: !!result.zipPassword,
+        has_encryption_password: !!result.encryptionPassword,
+        bundle_type: result.bundleType
+      })
       
       // Show password modal if we have passwords
       if (result.zipPassword) {
         setDownloadResult(result)
         setShowPasswordModal(true)
+        downloadModalOperation('PASSWORD_MODAL_SHOWN', {
+          bundle_type: result.bundleType
+        })
       }
       
     } catch (error) {
-      console.error('Custom download failed:', error)
+      downloadModalError('Custom download failed', {
+        error_message: error.message,
+        error_stack: error.stack,
+        selected_components: selectedComponents.size
+      })
       setDownloadError(error.message || 'Download failed')
     } finally {
       setIsDownloading(false)
+      downloadModalOperation('DOWNLOAD_COMPLETED', {
+        success: !downloadError
+      })
     }
   }
 
   const handlePasswordModalClose = () => {
+    downloadModalLifecycle('PASSWORD_MODAL_CLOSED', {
+      had_result: !!downloadResult
+    })
+
     setShowPasswordModal(false)
     setDownloadResult(null)
     // Close the advanced modal after showing password
@@ -244,12 +418,45 @@ const AdvancedModal = ({ onClose }) => {
 
   const handleOverlayClick = (e) => {
     if (e.target === e.currentTarget) {
+      downloadModalLifecycle('OVERLAY_CLICK_CLOSE', {
+        selected_components: selectedComponents.size
+      })
       onClose()
+    }
+  }
+
+  // Quick action handlers with logging
+  const handleQuickAction = async (actionType, actionFn, config = {}) => {
+    downloadModalQuickAction('QUICK_ACTION_START', {
+      action_type: actionType,
+      config
+    })
+
+    try {
+      const result = await actionFn()
+      
+      downloadModalQuickAction('QUICK_ACTION_SUCCESS', {
+        action_type: actionType,
+        has_zip_password: !!result?.zipPassword
+      })
+
+      if (result?.zipPassword) {
+        setDownloadResult(result)
+        setShowPasswordModal(true)
+      }
+    } catch (error) {
+      downloadModalError(`Quick action failed: ${actionType}`, {
+        action_type: actionType,
+        error_message: error.message,
+        error_stack: error.stack
+      })
     }
   }
 
   // Early return if no components
   if (!certificates || certificates.length === 0) {
+    downloadModalWarn('No certificates available for download modal')
+    
     return (
       <div className={styles.overlay} onClick={handleOverlayClick}>
         <div className={styles.modal}>
@@ -271,13 +478,23 @@ const AdvancedModal = ({ onClose }) => {
     )
   }
 
+  downloadModalInfo('Rendering advanced modal', {
+    certificates_count: certificates.length,
+    selected_components: selectedComponents.size,
+    is_downloading: isDownloading,
+    has_error: !!downloadError
+  })
+
   return (
     <>
       <div className={styles.overlay} onClick={handleOverlayClick}>
         <div className={styles.modal}>
           <div className={styles.header}>
             <h2>Advanced Downloads</h2>
-            <button onClick={onClose} className={styles.closeButton}>
+            <button onClick={() => {
+              downloadModalLifecycle('CLOSE_BUTTON_CLICKED')
+              onClose()
+            }} className={styles.closeButton}>
               <X size={20} />
             </button>
           </div>
@@ -380,7 +597,7 @@ const AdvancedModal = ({ onClose }) => {
               <div className={styles.quickActions}>
                 <button 
                   className={`${styles.quickActionButton} ${!bundleReqs.apache.enabled ? styles.disabled : ''}`}
-                  onClick={() => bundleReqs.apache.enabled && downloadAPI.downloadApacheBundle(true)}
+                  onClick={() => bundleReqs.apache.enabled && handleQuickAction('apache', () => downloadAPI.downloadApacheBundle(true))}
                   disabled={!bundleReqs.apache.enabled}
                   title={bundleReqs.apache.tooltip}
                 >
@@ -390,7 +607,7 @@ const AdvancedModal = ({ onClose }) => {
                 
                 <button 
                   className={`${styles.quickActionButton} ${!bundleReqs.iis.enabled ? styles.disabled : ''}`}
-                  onClick={() => bundleReqs.iis.enabled && downloadAPI.downloadIISBundle(true)}
+                  onClick={() => bundleReqs.iis.enabled && handleQuickAction('iis', () => downloadAPI.downloadIISBundle(true))}
                   disabled={!bundleReqs.iis.enabled}
                   title={bundleReqs.iis.tooltip}
                 >
@@ -402,24 +619,18 @@ const AdvancedModal = ({ onClose }) => {
                 <div className={styles.splitButtonContainer}>
                   <button 
                     className={`${styles.quickActionButton} ${styles.splitButtonMain} ${!bundleReqs.pkcs7.enabled ? styles.disabled : ''}`}
-                    onClick={async () => {
+                    onClick={() => {
                       if (bundleReqs.pkcs7.enabled) {
-                        try {
-                          const result = await downloadAPI.downloadPKCS7Bundle(pkcs7Format)
-                          if (result.zipPassword) {
-                            setDownloadResult(result)
-                            setShowPasswordModal(true)
-                          }
-                        } catch (error) {
-                          console.error('PKCS7 download failed:', error)
-                        }
+                        handleQuickAction('pkcs7', () => downloadAPI.downloadPKCS7Bundle(pkcs7Format), {
+                          format: pkcs7Format
+                        })
                       }
                     }}
                     disabled={!bundleReqs.pkcs7.enabled}
                     title={bundleReqs.pkcs7.tooltip}
                   >
                     <Package size={16} />
-                    PKCS7 Bundle ({pkcs7Format.toUpperCase()}) {/* Shows selected format */}
+                    PKCS7 Bundle ({pkcs7Format.toUpperCase()})
                   </button>
                   
                   <div className={styles.splitButtonDropdown}>
@@ -427,7 +638,11 @@ const AdvancedModal = ({ onClose }) => {
                       className={styles.inlineDropdown}
                       value={pkcs7Format}
                       onChange={(e) => {
-                        setPkcs7Format(e.target.value) // Just update the format, don't download
+                        downloadModalFormat('PKCS7_FORMAT_CHANGED', {
+                          old_format: pkcs7Format,
+                          new_format: e.target.value
+                        })
+                        setPkcs7Format(e.target.value)
                       }}
                       disabled={!bundleReqs.pkcs7.enabled}
                     >
@@ -441,17 +656,11 @@ const AdvancedModal = ({ onClose }) => {
                 <div className={styles.splitButtonContainer}>
                   <button 
                     className={`${styles.quickActionButton} ${styles.splitButtonMain} ${!bundleReqs.pkcs12.enabled ? styles.disabled : ''}`}
-                    onClick={async () => {
+                    onClick={() => {
                       if (bundleReqs.pkcs12.enabled) {
-                        try {
-                          const result = await downloadAPI.downloadPKCS12Bundle(pkcs12Format)
-                          if (result.zipPassword) {
-                            setDownloadResult(result)
-                            setShowPasswordModal(true)
-                          }
-                        } catch (error) {
-                          console.error('PKCS7 download failed:', error)
-                        }
+                        handleQuickAction('pkcs12', () => downloadAPI.downloadPKCS12Bundle(pkcs12Format), {
+                          format: pkcs12Format
+                        })
                       }
                     }}
                     disabled={!bundleReqs.pkcs12.enabled}
@@ -466,7 +675,11 @@ const AdvancedModal = ({ onClose }) => {
                       className={styles.inlineDropdown}
                       value={pkcs12Format}
                       onChange={(e) => {
-                        setPkcs12Format(e.target.value) // Just update the format, don't download
+                        downloadModalFormat('PKCS12_FORMAT_CHANGED', {
+                          old_format: pkcs12Format,
+                          new_format: e.target.value
+                        })
+                        setPkcs12Format(e.target.value)
                       }}
                       disabled={!bundleReqs.pkcs12.enabled}
                     >
@@ -478,19 +691,7 @@ const AdvancedModal = ({ onClose }) => {
 
                 <button 
                   className={`${styles.quickActionButton} ${!bundleReqs.privateKey.enabled ? styles.disabled : ''}`}
-                  onClick={async () => {
-                    if (bundleReqs.privateKey.enabled) {
-                      try {
-                        const result = await downloadAPI.downloadPrivateKey()
-                        if (result.zipPassword) {
-                          setDownloadResult(result)
-                          setShowPasswordModal(true)  // ← ADD THIS
-                        }
-                      } catch (error) {
-                        console.error('Private key download failed:', error)
-                      }
-                    }
-                  }}
+                  onClick={() => bundleReqs.privateKey.enabled && handleQuickAction('private_key', () => downloadAPI.downloadPrivateKey())}
                   disabled={!bundleReqs.privateKey.enabled}
                   title={bundleReqs.privateKey.tooltip}
                 >
@@ -500,19 +701,7 @@ const AdvancedModal = ({ onClose }) => {
 
                 <button 
                   className={`${styles.quickActionButton} ${!bundleReqs.certificate.enabled ? styles.disabled : ''}`}
-                  onClick={async () => {
-                    if (bundleReqs.certificate.enabled) {
-                      try {
-                        const result = await downloadAPI.downloadCertificate()
-                        if (result.zipPassword) {
-                          setDownloadResult(result)
-                          setShowPasswordModal(true)  // ← ADD THIS
-                        }
-                      } catch (error) {
-                        console.error('Certificate download failed:', error)
-                      }
-                    }
-                  }}
+                  onClick={() => bundleReqs.certificate.enabled && handleQuickAction('certificate', () => downloadAPI.downloadCertificate())}
                   disabled={!bundleReqs.certificate.enabled}
                   title={bundleReqs.certificate.tooltip}
                 >
@@ -522,19 +711,7 @@ const AdvancedModal = ({ onClose }) => {
 
                 <button 
                   className={`${styles.quickActionButton} ${!bundleReqs.chain.enabled ? styles.disabled : ''}`}
-                  onClick={async () => {
-                    if (bundleReqs.chain.enabled) {
-                      try {
-                        const result = await downloadAPI.downloadCAChain()
-                        if (result.zipPassword) {
-                          setDownloadResult(result)
-                          setShowPasswordModal(true)  // ← ADD THIS
-                        }
-                      } catch (error) {
-                        console.error('CA chain download failed:', error)
-                      }
-                    }
-                  }}
+                  onClick={() => bundleReqs.chain.enabled && handleQuickAction('ca_chain', () => downloadAPI.downloadCAChain())}
                   disabled={!bundleReqs.chain.enabled}
                   title={bundleReqs.chain.tooltip}
                 >
@@ -576,7 +753,13 @@ const AdvancedModal = ({ onClose }) => {
             
             <div className={styles.footerActions}>
               <button
-                onClick={onClose}
+                onClick={() => {
+                  downloadModalLifecycle('CANCEL_CLICKED', {
+                    selected_components: selectedComponents.size,
+                    was_downloading: isDownloading
+                  })
+                  onClose()
+                }}
                 className={styles.cancelButton}
                 disabled={isDownloading}
               >
@@ -600,10 +783,12 @@ const AdvancedModal = ({ onClose }) => {
         <SecurePasswordModal
           password={downloadResult.zipPassword}
           encryptionPassword={downloadResult.encryptionPassword}
-          bundleType={downloadResult.bundleType}  // ← ADD THIS LINE
+          bundleType={downloadResult.bundleType}
           onClose={handlePasswordModalClose}
           onCopyComplete={() => {
-            console.log('Password copied from advanced download')
+            downloadModalInfo('Password copied from advanced download', {
+              bundle_type: downloadResult.bundleType
+            })
           }}
         />
       )}

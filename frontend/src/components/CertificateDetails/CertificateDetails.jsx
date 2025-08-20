@@ -1,7 +1,6 @@
 // frontend/src/components/CertificateDetails/CertificateDetails.jsx
-// Updated to display missing metadata: days until expiry, expired status
 
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { 
   ChevronDown, 
   ChevronUp, 
@@ -13,16 +12,119 @@ import {
   XCircle,
   AlertTriangle,
   Info,
-  Globe,
-  Clock,
   AlertCircle,
   Eye
 } from 'lucide-react'
 import styles from './CertificateDetails.module.css'
 
+// Import enhanced logging system with certificate-specific methods
+import { 
+  certificateError,
+  certificateWarn,
+  certificateInfo,
+  certificateDebug,
+  certificateLifecycle,
+  certificateMetadata,
+  certificateValidity,
+  certificateExtensions,
+  certificateBug,
+  certificateInteraction,
+  certificateSecurity
+} from '../../utils/logger'
+
 const CertificateDetails = ({ certificate }) => {
   const [isExpanded, setIsExpanded] = useState(true) // DEFAULT: Expanded
   const [showPemContent, setShowPemContent] = useState(false) // NEW: PEM content toggle
+
+  // Component lifecycle logging
+  useEffect(() => {
+    if (!certificate) {
+      certificateError('CertificateDetails mounted with null/undefined certificate')
+      return
+    }
+
+    // Log certificate lifecycle
+    certificateLifecycle('COMPONENT_MOUNT', certificate.id, {
+      filename: certificate.filename,
+      type: certificate.type,
+      has_metadata: !!certificate.metadata
+    })
+
+    certificateInfo(`Certificate ID: ${certificate.id}`)
+    certificateInfo(`Certificate type: ${certificate.type}`)
+    certificateInfo(`Has metadata: ${!!certificate.metadata}`)
+    certificateDebug('Full certificate object:', certificate)
+    
+    // Log metadata availability and structure
+    if (certificate.metadata) {
+      certificateDebug('Metadata structure:', Object.keys(certificate.metadata))
+      
+      // Log certificate metadata using structured method
+      certificateMetadata(certificate.id, certificate.metadata, 'COMPONENT_ANALYSIS')
+      
+      // Log critical metadata fields for debugging
+      const metadata = certificate.metadata
+      if (metadata.subject_alt_name) {
+        certificateDebug(`SANs found: ${metadata.subject_alt_name.length} entries`, metadata.subject_alt_name)
+      }
+      
+      if (metadata.days_until_expiry !== undefined) {
+        certificateInfo(`Days until expiry: ${metadata.days_until_expiry}`)
+      }
+      
+      if (metadata.is_expired !== undefined) {
+        certificateInfo(`Is expired: ${metadata.is_expired}`)
+      }
+
+      // Log certificate extensions
+      const extensions = {
+        subject_alt_name: metadata.subject_alt_name,
+        key_usage: metadata.key_usage,
+        extended_key_usage: metadata.extended_key_usage,
+        basic_constraints: metadata.basic_constraints
+      }
+      certificateExtensions(certificate.id, extensions)
+
+      // Detect potential metadata bugs
+      if ((certificate.type === 'RootCA' || certificate.type === 'IntermediateCA' || certificate.type === 'IssuingCA') && 
+          metadata.subject_alt_name && metadata.subject_alt_name.length > 0) {
+        certificateBug('CA_WITH_SANS', certificate.id, {
+          certificate_type: certificate.type,
+          sans: metadata.subject_alt_name,
+          fingerprint: metadata.fingerprint_sha256
+        })
+      }
+
+      // Log missing SANs for end-entity certificates
+      if (certificate.type === 'Certificate' && 
+          (!metadata.subject_alt_name || metadata.subject_alt_name.length === 0)) {
+        certificateSecurity('MISSING_SANS', certificate.id, {
+          issue: 'End-entity certificate missing Subject Alternative Names',
+          severity: 'medium',
+          recommendation: 'Add SANs for proper certificate validation',
+          subject_cn: metadata.subject_common_name,
+          fingerprint: metadata.fingerprint_sha256?.substring(0, 16) + '...'
+        })
+      }
+
+      // Log certificate validity status
+      if (metadata.days_until_expiry !== undefined) {
+        const validityInfo = {
+          isExpired: metadata.is_expired,
+          daysUntilExpiry: metadata.days_until_expiry,
+          status: metadata.is_expired ? 'expired' : 'valid'
+        }
+        certificateValidity(certificate.id, validityInfo)
+      }
+    } else {
+      certificateWarn('No metadata available for certificate')
+    }
+    
+    // Cleanup logging
+    return () => {
+      certificateDebug(`🔍 [CERT-DETAILS] Component unmounting for: ${certificate.filename}`)
+    }
+  }, [certificate])
 
   // Format timestamp for display
   const formatDate = (timestamp) => {
@@ -30,20 +132,27 @@ const CertificateDetails = ({ certificate }) => {
     try {
       return new Date(timestamp).toLocaleString()
     } catch (error) {
+      certificateError('Date formatting error:', error, { timestamp })
       return timestamp
     }
   }
 
   // Format validity status with original validation icons (not eye)
   const formatValidityStatus = (metadata) => {
+    certificateDebug('Formatting validity status for metadata:', metadata)
+    
     if (!metadata.days_until_expiry && metadata.days_until_expiry !== 0) {
+      certificateWarn('Days until expiry not available in metadata')
       return { text: 'Unknown', color: '#6b7280', icon: Info }
     }
 
     const days = metadata.days_until_expiry
     const isExpired = metadata.is_expired
 
+    certificateDebug(`Validity calculation - Days: ${days}, Is expired: ${isExpired}`)
+
     if (isExpired) {
+      certificateWarn(`Certificate is expired - ${Math.abs(days)} days ago`)
       return { 
         text: 'Expired', 
         color: '#ef4444', 
@@ -52,6 +161,7 @@ const CertificateDetails = ({ certificate }) => {
     }
 
     if (days <= 0) {
+      certificateWarn('Certificate expires today!')
       return { 
         text: 'Expires today', 
         color: '#ef4444', 
@@ -60,6 +170,7 @@ const CertificateDetails = ({ certificate }) => {
     }
 
     if (days <= 30) {
+      certificateWarn(`Certificate expires soon - ${days} days remaining`)
       return { 
         text: 'Expires soon', 
         color: '#f59e0b', 
@@ -68,6 +179,7 @@ const CertificateDetails = ({ certificate }) => {
     }
 
     if (days <= 90) {
+      certificateInfo(`Certificate valid for ${days} days`)
       return { 
         text: 'Valid', 
         color: '#3b82f6', 
@@ -75,6 +187,7 @@ const CertificateDetails = ({ certificate }) => {
       }
     }
 
+    certificateInfo(`Certificate valid for ${days} days`)
     return { 
       text: 'Valid', 
       color: '#10b981', 
@@ -98,6 +211,7 @@ const CertificateDetails = ({ certificate }) => {
       case 'RootCA':
         return <Award {...iconProps} className={styles.caIcon} />
       default:
+        certificateWarn(`Unknown certificate type: ${certificate.type}`)
         return <FileText {...iconProps} className={styles.unknownIcon} />
     }
   }
@@ -153,6 +267,31 @@ const CertificateDetails = ({ certificate }) => {
     }
   }
 
+  // Handle expansion toggle with logging
+  const handleExpansionToggle = () => {
+    const newState = !isExpanded
+    setIsExpanded(newState)
+    certificateInteraction(newState ? 'EXPAND' : 'COLLAPSE', certificate.id, {
+      filename: certificate.filename,
+      type: certificate.type
+    })
+  }
+
+  // Handle PEM content toggle with logging
+  const handlePemToggle = (e) => {
+    e.stopPropagation()
+    const newState = !showPemContent
+    setShowPemContent(newState)
+    certificateInteraction(newState ? 'SHOW_PEM' : 'HIDE_PEM', certificate.id, {
+      filename: certificate.filename,
+      content_length: certificate.content?.length || 0
+    })
+    
+    if (newState && certificate.content) {
+      certificateDebug(`PEM content length: ${certificate.content.length} characters`)
+    }
+  }
+
   // Render certificate-specific information
   const renderCertificateInfo = () => {
     if (certificate.type !== 'Certificate' && 
@@ -162,9 +301,28 @@ const CertificateDetails = ({ certificate }) => {
       return null
     }
 
+    certificateDebug(`Rendering certificate info for type: ${certificate.type}`)
+
     // Use direct metadata access (backend provides flattened metadata)
     const metadata = certificate.metadata || {}
     const validityStatus = formatValidityStatus(metadata)
+
+    // Log key metadata fields for debugging
+    certificateDebug('Certificate metadata fields:', {
+      subject: metadata.subject,
+      issuer: metadata.issuer,
+      serial_number: metadata.serial_number,
+      not_valid_before: metadata.not_valid_before,
+      not_valid_after: metadata.not_valid_after,
+      days_until_expiry: metadata.days_until_expiry,
+      is_expired: metadata.is_expired,
+      signature_algorithm: metadata.signature_algorithm,
+      public_key_algorithm: metadata.public_key_algorithm,
+      public_key_size: metadata.public_key_size,
+      is_ca: metadata.is_ca,
+      is_self_signed: metadata.is_self_signed,
+      fingerprint_sha256: metadata.fingerprint_sha256
+    })
 
     return (
       <div className={styles.section}>
@@ -277,11 +435,14 @@ const CertificateDetails = ({ certificate }) => {
           <div className={styles.extensionItem}>
             <h5>Subject Alternative Names</h5>
             <div className={styles.sanList}>
-              {metadata.subject_alt_name.map((san, index) => (
-                <span key={index} className={styles.sanItem}>
-                  {san}
-                </span>
-              ))}
+              {metadata.subject_alt_name.map((san, index) => {
+                certificateDebug(`Rendering SAN ${index}: ${san}`)
+                return (
+                  <span key={index} className={styles.sanItem}>
+                    {san}
+                  </span>
+                )
+              })}
             </div>
           </div>
         )}
@@ -344,7 +505,12 @@ const CertificateDetails = ({ certificate }) => {
             <h5>Key Usage</h5>
             <div className={styles.usageList}>
               {Object.entries(metadata.key_usage)
-                .filter(([key, value]) => value === true)
+                .filter(([key, value]) => {
+                  if (value !== true) {
+                    certificateDebug(`Key usage '${key}' filtered out - value: ${value}`)
+                  }
+                  return value === true
+                })
                 .map(([key, value]) => (
                   <span key={key} className={styles.usageItem}>
                     {key.replace(/([A-Z])/g, ' $1').toLowerCase().replace(/^\w/, c => c.toUpperCase()).replace(/_/g, ' ')}
@@ -365,11 +531,14 @@ const CertificateDetails = ({ certificate }) => {
           <div className={styles.extensionItem}>
             <h5>Extended Key Usage</h5>
             <div className={styles.usageList}>
-              {metadata.extended_key_usage.map((usage, index) => (
-                <span key={index} className={styles.usageItem}>
-                  {usage}
-                </span>
-              ))}
+              {metadata.extended_key_usage.map((usage, index) => {
+                certificateDebug(`Extended key usage ${index}: ${usage}`)
+                return (
+                  <span key={index} className={styles.usageItem}>
+                    {usage}
+                  </span>
+                )
+              })}
             </div>
           </div>
         )}
@@ -381,7 +550,17 @@ const CertificateDetails = ({ certificate }) => {
   const renderPrivateKeyInfo = () => {
     if (certificate.type !== 'PrivateKey') return null
 
+    certificateDebug('Rendering private key info')
+
     const metadata = certificate.metadata || {}
+
+    // Log private key metadata
+    certificateDebug('Private key metadata:', {
+      algorithm: metadata.algorithm,
+      key_size: metadata.key_size,
+      is_encrypted: metadata.is_encrypted,
+      public_key_fingerprint: metadata.public_key_fingerprint
+    })
 
     return (
       <div className={styles.section}>
@@ -426,7 +605,22 @@ const CertificateDetails = ({ certificate }) => {
   const renderCSRInfo = () => {
     if (certificate.type !== 'CSR') return null
     
+    certificateDebug('Rendering CSR info')
+    
     const metadata = certificate.metadata || {}
+    
+    // Log CSR metadata
+    certificateDebug('CSR metadata:', {
+      subject: metadata.subject,
+      signature_algorithm: metadata.signature_algorithm,
+      public_key_algorithm: metadata.public_key_algorithm,
+      public_key_size: metadata.public_key_size,
+      public_key_fingerprint: metadata.public_key_fingerprint,
+      subject_alt_name: metadata.subject_alt_name,
+      key_usage: metadata.key_usage,
+      extended_key_usage: metadata.extended_key_usage,
+      basic_constraints: metadata.basic_constraints
+    })
     
     return (
       <div className={styles.section}>
@@ -473,11 +667,14 @@ const CertificateDetails = ({ certificate }) => {
           <div className={styles.extensionItem}>
             <h5>Subject Alternative Names</h5>
             <div className={styles.sanList}>
-              {metadata.subject_alt_name.map((san, index) => (
-                <span key={index} className={styles.sanItem}>
-                  {san}
-                </span>
-              ))}
+              {metadata.subject_alt_name.map((san, index) => {
+                certificateDebug(`CSR SAN ${index}: ${san}`)
+                return (
+                  <span key={index} className={styles.sanItem}>
+                    {san}
+                  </span>
+                )
+              })}
             </div>
           </div>
         )}
@@ -488,7 +685,12 @@ const CertificateDetails = ({ certificate }) => {
             <h5>Key Usage</h5>
             <div className={styles.usageList}>
               {Object.entries(metadata.key_usage)
-                .filter(([key, value]) => value === true)
+                .filter(([key, value]) => {
+                  if (value !== true) {
+                    certificateDebug(`CSR key usage '${key}' filtered out - value: ${value}`)
+                  }
+                  return value === true
+                })
                 .map(([key, value]) => (
                   <span key={key} className={styles.usageItem}>
                     {key.replace(/([A-Z])/g, ' $1').toLowerCase().replace(/^\w/, c => c.toUpperCase()).replace(/_/g, ' ')}
@@ -503,11 +705,14 @@ const CertificateDetails = ({ certificate }) => {
           <div className={styles.extensionItem}>
             <h5>Extended Key Usage</h5>
             <div className={styles.usageList}>
-              {metadata.extended_key_usage.map((usage, index) => (
-                <span key={index} className={styles.usageItem}>
-                  {usage}
-                </span>
-              ))}
+              {metadata.extended_key_usage.map((usage, index) => {
+                certificateDebug(`CSR extended key usage ${index}: ${usage}`)
+                return (
+                  <span key={index} className={styles.usageItem}>
+                    {usage}
+                  </span>
+                )
+              })}
             </div>
           </div>
         )}
@@ -534,10 +739,16 @@ const CertificateDetails = ({ certificate }) => {
     )
   }
 
+  // Early return if no certificate
+  if (!certificate) {
+    certificateError('CertificateDetails rendered with null certificate')
+    return <div className={styles.container}>No certificate data available</div>
+  }
+
   return (
     <div className={styles.container}>
       {/* Header with validation status - TYPE FIRST, THEN FILENAME */}
-      <div className={styles.header} onClick={() => setIsExpanded(!isExpanded)}>
+      <div className={styles.header} onClick={handleExpansionToggle}>
         <div className={styles.titleSection}>
           {getTypeIcon()}
           <div className={styles.titleInfo}>
@@ -609,10 +820,7 @@ const CertificateDetails = ({ certificate }) => {
             <div className={styles.pemSection}>
               <button 
                 className={styles.showContentButton}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  setShowPemContent(!showPemContent)
-                }}
+                onClick={handlePemToggle}
               >
                 {showPemContent ? 'Hide Content' : 'Show Content'}
               </button>

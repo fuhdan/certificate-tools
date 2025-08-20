@@ -1,4 +1,5 @@
-// frontend/src/components/FloatingPanel/FloatingPanel.jsx (Fixed - Preserving Original Logic + ValidationPanel Toggle)
+// frontend/src/components/FloatingPanel/FloatingPanel.jsx
+
 import React, { useState, useEffect, useRef } from 'react'
 import {
   Settings,
@@ -23,6 +24,28 @@ import NotificationToast from '../common/NotificationToast'
 import { useCertificates } from '../../contexts/CertificateContext'
 import { downloadAPI } from '../../services/api'
 import api from '../../services/api'
+
+// Import comprehensive logging
+import {
+  floatingPanelError,
+  floatingPanelWarn,
+  floatingPanelInfo,
+  floatingPanelDebug,
+  floatingPanelLifecycle,
+  floatingPanelInteraction,
+  floatingPanelState,
+  floatingPanelPosition,
+  floatingPanelDownload,
+  floatingPanelValidation,
+  floatingPanelModal,
+  floatingPanelFileManagement,
+  floatingPanelPerformance,
+  floatingPanelErrorHandling,
+  floatingPanelDragResize,
+  floatingPanelCertificateAnalysis,
+  time,
+  timeEnd
+} from '../../utils/logger'
 
 const FloatingPanel = ({ showValidationPanel, onToggleValidationPanel }) => {
   const { certificates, clearAllFiles } = useCertificates()
@@ -55,65 +78,131 @@ const FloatingPanel = ({ showValidationPanel, onToggleValidationPanel }) => {
   const [panelPosition, setPanelPosition] = useState(() => {
     const initialX = window.innerWidth - 250 - 16
     const initialY = window.innerHeight * 0.2
+    
+    floatingPanelLifecycle('COMPONENT_INIT', {
+      initial_position: { x: initialX, y: initialY },
+      window_size: { width: window.innerWidth, height: window.innerHeight }
+    })
+    
     return { x: initialX, y: initialY }
   })
   const [panelSize, setPanelSize] = useState({ width: 250, height: 500 })
 
   // Initialize starting position based on visual CSS defaults
   useEffect(() => {
+    time('FloatingPanel.position_initialization')
+    
     const initialX = window.innerWidth - 250 - 16 // width + margin
     const initialY = window.innerHeight * 0.2
+    
+    floatingPanelPosition('POSITION_INIT', { x: initialX, y: initialY }, {
+      calculation_basis: 'CSS_defaults',
+      window_dimensions: { width: window.innerWidth, height: window.innerHeight }
+    })
+    
     setPanelPosition({ x: initialX, y: initialY })
+    
+    timeEnd('FloatingPanel.position_initialization')
   }, [])
 
   useEffect(() => {
     const checkConnection = async () => {
+      time('FloatingPanel.connection_check')
+      
       try {
-        console.log('🔍 Starting connection check...')
+        floatingPanelDebug('Starting connection health check')
         const response = await api.get('/health')
         
         // Ensure exact string matching
         if (response.data.status === 'online') {
           setConnectionStatus('connected')
-          console.log('✅ Status set to: connected')
+          floatingPanelInfo('Connection status: CONNECTED', {
+            response_status: response.data.status,
+            response_time_ms: response.config?.timeout || 'unknown'
+          })
         } else {
-          setConnectionStatus('disconnected') 
-          console.log('⚠️ Status set to: disconnected (unexpected response.data.status)')
+          setConnectionStatus('disconnected')
+          floatingPanelWarn('Connection status: DISCONNECTED - unexpected response', {
+            expected: 'online',
+            received: response.data.status,
+            full_response: response.data
+          })
         }
       } catch (error) {
         setConnectionStatus('disconnected')
-        console.log('❌ Status set to: disconnected (due to error)')
+        floatingPanelErrorHandling('CONNECTION_HEALTH_CHECK', error, {
+          error_details: {
+            message: error.message,
+            code: error.code,
+            status: error.response?.status
+          }
+        })
+      } finally {
+        timeEnd('FloatingPanel.connection_check')
       }
     }
 
+    floatingPanelLifecycle('CONNECTION_MONITORING_START')
     checkConnection()
-    const interval = setInterval(checkConnection, 10000)
-    return () => clearInterval(interval)
+    
+    const interval = setInterval(() => {
+      floatingPanelDebug('Scheduled connection health check')
+      checkConnection()
+    }, 10000)
+    
+    return () => {
+      floatingPanelLifecycle('CONNECTION_MONITORING_STOP')
+      clearInterval(interval)
+    }
   }, [])
 
   useEffect(() => {
+    time('FloatingPanel.certificate_analysis')
+    
+    floatingPanelCertificateAnalysis('CERTIFICATE_REQUIREMENT_CHECK_START', {
+      certificates_count: certificates?.length || 0,
+      certificates_type: typeof certificates
+    })
+
     if (!certificates || certificates.length === 0) {
+      floatingPanelCertificateAnalysis('NO_CERTIFICATES_FOUND', {
+        previous_linux_required: hasRequiredForLinux,
+        previous_windows_required: hasRequiredForWindows,
+        previous_has_files: hasAnyFiles
+      })
+      
       setHasRequiredForLinux(false)
       setHasRequiredForWindows(false)
       setHasAnyFiles(false)
+      
+      timeEnd('FloatingPanel.certificate_analysis')
       return
     }
   
     // 🔍 DEBUG: Log the certificates array structure
-    console.log("📦 Full certificates array:", certificates)
-    console.log("📦 Array length:", certificates.length)
-    console.log("📦 Array type:", typeof certificates)
+    floatingPanelDebug('Certificate array analysis', {
+      full_certificates_array: certificates,
+      array_length: certificates.length,
+      array_type: typeof certificates
+    })
     
     // 🔍 DEBUG: Print each certificate in detail
-    console.log("🧪 Certificate types detected:")
+    floatingPanelDebug('Individual certificate analysis')
     certificates.forEach((cert, index) => {
       if (cert) {
-        console.log(`  [${index}] Full cert object:`, cert)
-        console.log(`  [${index}] Type:`, cert.type, "| Typeof:", typeof cert.type)
-        console.log(`  [${index}] Has type property:`, 'type' in cert)
-        console.log(`  [${index}] Object keys:`, Object.keys(cert))
+        floatingPanelDebug(`Certificate [${index}] details`, {
+          index,
+          full_cert_object: cert,
+          type: cert.type,
+          type_of_type: typeof cert.type,
+          has_type_property: 'type' in cert,
+          object_keys: Object.keys(cert)
+        })
       } else {
-        console.log(`  [${index}] ❌ Invalid or empty certificate`)
+        floatingPanelWarn(`Invalid certificate at index [${index}]`, {
+          index,
+          cert_value: cert
+        })
       }
     })
   
@@ -122,7 +211,11 @@ const FloatingPanel = ({ showValidationPanel, onToggleValidationPanel }) => {
       if (!cert) return false
       
       const type = cert.type || cert.fileType || cert.componentType
-      console.log(`🔍 Checking cert for end-entity: type="${type}"`)
+      
+      floatingPanelDebug('Checking for end-entity certificate', {
+        cert_type: type,
+        is_certificate_type: type === 'Certificate'
+      })
       
       return type === 'Certificate' // End-entity certificate
     })
@@ -131,44 +224,90 @@ const FloatingPanel = ({ showValidationPanel, onToggleValidationPanel }) => {
       if (!cert) return false
       
       const type = cert.type || cert.fileType || cert.componentType
-      console.log(`🔍 Checking cert for private key: type="${type}"`)
+      
+      floatingPanelDebug('Checking for private key', {
+        cert_type: type,
+        is_private_key_type: type === 'PrivateKey'
+      })
       
       return type === 'PrivateKey'
     })
   
-    console.log("🎯 Detection results:")
-    console.log("  - hasEndEntityCert:", hasEndEntityCert)
-    console.log("  - hasPrivateKey:", hasPrivateKey)
+    floatingPanelCertificateAnalysis('REQUIREMENT_DETECTION_RESULTS', {
+      has_end_entity_cert: hasEndEntityCert,
+      has_private_key: hasPrivateKey,
+      linux_requirements_met: hasEndEntityCert,
+      windows_requirements_met: hasEndEntityCert && hasPrivateKey
+    })
   
     setHasRequiredForLinux(hasEndEntityCert)
     setHasRequiredForWindows(hasEndEntityCert && hasPrivateKey)
     setHasAnyFiles(true)
+    
+    timeEnd('FloatingPanel.certificate_analysis')
   }, [certificates])
 
   // ONLY CHANGED: Download handlers - using unified API
   const handleLinuxApacheDownload = async () => {
-    if (!hasRequiredForLinux || isDownloading) return
+    if (!hasRequiredForLinux || isDownloading) {
+      floatingPanelWarn('Linux Apache download prevented', {
+        has_required: hasRequiredForLinux,
+        is_downloading: isDownloading,
+        reason: !hasRequiredForLinux ? 'missing_requirements' : 'download_in_progress'
+      })
+      return
+    }
 
+    time('FloatingPanel.linux_apache_download')
     setIsDownloading(true)
     setDownloadError(null)
 
+    floatingPanelDownload('LINUX_APACHE_DOWNLOAD_START', {
+      certificates_count: certificates?.length || 0,
+      has_required_certs: hasRequiredForLinux
+    })
+
     try {
-      console.log('Using unified API for Apache download...')
+      floatingPanelDownload('USING_UNIFIED_API', { api_type: 'Apache', with_passwords: true })
       
       // Use unified download API
       const result = await downloadAPI.downloadApacheBundle(true)
 
+      floatingPanelDownload('APACHE_DOWNLOAD_SUCCESS', {
+        has_zip_password: !!result.zipPassword,
+        has_encryption_password: !!result.encryptionPassword,
+        zip_password_length: result.zipPassword?.length || 0,
+        encryption_password_length: result.encryptionPassword?.length || 0
+      })
+
       // Show password modal
       setZipPassword(result.zipPassword)
       setP12Password(result.encryptionPassword || '')
+      
+      floatingPanelModal('SHOW_PASSWORD_MODAL', 'apache_passwords', {
+        zip_password_set: !!result.zipPassword,
+        encryption_password_set: !!result.encryptionPassword
+      })
+      
       setShowPasswordModal(true)
 
       // Show success notification
       setSuccessMessage('Apache certificate bundle downloaded successfully!')
       setShowSuccessNotification(true)
+      
+      floatingPanelDownload('APACHE_DOWNLOAD_COMPLETE', {
+        success: true,
+        notification_shown: true
+      })
 
     } catch (error) {
-      console.error('Apache download failed:', error)
+      floatingPanelErrorHandling('APACHE_DOWNLOAD_ERROR', error, {
+        error_details: {
+          message: error.message,
+          status: error.response?.status,
+          data: error.response?.data
+        }
+      })
       
       if (error.message.includes('404')) {
         setDownloadError('No certificates found. Please upload required certificates first.')
@@ -179,20 +318,41 @@ const FloatingPanel = ({ showValidationPanel, onToggleValidationPanel }) => {
       } else {
         setDownloadError('Download failed. Please try again.')
       }
+      
+      floatingPanelDownload('APACHE_DOWNLOAD_FAILED', {
+        error_type: error.message.includes('404') ? '404_not_found' : 
+                   error.message.includes('400') ? '400_bad_request' :
+                   error.message.includes('timeout') ? 'timeout' : 'unknown',
+        error_message: error.message
+      })
     } finally {
       setIsDownloading(false)
+      timeEnd('FloatingPanel.linux_apache_download')
     }
   }
 
   // ONLY CHANGED: Windows IIS download handler - using unified API
   const handleWindowsIISDownload = async () => {
-    if (!hasRequiredForWindows || isDownloading) return
+    if (!hasRequiredForWindows || isDownloading) {
+      floatingPanelWarn('Windows IIS download prevented', {
+        has_required: hasRequiredForWindows,
+        is_downloading: isDownloading,
+        reason: !hasRequiredForWindows ? 'missing_requirements' : 'download_in_progress'
+      })
+      return
+    }
 
+    time('FloatingPanel.windows_iis_download')
     setIsDownloading(true)
     setDownloadError(null)
 
+    floatingPanelDownload('WINDOWS_IIS_DOWNLOAD_START', {
+      certificates_count: certificates?.length || 0,
+      has_required_certs: hasRequiredForWindows
+    })
+
     try {
-      console.log('Using unified API for IIS download...')
+      floatingPanelDownload('USING_UNIFIED_API', { api_type: 'IIS', with_passwords: true })
       
       // Use unified download API
       const result = await downloadAPI.downloadIISBundle(true)
@@ -201,21 +361,51 @@ const FloatingPanel = ({ showValidationPanel, onToggleValidationPanel }) => {
       const zipPassword = result.zipPassword
       const encryptionPassword = result.encryptionPassword
       
+      floatingPanelDownload('IIS_DOWNLOAD_SUCCESS', {
+        has_zip_password: !!zipPassword,
+        has_encryption_password: !!encryptionPassword,
+        zip_password_length: zipPassword?.length || 0,
+        encryption_password_length: encryptionPassword?.length || 0
+      })
+      
       if (!zipPassword || !encryptionPassword) {
-        throw new Error('Required passwords not found in response')
+        const errorMsg = 'Required passwords not found in response'
+        floatingPanelErrorHandling('IIS_PASSWORD_VALIDATION', new Error(errorMsg), {
+          zip_password_present: !!zipPassword,
+          encryption_password_present: !!encryptionPassword,
+          response_keys: Object.keys(result)
+        })
+        throw new Error(errorMsg)
       }
 
       // Show dual password modal
       setZipPassword(zipPassword)
       setP12Password(encryptionPassword)
+      
+      floatingPanelModal('SHOW_PASSWORD_MODAL', 'iis_passwords', {
+        zip_password_set: !!zipPassword,
+        encryption_password_set: !!encryptionPassword
+      })
+      
       setShowPasswordModal(true)
 
       // Show success notification
       setSuccessMessage('Windows IIS certificate bundle downloaded successfully!')
       setShowSuccessNotification(true)
+      
+      floatingPanelDownload('IIS_DOWNLOAD_COMPLETE', {
+        success: true,
+        notification_shown: true
+      })
 
     } catch (error) {
-      console.error('Windows IIS download failed:', error)
+      floatingPanelErrorHandling('IIS_DOWNLOAD_ERROR', error, {
+        error_details: {
+          message: error.message,
+          status: error.response?.status,
+          data: error.response?.data
+        }
+      })
       
       if (error.message.includes('404')) {
         setDownloadError('No certificates found. Please upload required certificates first.')
@@ -226,25 +416,49 @@ const FloatingPanel = ({ showValidationPanel, onToggleValidationPanel }) => {
       } else {
         setDownloadError('Download failed. Please try again.')
       }
+      
+      floatingPanelDownload('IIS_DOWNLOAD_FAILED', {
+        error_type: error.message.includes('404') ? '404_not_found' : 
+                   error.message.includes('400') ? '400_bad_request' :
+                   error.message.includes('timeout') ? 'timeout' : 'unknown',
+        error_message: error.message
+      })
     } finally {
       setIsDownloading(false)
+      timeEnd('FloatingPanel.windows_iis_download')
     }
   }
 
   const handlePasswordModalClose = () => {
+    floatingPanelModal('CLOSE_PASSWORD_MODAL', 'password_cleanup', {
+      had_zip_password: !!zipPassword,
+      had_encryption_password: !!encryptionPassword
+    })
+    
     setShowPasswordModal(false)
     // Security: Clear passwords from memory
     setZipPassword('')
     setP12Password('')
+    
+    floatingPanelInfo('Password modal closed - passwords cleared from memory')
   }
 
   const handlePasswordCopyComplete = () => {
+    floatingPanelInteraction('PASSWORD_COPY_COMPLETE', {
+      action: 'clipboard_copy',
+      success: true
+    })
+    
     // Show brief notification when password is copied
     setSuccessMessage('Password copied to clipboard!')
     setShowSuccessNotification(true)
   }
 
   const handleSuccessNotificationClose = () => {
+    floatingPanelInteraction('SUCCESS_NOTIFICATION_CLOSE', {
+      previous_message: successMessage
+    })
+    
     setShowSuccessNotification(false)
     setSuccessMessage('')
   }
@@ -252,16 +466,38 @@ const FloatingPanel = ({ showValidationPanel, onToggleValidationPanel }) => {
   // Original handlers
   const handleMinimize = (e) => {
     e.stopPropagation()
+    
+    floatingPanelInteraction('PANEL_MINIMIZE', {
+      current_position: panelPosition,
+      current_size: panelSize
+    })
+    
     setSavedPosition(panelPosition)
     setSavedSize(panelSize)
     setIsMinimized(true)
+    
+    floatingPanelState('MINIMIZED', { isMinimized: true }, {
+      saved_position: panelPosition,
+      saved_size: panelSize
+    })
   }
 
   const handleRestore = (e) => {
     e.stopPropagation()
+    
+    floatingPanelInteraction('PANEL_RESTORE', {
+      restoring_to_position: savedPosition,
+      restoring_to_size: savedSize
+    })
+    
     setIsMinimized(false)
     setPanelPosition(savedPosition)
     setPanelSize(savedSize)
+    
+    floatingPanelState('RESTORED', { isMinimized: false }, {
+      restored_position: savedPosition,
+      restored_size: savedSize
+    })
   }
 
   const handleMouseDown = (e) => {
@@ -270,6 +506,12 @@ const FloatingPanel = ({ showValidationPanel, onToggleValidationPanel }) => {
     if (!isMinimized && target.closest(`.${styles.resizeHandle}`)) {
       e.preventDefault()
       e.stopPropagation()
+      
+      floatingPanelDragResize('RESIZE_START', {
+        current_size: panelSize,
+        cursor_position: { x: e.clientX, y: e.clientY }
+      })
+      
       setIsResizing(true)
       setDragStart({
         x: e.clientX,
@@ -288,6 +530,13 @@ const FloatingPanel = ({ showValidationPanel, onToggleValidationPanel }) => {
       const panel = panelRef.current
       if (panel) {
         const rect = panel.getBoundingClientRect()
+        
+        floatingPanelDragResize('DRAG_START', {
+          panel_rect: { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
+          cursor_position: { x: e.clientX, y: e.clientY },
+          drag_offset: { x: e.clientX - rect.left, y: e.clientY - rect.top }
+        })
+        
         setDragStart({
           x: e.clientX - rect.left,
           y: e.clientY - rect.top
@@ -306,17 +555,32 @@ const FloatingPanel = ({ showValidationPanel, onToggleValidationPanel }) => {
       if (isMinimized) {
         const maxX = window.innerWidth - 200
         const maxY = window.innerHeight - 60
-        setMinimizedPosition({
+        const constrainedPosition = {
           x: Math.max(0, Math.min(newX, maxX)),
           y: Math.max(0, Math.min(newY, maxY))
+        }
+        
+        floatingPanelPosition('MINIMIZED_DRAG', constrainedPosition, {
+          unconstrained: { x: newX, y: newY },
+          constraints: { maxX, maxY }
         })
+        
+        setMinimizedPosition(constrainedPosition)
       } else {
         const maxX = window.innerWidth - panelSize.width
         const maxY = window.innerHeight - panelSize.height
-        setPanelPosition({
+        const constrainedPosition = {
           x: Math.max(0, Math.min(newX, maxX)),
           y: Math.max(0, Math.min(newY, maxY))
+        }
+        
+        floatingPanelPosition('NORMAL_DRAG', constrainedPosition, {
+          unconstrained: { x: newX, y: newY },
+          constraints: { maxX, maxY },
+          panel_size: panelSize
         })
+        
+        setPanelPosition(constrainedPosition)
       }
     } else if (isResizing) {
       e.preventDefault()
@@ -325,24 +589,54 @@ const FloatingPanel = ({ showValidationPanel, onToggleValidationPanel }) => {
 
       const newWidth = Math.max(200, Math.min(600, dragStart.width + deltaX))
       const newHeight = Math.max(300, Math.min(800, dragStart.height + deltaY))
+      const newSize = { width: newWidth, height: newHeight }
 
-      setPanelSize({ width: newWidth, height: newHeight })
+      floatingPanelDragResize('RESIZE_MOVE', {
+        delta: { x: deltaX, y: deltaY },
+        new_size: newSize,
+        constraints_applied: {
+          width: { min: 200, max: 600 },
+          height: { min: 300, max: 800 }
+        }
+      })
+
+      setPanelSize(newSize)
     }
   }
 
   const handleMouseUp = () => {
+    if (isDragging) {
+      floatingPanelDragResize('DRAG_END', {
+        final_position: isMinimized ? minimizedPosition : panelPosition
+      })
+    } else if (isResizing) {
+      floatingPanelDragResize('RESIZE_END', {
+        final_size: panelSize
+      })
+    }
+    
     setIsDragging(false)
     setIsResizing(false)
   }
 
   useEffect(() => {
     if (isDragging || isResizing) {
+      floatingPanelDragResize('MOUSE_LISTENERS_ATTACHED', {
+        is_dragging: isDragging,
+        is_resizing: isResizing
+      })
+      
       document.addEventListener('mousemove', handleMouseMove)
       document.addEventListener('mouseup', handleMouseUp)
       document.body.style.cursor = isDragging ? 'move' : 'nw-resize'
       document.body.style.userSelect = 'none'
 
       return () => {
+        floatingPanelDragResize('MOUSE_LISTENERS_REMOVED', {
+          was_dragging: isDragging,
+          was_resizing: isResizing
+        })
+        
         document.removeEventListener('mousemove', handleMouseMove)
         document.removeEventListener('mouseup', handleMouseUp)
         document.body.style.cursor = ''
@@ -352,15 +646,57 @@ const FloatingPanel = ({ showValidationPanel, onToggleValidationPanel }) => {
   }, [isDragging, isResizing, dragStart, panelSize.width, panelSize.height])
 
   const handleShowAdvanced = () => {
+    floatingPanelModal('SHOW_ADVANCED_MODAL', 'advanced_download', {
+      certificates_count: certificates?.length || 0,
+      has_any_files: hasAnyFiles
+    })
+    
     setShowAdvanced(true)
   }
 
   const handleCloseAdvanced = () => {
+    floatingPanelModal('CLOSE_ADVANCED_MODAL', 'advanced_download', {
+      was_showing: showAdvanced
+    })
+    
     setShowAdvanced(false)
   }
 
   const handleClearAllFiles = () => {
+    floatingPanelFileManagement('CLEAR_ALL_FILES_START', {
+      current_certificates_count: certificates?.length || 0,
+      has_linux_required: hasRequiredForLinux,
+      has_windows_required: hasRequiredForWindows,
+      has_any_files: hasAnyFiles
+    })
+    
     clearAllFiles()
+    
+    floatingPanelFileManagement('CLEAR_ALL_FILES_COMPLETE', {
+      action: 'all_files_cleared'
+    })
+  }
+
+  // Validation panel toggle handler with comprehensive logging
+  const handleValidationPanelToggle = (checked) => {
+    floatingPanelValidation('VALIDATION_PANEL_TOGGLE', {
+      previous_state: showValidationPanel,
+      new_state: checked,
+      toggle_source: 'user_interaction'
+    })
+    
+    if (typeof onToggleValidationPanel === 'function') {
+      floatingPanelValidation('CALLING_PARENT_HANDLER', {
+        handler_available: true,
+        new_state: checked
+      })
+      onToggleValidationPanel(checked)
+    } else {
+      floatingPanelWarn('Validation panel toggle handler not available', {
+        handler_type: typeof onToggleValidationPanel,
+        attempted_state: checked
+      })
+    }
   }
 
   const panelStyle = isMinimized
@@ -376,6 +712,70 @@ const FloatingPanel = ({ showValidationPanel, onToggleValidationPanel }) => {
         width: `${panelSize.width}px`,
         height: `${panelSize.height}px`
       }
+
+  // Log panel style changes
+  useEffect(() => {
+    floatingPanelPosition('PANEL_STYLE_UPDATE', {
+      is_minimized: isMinimized,
+      style: panelStyle
+    })
+  }, [isMinimized, minimizedPosition, panelPosition, panelSize])
+
+  // Log connection status changes
+  useEffect(() => {
+    floatingPanelState('CONNECTION_STATUS_CHANGE', { connectionStatus }, {
+      previous_status: 'unknown',
+      new_status: connectionStatus,
+      timestamp: new Date().toISOString()
+    })
+  }, [connectionStatus])
+
+  // Log download state changes
+  useEffect(() => {
+    floatingPanelState('DOWNLOAD_STATE_CHANGE', {
+      isDownloading,
+      downloadError: !!downloadError,
+      showPasswordModal,
+      showSuccessNotification
+    }, {
+      error_message: downloadError,
+      success_message: successMessage
+    })
+  }, [isDownloading, downloadError, showPasswordModal, showSuccessNotification])
+
+  // Log certificate requirements changes
+  useEffect(() => {
+    floatingPanelState('CERTIFICATE_REQUIREMENTS_CHANGE', {
+      hasRequiredForLinux,
+      hasRequiredForWindows,
+      hasAnyFiles
+    }, {
+      certificates_count: certificates?.length || 0
+    })
+  }, [hasRequiredForLinux, hasRequiredForWindows, hasAnyFiles])
+
+  // Component lifecycle logging
+  useEffect(() => {
+    floatingPanelLifecycle('COMPONENT_MOUNT', {
+      initial_state: {
+        isMinimized,
+        connectionStatus,
+        hasAnyFiles,
+        showValidationPanel
+      }
+    })
+
+    return () => {
+      floatingPanelLifecycle('COMPONENT_UNMOUNT', {
+        final_state: {
+          isMinimized,
+          connectionStatus,
+          certificates_count: certificates?.length || 0
+        }
+      })
+    }
+  }, [])
+
   return (
     <>
       <div
@@ -389,11 +789,29 @@ const FloatingPanel = ({ showValidationPanel, onToggleValidationPanel }) => {
           <div className={styles.dragHandle}>
             <GripVertical size={16} />
             {!isMinimized ? (
-              <button className={styles.minimizeButton} onClick={handleMinimize} title="Minimize panel">
+              <button 
+                className={styles.minimizeButton} 
+                onClick={handleMinimize} 
+                title="Minimize panel"
+                onMouseDown={(e) => {
+                  floatingPanelInteraction('MINIMIZE_BUTTON_CLICK', {
+                    current_state: 'normal'
+                  })
+                }}
+              >
                 <Minimize2 size={14} />
               </button>
             ) : (
-              <button className={styles.minimizeButton} onClick={handleRestore} title="Restore panel">
+              <button 
+                className={styles.minimizeButton} 
+                onClick={handleRestore} 
+                title="Restore panel"
+                onMouseDown={(e) => {
+                  floatingPanelInteraction('RESTORE_BUTTON_CLICK', {
+                    current_state: 'minimized'
+                  })
+                }}
+              >
                 <Maximize2 size={14} />
               </button>
             )}
@@ -422,11 +840,11 @@ const FloatingPanel = ({ showValidationPanel, onToggleValidationPanel }) => {
                     type="checkbox"
                     checked={showValidationPanel || false}
                     onChange={(e) => {
-                      if (typeof onToggleValidationPanel === 'function') {
-                        onToggleValidationPanel(e.target.checked);
-                      } else {
-                        console.warn('onToggleValidationPanel handler is not defined');
-                      }
+                      floatingPanelInteraction('VALIDATION_CHECKBOX_CHANGE', {
+                        checked: e.target.checked,
+                        previous_value: showValidationPanel
+                      })
+                      handleValidationPanelToggle(e.target.checked)
                     }}
                     className={styles.checkbox}
                   />
@@ -434,7 +852,15 @@ const FloatingPanel = ({ showValidationPanel, onToggleValidationPanel }) => {
                 </label>
               </div>
               
-              <button className={styles.clearAllButton} onClick={handleClearAllFiles}>
+              <button 
+                className={styles.clearAllButton} 
+                onClick={() => {
+                  floatingPanelInteraction('CLEAR_ALL_BUTTON_CLICK', {
+                    files_to_clear: certificates?.length || 0
+                  })
+                  handleClearAllFiles()
+                }}
+              >
                 <Trash2 size={16} />
                 Clear All Files
               </button>
@@ -458,7 +884,13 @@ const FloatingPanel = ({ showValidationPanel, onToggleValidationPanel }) => {
               <button
                 className={`${styles.downloadButton} ${!hasRequiredForLinux || isDownloading ? styles.disabled : ''}`}
                 disabled={!hasRequiredForLinux || isDownloading}
-                onClick={handleLinuxApacheDownload}
+                onClick={() => {
+                  floatingPanelInteraction('LINUX_APACHE_BUTTON_CLICK', {
+                    has_requirements: hasRequiredForLinux,
+                    is_downloading: isDownloading
+                  })
+                  handleLinuxApacheDownload()
+                }}
                 title={
                   isDownloading 
                     ? "Downloading..." 
@@ -473,7 +905,13 @@ const FloatingPanel = ({ showValidationPanel, onToggleValidationPanel }) => {
               <button
                 className={`${styles.downloadButton} ${!hasRequiredForWindows || isDownloading ? styles.disabled : ''}`}
                 disabled={!hasRequiredForWindows || isDownloading}
-                onClick={handleWindowsIISDownload}
+                onClick={() => {
+                  floatingPanelInteraction('WINDOWS_IIS_BUTTON_CLICK', {
+                    has_requirements: hasRequiredForWindows,
+                    is_downloading: isDownloading
+                  })
+                  handleWindowsIISDownload()
+                }}
                 title={
                   isDownloading 
                     ? "Downloading..." 
@@ -487,7 +925,13 @@ const FloatingPanel = ({ showValidationPanel, onToggleValidationPanel }) => {
               </button>
               <button
                 className={`${styles.downloadButton} ${!hasAnyFiles ? styles.disabled : ''}`}
-                onClick={handleShowAdvanced}
+                onClick={() => {
+                  floatingPanelInteraction('ADVANCED_BUTTON_CLICK', {
+                    has_any_files: hasAnyFiles,
+                    certificates_count: certificates?.length || 0
+                  })
+                  handleShowAdvanced()
+                }}
                 disabled={!hasAnyFiles}
                 title={hasAnyFiles ? "Advanced download options" : "Upload files to enable advanced options"}
               >
@@ -513,7 +957,14 @@ const FloatingPanel = ({ showValidationPanel, onToggleValidationPanel }) => {
       </div>
 
       {showAdvanced && (
-        <AdvancedModal onClose={handleCloseAdvanced} />
+        <AdvancedModal 
+          onClose={() => {
+            floatingPanelInteraction('ADVANCED_MODAL_CLOSE', {
+              close_source: 'modal_close_button'
+            })
+            handleCloseAdvanced()
+          }} 
+        />
       )}
 
       {showPasswordModal && (zipPassword || encryptionPassword) && (
@@ -521,8 +972,19 @@ const FloatingPanel = ({ showValidationPanel, onToggleValidationPanel }) => {
           password={zipPassword}
           encryptionPassword={encryptionPassword}
           bundleType="iis"  // ← ADD THIS LINE
-          onClose={handlePasswordModalClose}
-          onCopyComplete={handlePasswordCopyComplete}
+          onClose={() => {
+            floatingPanelInteraction('PASSWORD_MODAL_CLOSE', {
+              close_source: 'modal_close_button',
+              had_passwords: !!(zipPassword || encryptionPassword)
+            })
+            handlePasswordModalClose()
+          }}
+          onCopyComplete={() => {
+            floatingPanelInteraction('PASSWORD_COPY_FROM_MODAL', {
+              copy_source: 'modal_copy_button'
+            })
+            handlePasswordCopyComplete()
+          }}
         />
       )}
 
@@ -530,7 +992,13 @@ const FloatingPanel = ({ showValidationPanel, onToggleValidationPanel }) => {
         type="success"
         message={successMessage}
         show={showSuccessNotification}
-        onClose={handleSuccessNotificationClose}
+        onClose={() => {
+          floatingPanelInteraction('SUCCESS_NOTIFICATION_CLOSE', {
+            close_source: 'notification_close_button',
+            message: successMessage
+          })
+          handleSuccessNotificationClose()
+        }}
         duration={4000}
       />
     </>

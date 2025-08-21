@@ -198,6 +198,75 @@ export const CertificateProvider = ({ children }) => {
     }
   }, [])
 
+  useEffect(() => {
+    // Auto-refresh certificates on mount - run once after everything is initialized
+    const timer = setTimeout(() => {
+      certificateContextLifecycle('AUTO_REFRESH_TRIGGERED', {
+        trigger_reason: 'component_mount',
+        delay_ms: 100
+      })
+      
+      contextInfo('CertificateProvider - triggering initial certificate refresh')
+      
+      // Call refreshFiles directly to avoid dependency issues
+      const doInitialRefresh = async () => {
+        try {
+          const operationStart = Date.now()
+          
+          certificateContextOperation('INITIAL_REFRESH_START', {
+            operation_type: 'initial_refresh',
+            loading_state_will_change: true
+          })
+
+          setIsLoading(true)
+          setError(null)
+          
+          contextDebug('Initial refresh - checking session before API call')
+          sessionDebugUtils.checkSessionNow()
+          
+          const result = await certificateAPI.getCertificates()
+          
+          contextDebug('Initial refresh completed - checking session after API call')
+          sessionDebugUtils.checkSessionNow()
+          
+          if (result.success) {
+            const sortedComponents = (result.certificates || []).sort((a, b) => {
+              if (a.order !== b.order) {
+                return a.order - b.order
+              }
+              return (a.filename || '').localeCompare(b.filename || '')
+            })
+            
+            setComponents(sortedComponents)
+            
+            certificateContextOperation('INITIAL_REFRESH_SUCCESS', {
+              operation_type: 'initial_refresh',
+              component_count: sortedComponents.length,
+              success: true
+            })
+
+            contextInfo(`Initial refresh successful: ${sortedComponents.length} components loaded`)
+          }
+        } catch (error) {
+          certificateContextError('Initial certificate refresh failed', {
+            error_message: error.message,
+            error_stack: error.stack,
+            operation_type: 'initial_refresh'
+          })
+          
+          contextError('Initial certificate refresh failed:', error)
+          setError('Failed to load initial PKI components')
+        } finally {
+          setIsLoading(false)
+        }
+      }
+      
+      doInitialRefresh()
+    }, 100) // Small delay to ensure all dependencies are ready
+    
+    return () => clearTimeout(timer)
+  }, [])
+
   // Track operation timing for session correlation
   const trackOperation = useCallback((operationName) => {
     const timestamp = Date.now()

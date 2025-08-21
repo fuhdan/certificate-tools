@@ -52,16 +52,31 @@ class FrontendLogger {
   // --------------------------
   getDebugMode() {
     const envDebug = import.meta.env?.VITE_DEBUG === 'true'
+    if (envDebug) return true
     const localStorageDebug = localStorage.getItem('certificate_debug') === 'true'
     const urlDebug = new URLSearchParams(window.location.search).get('debug') === 'true'
     return envDebug || localStorageDebug || urlDebug
   }
 
   getLogLevel() {
-    const envLevel = import.meta.env?.VITE_LOG_LEVEL
     const localStorageLevel = localStorage.getItem('certificate_log_level')
-    const lvl = (localStorageLevel || envLevel || (this.isDebugMode ? 'DEBUG' : 'INFO'))
-    return this.normalizeLevel(lvl)
+    if (localStorageLevel) {
+      return this.normalizeLevel(localStorageLevel)
+    }
+    
+    // If debug mode is enabled, default to DEBUG level
+    if (this.isDebugMode) {
+      return 'DEBUG'
+    }
+    
+    // When debug mode is OFF, use environment variable
+    const envLevel = import.meta.env?.VITE_LOG_LEVEL
+    if (envLevel && envLevel !== 'undefined') {
+      return this.normalizeLevel(envLevel)
+    }
+    
+    // Final fallback
+    return 'INFO'
   }
 
   normalizeLevel(level) {
@@ -803,7 +818,7 @@ class FrontendLogger {
   validationPanelLifecycle(stage, details = {}) {
     this.validationPanelInfo(`Lifecycle [${stage}]`, { stage, ...details })
   }
-  
+
   validationPanelValidation(action, validationData, details = {}) {
     this.validationPanelInfo(`Validation [${action}]`, { 
       action, 

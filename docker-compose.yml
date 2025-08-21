@@ -16,11 +16,12 @@ services:
     restart: unless-stopped
 
   frontend:
-    build: ./frontend
-    environment:
-      - VITE_API_URL=/api
-      - VITE_DEBUG=false
-      - VITE_LOG_LEVEL=WARN
+    build: 
+      context: ./frontend
+      args:
+        VITE_API_URL: /api
+        VITE_DEBUG: "false"
+        VITE_LOG_LEVEL: WARN
     networks:
       - app-network
     restart: unless-stopped

@@ -8,7 +8,7 @@ import {
   cookieInfo, cookieDebug, cookieWarn, cookieStateChange,
   downloadInfo, downloadDebug, downloadError,
   time, timeEnd
-} from '../utils/logger'
+} from '@/utils/logger'
 
 // Helper function to log cookie information
 function logCookieInfo(prefix) {

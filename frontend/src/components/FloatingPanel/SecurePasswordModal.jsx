@@ -8,7 +8,6 @@ import styles from './SecurePasswordModal.module.css'
 import {
   securePasswordModalError,
   securePasswordModalWarn,
-  securePasswordModalInfo,
   securePasswordModalDebug,
   securePasswordModalLifecycle,
   securePasswordModalSecurity,
@@ -20,10 +19,9 @@ import {
   securePasswordModalClipboard,
   securePasswordModalErrorHandling,
   securePasswordModalConfig,
-  securePasswordModalPerformance,
   time,
   timeEnd
-} from '../../utils/logger'
+} from '@/utils/logger'
 
 const SecurePasswordModal = ({ password, encryptionPassword, onClose, onCopyComplete, bundleType }) => {
   const [copiedZip, setCopiedZip] = useState(false)

@@ -20,7 +20,7 @@ import {
   downloadModalOperation,
   downloadModalRequirement,
   downloadModalQuickAction
-} from '../../utils/logger'
+} from '@/utils/logger'
 
 const AdvancedModal = ({ onClose }) => {
   const { certificates } = useCertificates()
@@ -65,7 +65,8 @@ const AdvancedModal = ({ onClose }) => {
 
   useEffect(() => {
     downloadModalFormat('FORMATS_CHANGED', {
-      format_count: Object.keys(formatSelections).length,
+      // FIXED: Add null check
+      format_count: (formatSelections && typeof formatSelections === 'object') ? Object.keys(formatSelections).length : 0,
       formats: formatSelections
     })
   }, [formatSelections])
@@ -178,7 +179,8 @@ const AdvancedModal = ({ onClose }) => {
 
       downloadModalFormat('FORMAT_REMOVED', {
         component_id: componentId,
-        remaining_formats: Object.keys(newFormats).length
+        // FIXED: Add null check
+        remaining_formats: (newFormats && typeof newFormats === 'object') ? Object.keys(newFormats).length : 0
       })
     } else {
       newSelected.add(componentId)
@@ -229,7 +231,7 @@ const AdvancedModal = ({ onClose }) => {
       setSelectedComponents(new Set())
       setFormatSelections({})
       downloadModalFormat('ALL_FORMATS_CLEARED', {
-        cleared_count: Object.keys(formatSelections).length
+        cleared_count: (formatSelections && typeof formatSelections === 'object') ? Object.keys(formatSelections).length : 0
       })
     } else {
       // Select all
@@ -321,7 +323,8 @@ const AdvancedModal = ({ onClose }) => {
     downloadModalFormat('FORMAT_VALIDATION', {
       all_formats_selected: result,
       selected_count: selectedComponents.size,
-      formats_count: Object.keys(formatSelections).length
+      // FIXED: Add null check
+      formats_count: (formatSelections && typeof formatSelections === 'object') ? Object.keys(formatSelections).length : 0
     })
 
     return result
@@ -352,7 +355,8 @@ const AdvancedModal = ({ onClose }) => {
       setDownloadError(errorMsg)
       downloadModalError('Download validation failed - missing formats', {
         selected_count: selectedComponents.size,
-        formats_count: Object.keys(formatSelections).length
+        // FIXED: Add null check
+        formats_count: (formatSelections && typeof formatSelections === 'object') ? Object.keys(formatSelections).length : 0
       })
       return
     }

@@ -30,7 +30,7 @@ import {
   certificateBug,
   certificateInteraction,
   certificateSecurity
-} from '../../utils/logger'
+} from '@/utils/logger'
 
 const CertificateDetails = ({ certificate }) => {
   const [isExpanded, setIsExpanded] = useState(true) // DEFAULT: Expanded
@@ -500,31 +500,32 @@ const CertificateDetails = ({ certificate }) => {
         )}
 
         {/* Key Usage (if available) - FIXED: Only show TRUE values */}
-        {metadata.key_usage && Object.keys(metadata.key_usage).length > 0 && (
-          <div className={styles.extensionItem}>
-            <h5>Key Usage</h5>
-            <div className={styles.usageList}>
-              {Object.entries(metadata.key_usage)
-                .filter(([key, value]) => {
-                  if (value !== true) {
-                    certificateDebug(`Key usage '${key}' filtered out - value: ${value}`)
-                  }
-                  return value === true
-                })
-                .map(([key, value]) => (
-                  <span key={key} className={styles.usageItem}>
-                    {key.replace(/([A-Z])/g, ' $1').toLowerCase().replace(/^\w/, c => c.toUpperCase()).replace(/_/g, ' ')}
-                  </span>
-                ))}
-            </div>
-            
-            {/* DEBUG: Show all key usage for debugging */}
-            <details style={{ fontSize: '0.8rem', color: '#6b7280', marginTop: '0.5rem' }}>
-              <summary>Debug: All Key Usage Values</summary>
-              <pre>{JSON.stringify(metadata.key_usage, null, 2)}</pre>
-            </details>
+        {metadata.key_usage && (metadata.key_usage && typeof metadata.key_usage === 'object') && Object.keys(metadata.key_usage).length > 0 && (
+        <div className={styles.extensionItem}>
+          <h5>Key Usage</h5>
+          <div className={styles.usageList}>
+            {Object.entries(metadata.key_usage)
+              .filter(([key, value]) => {
+                if (value !== true) {
+                  certificateDebug(`Key usage '${key}' filtered out - value: ${value}`)
+                }
+                return value === true
+              })
+              .map(([key, value]) => (
+                <span key={key} className={styles.usageItem}>
+                  {key.replace(/([A-Z])/g, ' $1').toLowerCase().replace(/^\w/, c => c.toUpperCase()).replace(/_/g, ' ')}
+                </span>
+              ))}
           </div>
-        )}
+          
+          {/* DEBUG: Show all key usage for debugging */}
+          <details style={{ fontSize: '0.8rem', color: '#6b7280', marginTop: '0.5rem' }}>
+            <summary>Debug: All Key Usage Values</summary>
+            <pre>{JSON.stringify(metadata.key_usage, null, 2)}</pre>
+          </details>
+        </div>
+      )}
+
 
         {/* Extended Key Usage (if available) */}
         {metadata.extended_key_usage && metadata.extended_key_usage.length > 0 && (
@@ -718,7 +719,7 @@ const CertificateDetails = ({ certificate }) => {
         )}
   
         {/* Basic Constraints for CSRs (if available) */}
-        {metadata.basic_constraints && Object.keys(metadata.basic_constraints).length > 0 && (
+        {metadata.basic_constraints && (metadata.basic_constraints && typeof metadata.basic_constraints === 'object') && Object.keys(metadata.basic_constraints).length > 0 && (
           <div className={styles.extensionItem}>
             <h5>Basic Constraints</h5>
             <div className={styles.constraintsList}>

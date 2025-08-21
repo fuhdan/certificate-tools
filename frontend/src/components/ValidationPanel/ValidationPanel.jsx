@@ -1,6 +1,3 @@
-// frontend/src/components/ValidationPanel/ValidationPanel.jsx
-// FIXED: Validation panel not updating after component deletion
-
 import React, { useState, useEffect } from 'react';
 import { 
   Shield, 
@@ -19,15 +16,44 @@ import {
 import styles from './ValidationPanel.module.css';
 import { certificateAPI } from '../../services/api';
 
+// Import comprehensive logging for validation panel
+import {
+  validationPanelError,
+  validationPanelWarn,
+  validationPanelInfo,
+  validationPanelDebug,
+  validationPanelLifecycle,
+  validationPanelValidation,
+  validationPanelFiltering,
+  validationPanelPKI,
+  validationPanelInteraction,
+  validationPanelState,
+  validationPanelRender,
+  validationPanelAPI,
+  validationPanelCryptography,
+  validationPanelPerformance,
+  validationPanelSecurity,
+  time,
+  timeEnd
+} from '@/utils/logger'
+
 const isValidPKIRelationship = (validation, key = '') => {
+  time('ValidationPanel.pki_filter_check')
+  
   const validationType = (validation.title || validation.validation_type || key || '').toLowerCase();
+  
+  validationPanelFiltering('PKI_RELATIONSHIP_CHECK', {
+    input_count: 1,
+    validation_type: validationType,
+    validation_key: key
+  })
   
   // ONLY allow these specific PKI relationship validations
   const allowedTypes = [
     'private key',
-    'certificate match',  // ❌ DOESN'T MATCH 'certificate_csr_match'
-    'csr',                // ❌ DOESN'T MATCH 'certificate_csr_match' 
-    'chain',              // ❌ DOESN'T MATCH 'certificate_chain_validation'
+    'certificate match',
+    'csr',
+    'chain',
     'ca match',
     'issuing',
     'intermediate',
@@ -39,10 +65,10 @@ const isValidPKIRelationship = (validation, key = '') => {
     'expiry',
     'expired', 
     'date',
-    'usage',              // ❌ EXCLUDES 'key_usage_validation'
-    'algorithm',          // ❌ EXCLUDES 'algorithm_strength_validation'
-    'strength',           // ❌ EXCLUDES 'algorithm_strength_validation'
-    'subject alternative',// ❌ EXCLUDES 'subject_alternative_name_validation'
+    'usage',
+    'algorithm',
+    'strength',
+    'subject alternative',
     'san',
     'extension'
   ];
@@ -51,7 +77,19 @@ const isValidPKIRelationship = (validation, key = '') => {
   const hasAllowedType = allowedTypes.some(type => validationType.includes(type));
   const hasExcludedType = excludedTypes.some(type => validationType.includes(type));
   
-  return hasAllowedType && !hasExcludedType;
+  const isValid = hasAllowedType && !hasExcludedType;
+  
+  validationPanelFiltering('PKI_RELATIONSHIP_RESULT', {
+    output_count: isValid ? 1 : 0,
+    criteria: 'pki_relationships_only',
+    has_allowed_type: hasAllowedType,
+    has_excluded_type: hasExcludedType,
+    allowed_types_matched: allowedTypes.filter(type => validationType.includes(type)),
+    excluded_types_matched: excludedTypes.filter(type => validationType.includes(type))
+  })
+  
+  timeEnd('ValidationPanel.pki_filter_check')
+  return isValid;
 };
 
 const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
@@ -60,28 +98,89 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
   const [error, setError] = useState(null);
   const [expandedValidations, setExpandedValidations] = useState(new Set());
 
+  // Log component lifecycle
+  useEffect(() => {
+    time('ValidationPanel.component_initialization')
+    
+    validationPanelLifecycle('COMPONENT_MOUNT', {
+      initial_certificate_count: certificates?.length || 0,
+      has_validation_callback: !!onValidationComplete,
+      component_name: 'ValidationPanel'
+    })
+
+    timeEnd('ValidationPanel.component_initialization')
+
+    return () => {
+      validationPanelLifecycle('COMPONENT_UNMOUNT', {
+        final_validation_results: !!validationResults,
+        final_certificate_count: certificates?.length || 0,
+        expanded_validations_count: expandedValidations.size
+      })
+    }
+  }, [])
+
   // FIXED: Fetch validation results when certificates change (including deletions)
   useEffect(() => {
-    console.log('🔄 ValidationPanel: Certificates changed:', certificates?.length, certificates?.map(c => c.filename));
+    time('ValidationPanel.certificate_change_handler')
     
-    // CHANGE: Always fetch validation results when certificates change, even if empty
-    // This ensures we refresh after deletions
-    console.log('🔍 ValidationPanel: Fetching validation results...');
+    validationPanelState('CERTIFICATES_CHANGED', certificates, {
+      certificate_count: certificates?.length || 0,
+      certificate_filenames: certificates?.map(c => c.filename) || [],
+      change_trigger: 'useEffect_dependency'
+    })
+    
+    validationPanelInfo('🔄 ValidationPanel: Certificates changed:', certificates?.length, certificates?.map(c => c.filename));
+    
+    validationPanelValidation('VALIDATION_REFRESH_TRIGGERED', certificates, {
+      trigger_reason: 'certificate_change',
+      will_clear_results: true,
+      will_fetch_new: true
+    })
+    
+    validationPanelInfo('🔍 ValidationPanel: Fetching validation results...');
     setValidationResults(null);
     fetchValidationResults();
+
+    timeEnd('ValidationPanel.certificate_change_handler')
   }, [certificates]);
 
   const fetchValidationResults = async () => {
+    time('ValidationPanel.fetch_validation_results')
+    
+    validationPanelAPI('FETCH_START', {
+      loading_state: true,
+      error_cleared: true
+    })
+
     setIsLoading(true);
     setError(null);
     
     try {
-      console.log('🔍 ValidationPanel: Fetching validation results...');
+      validationPanelAPI('API_REQUEST_START', {
+        endpoint: 'getCertificates',
+        request_type: 'validation_results'
+      })
+
+      validationPanelInfo('🔍 ValidationPanel: Fetching validation results...');
       const response = await certificateAPI.getCertificates();
-      console.log('📥 ValidationPanel: Received certificates response:', response);
+      
+      validationPanelAPI('API_RESPONSE_RECEIVED', {
+        success: response.success,
+        has_validation_results: !!response.validation_results,
+        response_keys: Object.keys(response)
+      })
+
+      validationPanelInfo('📥 ValidationPanel: Received certificates response:', response);
       
       if (response.success && response.validation_results) {
-        console.log('📊 ValidationPanel: Found validation results:', response.validation_results);
+        time('ValidationPanel.process_validation_results')
+        
+        validationPanelValidation('BACKEND_RESULTS_RECEIVED', response.validation_results, {
+          has_validations: !!response.validation_results.validations,
+          overall_status: response.validation_results.overall_status
+        })
+
+        validationPanelInfo('📊 ValidationPanel: Found validation results:', response.validation_results);
         
         const backendResults = response.validation_results;
         
@@ -89,13 +188,35 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
         let validations = [];
         
         if (backendResults.validations) {
-          console.log('🔍 Raw backend validations:', backendResults.validations);
+          validationPanelFiltering('RAW_VALIDATIONS_PROCESSING', {
+            input_count: Array.isArray(backendResults.validations) ? backendResults.validations.length : Object.keys(backendResults.validations).length,
+            validation_type: Array.isArray(backendResults.validations) ? 'array' : 'object'
+          })
+
+          validationPanelInfo('🔍 Raw backend validations:', backendResults.validations);
+          
           if (Array.isArray(backendResults.validations)) {
             validations = backendResults.validations
-              .filter(validation => isValidPKIRelationship(validation))
+              .filter(validation => {
+                const isValid = isValidPKIRelationship(validation)
+                validationPanelFiltering('VALIDATION_FILTER_CHECK', {
+                  validation_title: validation.title,
+                  validation_type: validation.validation_type,
+                  is_valid_pki: isValid
+                })
+                return isValid
+              })
               .map((validation, index) => {
-                console.log(`🔍 Processing validation ${index}:`, validation);
-                console.log(`🔍 Validation details (full object):`, JSON.stringify(validation.details, null, 2));
+                validationPanelValidation('VALIDATION_PROCESSING', validation, {
+                  processing_index: index,
+                  validation_status: validation.status,
+                  has_details: !!validation.details,
+                  components_count: validation.components_involved?.length || 0
+                })
+
+                validationPanelInfo(`🔍 Processing validation ${index}:`, validation);
+                validationPanelDebug(`🔍 Validation details (full object):`, JSON.stringify(validation.details, null, 2));
+                
                 return {
                   isValid: validation.status === 'valid',
                   validationType: validation.title || validation.validation_type || `Validation ${index + 1}`,
@@ -107,12 +228,28 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
                 };
               });
           } else if (typeof backendResults.validations === 'object') {
-            console.log('🔍 Raw backend validations (object):', backendResults.validations);
+            validationPanelInfo('🔍 Raw backend validations (object):', backendResults.validations);
             validations = Object.entries(backendResults.validations)
-              .filter(([key, validation]) => isValidPKIRelationship(validation, key))
+              .filter(([key, validation]) => {
+                const isValid = isValidPKIRelationship(validation, key)
+                validationPanelFiltering('VALIDATION_OBJECT_FILTER_CHECK', {
+                  validation_key: key,
+                  validation_title: validation.title,
+                  is_valid_pki: isValid
+                })
+                return isValid
+              })
               .map(([key, validation]) => {
-                console.log(`🔍 Processing validation ${key}:`, validation);
-                console.log(`🔍 Validation details (full object):`, JSON.stringify(validation.details, null, 2));
+                validationPanelValidation('VALIDATION_OBJECT_PROCESSING', validation, {
+                  validation_key: key,
+                  validation_status: validation.status,
+                  has_details: !!validation.details,
+                  components_count: validation.components_involved?.length || 0
+                })
+
+                validationPanelInfo(`🔍 Processing validation ${key}:`, validation);
+                validationPanelDebug(`🔍 Validation details (full object):`, JSON.stringify(validation.details, null, 2));
+                
                 return {
                   isValid: validation.status === 'valid',
                   validationType: validation.title || formatValidationType(key),
@@ -126,58 +263,118 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
           }
         }
         
-        setValidationResults({
+        const processedResults = {
           success: true,
           validations: validations,
           overall_status: backendResults.overall_status || 'unknown',
           total_validations: validations.length,
           passed_validations: validations.filter(v => v.isValid).length,
           failed_validations: validations.filter(v => !v.isValid).length
-        });
+        }
+
+        validationPanelValidation('VALIDATION_RESULTS_PROCESSED', processedResults, {
+          processing_complete: true,
+          success_rate: processedResults.passed_validations / processedResults.total_validations * 100 || 0
+        })
+
+        validationPanelPKI('PKI_ANALYSIS_COMPLETE', {
+          is_valid: processedResults.failed_validations === 0 && processedResults.total_validations > 0,
+          relationship_count: processedResults.total_validations,
+          component_types: validations.map(v => v.validationType)
+        })
+        
+        setValidationResults(processedResults);
         
         if (onValidationComplete) {
+          validationPanelValidation('VALIDATION_CALLBACK_INVOKED', validations, {
+            callback_provided: true,
+            validation_count: validations.length
+          })
           onValidationComplete(validations);
         }
+
+        timeEnd('ValidationPanel.process_validation_results')
       } else {
         // FIXED: Clear validation results when no validation data is available
-        console.log('📊 ValidationPanel: No validation results found, clearing display');
-        setValidationResults({
+        validationPanelValidation('NO_VALIDATION_RESULTS', [], {
+          clearing_results: true,
+          response_success: response.success,
+          has_validation_results: !!response.validation_results
+        })
+
+        validationPanelInfo('📊 ValidationPanel: No validation results found, clearing display');
+        
+        const emptyResults = {
           success: true,
           validations: [],
           overall_status: 'unknown',
           total_validations: 0,
           passed_validations: 0,
           failed_validations: 0
-        });
+        }
+
+        setValidationResults(emptyResults);
       }
     } catch (err) {
+      validationPanelError('Error fetching validation results', {
+        error_message: err.message,
+        error_stack: err.stack,
+        api_call_failed: true
+      })
+
       console.error('💥 ValidationPanel: Error fetching validation results:', err);
       setError(err.message);
     } finally {
+      validationPanelAPI('FETCH_COMPLETE', {
+        loading_state: false,
+        has_error: !!error
+      })
+
       setIsLoading(false);
+      timeEnd('ValidationPanel.fetch_validation_results')
     }
   };
 
   const formatValidationType = (key) => {
-    return key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+    const formatted = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
+    
+    validationPanelDebug('Validation type formatted', {
+      original_key: key,
+      formatted_type: formatted
+    })
+
+    return formatted
   };
 
   const getTypeIcon = (type) => {
     const typeStr = type?.toLowerCase() || '';
     
+    let icon
+    let iconType
+
     if (typeStr.includes('private key') && typeStr.includes('certificate')) {
-      return <Key size={18} className={styles.typeIconCrypto} />;
+      icon = <Key size={18} className={styles.typeIconCrypto} />
+      iconType = 'private_key_certificate'
+    } else if (typeStr.includes('private key') && typeStr.includes('csr')) {
+      icon = <Key size={18} className={styles.typeIconCrypto} />
+      iconType = 'private_key_csr'
+    } else if (typeStr.includes('csr') && typeStr.includes('certificate')) {
+      icon = <FileText size={18} className={styles.typeIconExtension} />
+      iconType = 'csr_certificate'
+    } else if (typeStr.includes('chain') || typeStr.includes('ca')) {
+      icon = <Link size={18} className={styles.typeIconChain} />
+      iconType = 'chain_ca'
+    } else {
+      icon = <Shield size={18} className={styles.typeIconSecurity} />
+      iconType = 'security_general'
     }
-    if (typeStr.includes('private key') && typeStr.includes('csr')) {
-      return <Key size={18} className={styles.typeIconCrypto} />;
-    }
-    if (typeStr.includes('csr') && typeStr.includes('certificate')) {
-      return <FileText size={18} className={styles.typeIconExtension} />;
-    }
-    if (typeStr.includes('chain') || typeStr.includes('ca')) {
-      return <Link size={18} className={styles.typeIconChain} />;
-    }
-    return <Shield size={18} className={styles.typeIconSecurity} />;
+
+    validationPanelRender('TYPE_ICON_SELECTED', {
+      validation_type: type,
+      icon_type: iconType
+    })
+
+    return icon
   };
 
   const getConfidenceBadge = (confidence) => {
@@ -191,46 +388,86 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
   };
 
   const getValidationConfidence = (validation) => {
+    time('ValidationPanel.confidence_calculation')
+
+    let confidence = 'medium'
+    let confidenceFactors = []
+
     if (validation.details) {
       const details = validation.details;
       
       // High confidence: Cryptographic key matching validations
       if (details.modulus_match === true || details.exponent_match === true ||
           details.fingerprints_match === true || details.public_key_match === true) {
-        return 'high';
+        confidence = 'high'
+        confidenceFactors.push('cryptographic_match')
       }
       
       // High confidence: Certificate chain validations
-      if (details.all_signatures_valid === true || 
+      else if (details.all_signatures_valid === true || 
           details.trust_chain_complete === true ||
           details.signature_valid === true) {
-        return 'high';
+        confidence = 'high'
+        confidenceFactors.push('chain_validation')
       }
       
       // Medium confidence: Partial matches or incomplete data
-      if (details.partial_match === true || 
+      else if (details.partial_match === true || 
           Object.keys(details).length > 0) {
-        return 'medium';
+        confidence = 'medium'
+        confidenceFactors.push('partial_data')
       }
     }
     
     // Low confidence: Failed validations or no details
-    return validation.isValid ? 'medium' : 'low';
+    if (!validation.isValid) {
+      confidence = 'low'
+      confidenceFactors.push('validation_failed')
+    }
+
+    validationPanelSecurity('CONFIDENCE_CALCULATED', {
+      level: confidence,
+      validation_confidence: confidence,
+      confidence_factors: confidenceFactors,
+      has_details: !!validation.details,
+      validation_valid: validation.isValid
+    })
+
+    timeEnd('ValidationPanel.confidence_calculation')
+    return confidence
   };
 
   const toggleValidation = (validationId) => {
+    validationPanelInteraction('VALIDATION_TOGGLE', {
+      validation_id: validationId,
+      current_expanded_count: expandedValidations.size,
+      action: expandedValidations.has(validationId) ? 'collapse' : 'expand'
+    })
+
     const newExpanded = new Set(expandedValidations);
     if (newExpanded.has(validationId)) {
       newExpanded.delete(validationId);
     } else {
       newExpanded.add(validationId);
     }
+    
+    validationPanelState('EXPANDED_VALIDATIONS_CHANGED', newExpanded, {
+      expanded_count: newExpanded.size,
+      validation_id: validationId
+    })
+
     setExpandedValidations(newExpanded);
   };
 
   // Helper function to render fingerprint information using existing styles
   const renderFingerprintDetails = (fingerprintData) => {
     if (!fingerprintData || typeof fingerprintData !== 'object') return null;
+    
+    validationPanelCryptography('FINGERPRINT_RENDER', {
+      fingerprint_matches: fingerprintData.match,
+      has_csr: !!fingerprintData.csr,
+      has_certificate: !!fingerprintData.certificate
+    })
     
     return (
       <div className={styles.basicInfoGrid}>
@@ -267,14 +504,16 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
 
   // Helper function to detect and render individual fingerprint fields  
   const renderIndividualFingerprints = (details, validationType) => {
-    console.log('🔍 Checking for individual fingerprints in:', details);
+    time('ValidationPanel.individual_fingerprints_render')
+    
+    validationPanelDebug('🔍 Checking for individual fingerprints in:', details);
     
     // Check if this validation has fingerprint data using specific patterns
     const fingerprintPairs = [];
     
     // Pattern 1: Private Key ↔ Certificate
     if (details.private_key_fingerprint && details.certificate_public_key_fingerprint) {
-      console.log('🔍 Found Private Key ↔ Certificate fingerprints:', details.private_key_fingerprint, details.certificate_public_key_fingerprint);
+      validationPanelDebug('🔍 Found Private Key ↔ Certificate fingerprints:', details.private_key_fingerprint, details.certificate_public_key_fingerprint);
       fingerprintPairs.push({
         label1: 'Private Key',
         value1: details.private_key_fingerprint,
@@ -286,7 +525,7 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
     
     // Pattern 2: Private Key ↔ CSR
     if (details.private_key_fingerprint && details.csr_public_key_fingerprint) {
-      console.log('🔍 Found Private Key ↔ CSR fingerprints:', details.private_key_fingerprint, details.csr_public_key_fingerprint);
+      validationPanelDebug('🔍 Found Private Key ↔ CSR fingerprints:', details.private_key_fingerprint, details.csr_public_key_fingerprint);
       fingerprintPairs.push({
         label1: 'Private Key',
         value1: details.private_key_fingerprint,
@@ -298,7 +537,7 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
     
     // Pattern 3: CSR ↔ Certificate
     if (details.csr_public_key_fingerprint && details.certificate_public_key_fingerprint) {
-      console.log('🔍 Found CSR ↔ Certificate fingerprints:', details.csr_public_key_fingerprint, details.certificate_public_key_fingerprint);
+      validationPanelDebug('🔍 Found CSR ↔ Certificate fingerprints:', details.csr_public_key_fingerprint, details.certificate_public_key_fingerprint);
       fingerprintPairs.push({
         label1: 'CSR Public Key',
         value1: details.csr_public_key_fingerprint,
@@ -307,8 +546,14 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
         match: details.fingerprints_match
       });
     }
-    
-    const hasFingerprints = fingerprintPairs.length > 0;
+
+    validationPanelCryptography('INDIVIDUAL_FINGERPRINTS_PROCESSED', {
+      fingerprint_pairs_found: fingerprintPairs.length,
+      validation_type: validationType,
+      patterns_detected: fingerprintPairs.map(p => `${p.label1}_to_${p.label2}`)
+    })
+
+    timeEnd('ValidationPanel.individual_fingerprints_render')
     
     if (fingerprintPairs.length === 0) return null;
     
@@ -343,10 +588,16 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
 
   // Helper function to render detailed value based on type using existing styles
   const renderDetailValue = (key, value) => {
-    console.log(`🔍 renderDetailValue called with key: "${key}", value:`, value, typeof value);
+    validationPanelDebug(`🔍 renderDetailValue called with key: "${key}", value:`, value, typeof value);
+    
+    validationPanelRender('DETAIL_VALUE_RENDER', {
+      detail_key: key,
+      value_type: typeof value,
+      is_fingerprint_object: key === 'fingerprint' && typeof value === 'object'
+    })
     
     if (key === 'fingerprint' && typeof value === 'object') {
-      console.log('🎯 Found fingerprint object!', value);
+      validationPanelDebug('🎯 Found fingerprint object!', value);
       return renderFingerprintDetails(value);
     }
     
@@ -371,9 +622,18 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
   };
 
   const renderValidationDetails = (validation) => {
+    time('ValidationPanel.validation_details_render')
+    
     const details = validation.details || {};
 
-    return (
+    validationPanelRender('VALIDATION_DETAILS_RENDER', {
+      validation_type: validation.validationType,
+      has_details: Object.keys(details).length > 0,
+      has_error: !!validation.error,
+      detail_keys: Object.keys(details)
+    })
+
+    const detailsJSX = (
       <div className={styles.detailsContainer}>
         <div className={styles.validationDetailsBox}>
           <h4 className={styles.validationDetailsTitle}>PKI Relationship Details</h4>
@@ -442,7 +702,7 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
                     return true;
                   })
                   .map(([key, value]) => {
-                    console.log(`🔍 Rendering detail: ${key}:`, value, typeof value);
+                    validationPanelDebug(`🔍 Rendering detail: ${key}:`, value, typeof value);
                     return (
                       <div key={key} className={styles.technicalDetailsItem}>
                         <span className={styles.technicalDetailsLabel}>{key}:</span>
@@ -458,14 +718,43 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
         </div>
       </div>
     );
+
+    timeEnd('ValidationPanel.validation_details_render')
+    return detailsJSX
   };
 
   const getStatusIcon = (isValid) => {
     return isValid ? '✅' : '❌';
   };
 
+  // Log state changes
+  useEffect(() => {
+    validationPanelState('VALIDATION_RESULTS_CHANGED', validationResults, {
+      has_results: !!validationResults,
+      validation_count: validationResults?.validations?.length || 0,
+      overall_status: validationResults?.overall_status
+    })
+  }, [validationResults])
+
+  useEffect(() => {
+    validationPanelState('LOADING_STATE_CHANGED', { isLoading }, {
+      loading: isLoading
+    })
+  }, [isLoading])
+
+  useEffect(() => {
+    validationPanelState('ERROR_STATE_CHANGED', { error }, {
+      has_error: !!error,
+      error_message: error
+    })
+  }, [error])
+
   // Loading state
   if (isLoading) {
+    validationPanelRender('LOADING_STATE_RENDER', {
+      render_type: 'loading'
+    })
+
     return (
       <div className={styles.container}>
         <div className={styles.loadingContainer}>
@@ -481,6 +770,11 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
 
   // Error state
   if (error) {
+    validationPanelRender('ERROR_STATE_RENDER', {
+      render_type: 'error',
+      error_message: error
+    })
+
     return (
       <div className={styles.container}>
         <div className={styles.errorContainer}>
@@ -490,7 +784,12 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
             <p className={styles.errorText}>{error}</p>
             <button 
               className={styles.retryButton}
-              onClick={fetchValidationResults}
+              onClick={() => {
+                validationPanelInteraction('RETRY_BUTTON_CLICK', {
+                  previous_error: error
+                })
+                fetchValidationResults()
+              }}
             >
               Retry Validation
             </button>
@@ -502,6 +801,11 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
 
   // FIXED: No certificates uploaded - show appropriate empty state
   if (certificates.length === 0) {
+    validationPanelRender('NO_CERTIFICATES_RENDER', {
+      render_type: 'no_certificates',
+      certificate_count: 0
+    })
+
     return (
       <div className={styles.container}>
         <div className={styles.noResultsContainer}>
@@ -519,6 +823,12 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
 
   // No validation results yet
   if (!validationResults || !validationResults.validations || validationResults.validations.length === 0) {
+    validationPanelRender('NO_RESULTS_RENDER', {
+      render_type: 'no_results',
+      certificate_count: certificates.length,
+      has_validation_results: !!validationResults
+    })
+
     return (
       <div className={styles.container}>
         <div className={styles.noResultsContainer}>
@@ -544,6 +854,21 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
 
   // PKI is valid if ALL relationship validations pass
   const pkiIsValid = totalValidations > 0 && failedValidations === 0;
+
+  validationPanelPKI('PKI_STATUS_CALCULATED', {
+    is_valid: pkiIsValid,
+    relationship_count: totalValidations,
+    passed_count: passedValidations,
+    failed_count: failedValidations,
+    success_rate: Math.round((passedValidations/totalValidations)*100) || 0
+  })
+
+  validationPanelRender('MAIN_VALIDATION_RENDER', {
+    render_type: 'validation_panel',
+    total_validations: totalValidations,
+    pki_valid: pkiIsValid,
+    expanded_validations: expandedValidations.size
+  })
 
   return (
     <div className={styles.container}>
@@ -595,12 +920,29 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
         <div className={styles.validationsList}>
           {validationsArray.map((validation, index) => {
             const confidence = getValidationConfidence(validation);
+            const validationId = validation.validationId || index;
+            
+            validationPanelRender('VALIDATION_ITEM_RENDER', {
+              validation_index: index,
+              validation_type: validation.validationType,
+              validation_valid: validation.isValid,
+              confidence_level: confidence,
+              is_expanded: expandedValidations.has(validationId)
+            })
+
             return (
-              <div key={validation.validationId || index} className={styles.validationItem}>
+              <div key={validationId} className={styles.validationItem}>
                 {/* Validation Header */}
                 <div 
                   className={styles.validationHeader}
-                  onClick={() => toggleValidation(validation.validationId || index)}
+                  onClick={() => {
+                    validationPanelInteraction('VALIDATION_HEADER_CLICK', {
+                      validation_id: validationId,
+                      validation_type: validation.validationType,
+                      will_toggle: true
+                    })
+                    toggleValidation(validationId)
+                  }}
                 >
                   <div className={styles.validationHeaderContent}>
                     {getTypeIcon(validation.validationType)}
@@ -619,7 +961,7 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
                       {confidence} confidence
                     </span>
                     {getStatusIcon(validation.isValid)}
-                    {expandedValidations.has(validation.validationId || index) ? (
+                    {expandedValidations.has(validationId) ? (
                       <ChevronDown size={20} className={styles.expandIcon} />
                     ) : (
                       <ChevronRight size={20} className={styles.expandIcon} />
@@ -642,7 +984,7 @@ const ValidationPanel = ({ certificates = [], onValidationComplete }) => {
                 </div>
 
                 {/* Expanded Details */}
-                {expandedValidations.has(validation.validationId || index) && (
+                {expandedValidations.has(validationId) && (
                   <div className={styles.expandedDetails}>
                     {renderValidationDetails(validation)}
                   </div>

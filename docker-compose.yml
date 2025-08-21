@@ -20,7 +20,7 @@ services:
     environment:
       - VITE_API_URL=/api
       - VITE_DEBUG=false
-      - VITE_LOG_LEVEL=INFO
+      - VITE_LOG_LEVEL=WARN
     networks:
       - app-network
     restart: unless-stopped

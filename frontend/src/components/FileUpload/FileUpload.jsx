@@ -17,7 +17,7 @@ import {
   uploadInteraction,
   uploadResult,
   uploadBatch
-} from '../../utils/logger'
+} from '@/utils/logger'
 
 const FileUpload = () => {
   const {

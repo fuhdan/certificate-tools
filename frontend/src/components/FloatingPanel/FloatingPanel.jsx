@@ -45,7 +45,7 @@ import {
   floatingPanelCertificateAnalysis,
   time,
   timeEnd
-} from '../../utils/logger'
+} from '@/utils/logger'
 
 const FloatingPanel = ({ showValidationPanel, onToggleValidationPanel }) => {
   const { certificates, clearAllFiles } = useCertificates()

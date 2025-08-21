@@ -15,7 +15,7 @@ import {
   connectionLifecycle,
   connectionStatus,
   connectionHealthCheck
-} from '../../utils/logger'
+} from '@/utils/logger'
 
 const ConnectionStatus = () => {
   const [status, setStatus] = useState('checking')

@@ -16,7 +16,7 @@ import {
   fileManagerDeletion,
   fileManagerAnalysis,
   fileManagerFormat
-} from '../../utils/logger'
+} from '@/utils/logger'
 
 const FileManager = () => {
   const { certificates, deleteCertificate } = useCertificates()
@@ -75,7 +75,7 @@ const FileManager = () => {
     if (!cert || !cert.type) {
       fileManagerWarn('Certificate missing or no type field', {
         cert_id: cert?.id,
-        cert_keys: cert ? Object.keys(cert) : [],
+        cert_keys: (cert && typeof cert === 'object') ? Object.keys(cert) : [],
         fallback: 'Unknown'
       })
       return 'Unknown'

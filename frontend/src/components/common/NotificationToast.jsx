@@ -14,7 +14,7 @@ import {
   notificationLifecycle,
   notificationDisplay,
   notificationTiming
-} from '../../utils/logger'
+} from '@/utils/logger'
 
 const NotificationToast = ({
   type = 'info',

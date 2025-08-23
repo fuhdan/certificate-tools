@@ -19,9 +19,19 @@ RUN npm install react-router-dom
 COPY . .
 RUN npm run build
 
-FROM nginx:alpine
-COPY --from=builder /app/dist /usr/share/nginx/html
-COPY logo.png /usr/share/nginx/html/logo.png
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-EXPOSE 80
-CMD ["nginx", "-g", "daemon off;"]
+# Simple static file server using Node.js serve (NO NGINX)
+FROM node:24-alpine
+
+WORKDIR /app
+
+# Install serve to serve static files
+RUN npm install -g serve
+
+# Copy built files from builder stage
+COPY --from=builder /app/dist /app/dist
+COPY logo.png /app/dist/logo.png
+
+EXPOSE 3000
+
+# Serve the built React app on port 3000
+CMD ["serve", "-s", "/app/dist", "-l", "3000"]

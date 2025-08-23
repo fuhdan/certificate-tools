@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   nginx:
     build: ./nginx
@@ -5,12 +7,9 @@ services:
       - target: 80
         published: 80
         protocol: TCP
-      - target: 443
-        published: 443
-        protocol: TCP
     depends_on:
       - frontend
-      - backend-fastapi  # Updated to match service name
+      - backend-fastapi
     networks:
       - app-network
     restart: unless-stopped
@@ -18,21 +17,17 @@ services:
   frontend:
     build: 
       context: ./frontend
+      dockerfile: Dockerfile
       args:
-        VITE_API_URL: /api
+        VITE_API_URL: /api  # API calls will be proxied by nginx
         VITE_DEBUG: "false"
         VITE_LOG_LEVEL: WARN
     networks:
       - app-network
     restart: unless-stopped
 
-  # Updated backend service to use FastAPI instead of Node.js
-  backend-fastapi:  # Changed service name for clarity
+  backend-fastapi:
     build: ./backend-fastapi
-    ports:
-      - target: 8000
-        published: 8000
-        protocol: TCP
     environment:
       - PYTHONPATH=/app
       - DEBUG=ON

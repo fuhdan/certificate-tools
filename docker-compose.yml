@@ -1,6 +1,21 @@
 version: '3.8'
 
 services:
+  # ADD NEW REDIS SERVICE
+  redis:
+    image: redis:7.2-alpine
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    networks:
+      - app-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
   nginx:
     build: ./nginx
     ports:
@@ -10,16 +25,17 @@ services:
     depends_on:
       - frontend
       - backend-fastapi
+      - redis  # Add Redis dependency
     networks:
       - app-network
     restart: unless-stopped
 
   frontend:
-    build: 
+    build:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        VITE_API_URL: /api  # API calls will be proxied by nginx
+        VITE_API_URL: /api # API calls will be proxied by nginx
         VITE_DEBUG: "false"
         VITE_LOG_LEVEL: WARN
     networks:
@@ -31,10 +47,26 @@ services:
     environment:
       - PYTHONPATH=/app
       - DEBUG=ON
+      # ADD REDIS CONFIGURATION
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+      - SESSION_EXPIRE_HOURS=24
+      # - REDIS_PASSWORD=${REDIS_PASSWORD}  # Uncomment if using Redis password
+    depends_on:
+      redis:
+        condition: service_healthy  # Wait for Redis to be ready
     networks:
       - app-network
     restart: unless-stopped
+    deploy:
+      replicas: 1  # Default to 1, can scale with: docker-compose up --scale backend-fastapi=3
 
 networks:
   app-network:
     driver: bridge
+
+# ADD REDIS PERSISTENT VOLUME
+volumes:
+  redis_data:
+    driver: local

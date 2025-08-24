@@ -789,6 +789,172 @@ test_certificate_types_and_validation() {
     done
 }
 
+# Test Redis connectivity through health endpoint
+test_redis_connectivity() {
+    echo -e "${YELLOW}Testing Redis connectivity and session storage...${NC}"
+    
+    # Test Redis health through the /health endpoint
+    local health_response=$(curl -s -X GET "$API_BASE_URL/health" --connect-timeout 10 2>/dev/null)
+    local health_http_code=$(curl -s -X GET "$API_BASE_URL/health" -w "%{http_code}" --connect-timeout 10 2>/dev/null | tail -c 3)
+    
+    if [ "$health_http_code" = "200" ]; then
+        local health_file="$TEST_OUTPUT_DIR/redis_health_response.json"
+        echo "$health_response" > "$health_file"
+        
+        # Parse Redis status from health endpoint
+        local redis_status=$(echo "$health_response" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    redis_info = data.get('redis', {})
+    print(redis_info.get('status', 'unknown'))
+except:
+    print('parse_error')
+" 2>/dev/null)
+        
+        local session_count=$(echo "$health_response" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    sessions_info = data.get('sessions', {})
+    print(sessions_info.get('active_sessions', 'unknown'))
+except:
+    print('unknown')
+" 2>/dev/null)
+        
+        case "$redis_status" in
+            "healthy")
+                log_test "Redis Connectivity" "PASS" "Redis is healthy, $session_count active sessions. See $health_file"
+                ;;
+            "unhealthy")
+                log_test "Redis Connectivity" "FAIL" "Redis is unhealthy. See $health_file"
+                ;;
+            "not_configured")
+                log_test "Redis Connectivity" "INFO" "Redis not configured (using in-memory storage). See $health_file"
+                ;;
+            *)
+                log_test "Redis Connectivity" "FAIL" "Redis status unknown ($redis_status). See $health_file"
+                ;;
+        esac
+        
+        # Test session persistence across requests
+        test_redis_session_persistence
+        
+    else
+        log_test "Redis Connectivity" "FAIL" "Health endpoint failed (HTTP $health_http_code)"
+    fi
+}
+
+# Test Redis session persistence
+test_redis_session_persistence() {
+    echo "  Testing Redis session persistence..."
+    
+    local token=$(get_auth_token)
+    if [ -z "$token" ]; then
+        log_test "Redis Session Persistence" "FAIL" "Authentication failed"
+        return
+    fi
+    
+    local test_file=$(find "$CERT_DIR" -name "*.crt.pem" | head -n 1)
+    if [ ! -f "$test_file" ]; then
+        log_test "Redis Session Persistence" "SKIP" "No test file available"
+        return
+    fi
+    
+    # Create a session and upload a certificate
+    local session_id=$(generate_session_id)
+    echo "    Creating session $session_id and uploading certificate..."
+    
+    if upload_file "$test_file" "$session_id" "$token"; then
+        echo "    ✓ Certificate uploaded to session"
+        
+        # Verify the certificate is stored
+        local initial_response=$(get_session_certificates "$session_id" "$token")
+        local initial_count=$(count_certificates "$initial_response")
+        
+        if [ "$initial_count" = "1" ]; then
+            echo "    ✓ Certificate found in session ($initial_count certificates)"
+            
+            # Wait a moment to simulate some time passing
+            sleep 2
+            
+            # Retrieve certificates again to test persistence
+            local second_response=$(get_session_certificates "$session_id" "$token")
+            local second_count=$(count_certificates "$second_response")
+            
+            if [ "$second_count" = "1" ]; then
+                echo "    ✓ Certificate persisted across requests"
+                log_test "Redis Session Persistence" "PASS" "Session data persisted correctly ($second_count certificates)"
+                
+                # Save session data for debugging
+                local persist_file="$TEST_OUTPUT_DIR/redis_persistence_test.json"
+                echo "$second_response" > "$persist_file"
+                log_test "Redis Session Persistence/Data" "INFO" "Session data saved to $persist_file"
+                
+            else
+                echo "    ✗ Certificate not persisted ($second_count vs $initial_count)"
+                log_test "Redis Session Persistence" "FAIL" "Session data not persisted correctly"
+            fi
+        else
+            echo "    ✗ Certificate not found in session ($initial_count certificates)"
+            log_test "Redis Session Persistence" "FAIL" "Certificate not stored in session"
+        fi
+    else
+        echo "    ✗ Failed to upload certificate"
+        log_test "Redis Session Persistence" "FAIL" "Certificate upload failed"
+    fi
+}
+
+# Test Redis session stats
+test_redis_session_stats() {
+    echo -e "${YELLOW}Testing Redis session statistics...${NC}"
+    
+    # Get current health/stats
+    local health_response=$(curl -s -X GET "$API_BASE_URL/health" --connect-timeout 10 2>/dev/null)
+    local health_http_code=$(curl -s -X GET "$API_BASE_URL/health" -w "%{http_code}" --connect-timeout 10 2>/dev/null | tail -c 3)
+    
+    if [ "$health_http_code" = "200" ]; then
+        local stats_file="$TEST_OUTPUT_DIR/redis_session_stats.json"
+        echo "$health_response" > "$stats_file"
+        
+        # Extract session statistics
+        local session_stats=$(echo "$health_response" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    sessions = data.get('sessions', {})
+    active = sessions.get('active_sessions', 0)
+    memory = sessions.get('total_memory_mb', 0)
+    requests = sessions.get('total_requests', 0)
+    print(f'Active: {active}, Memory: {memory}MB, Requests: {requests}')
+except:
+    print('Stats unavailable')
+" 2>/dev/null)
+        
+        log_test "Redis Session Stats" "INFO" "$session_stats. See $stats_file"
+        
+        # Check if we have reasonable stats
+        local active_sessions=$(echo "$health_response" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    sessions = data.get('sessions', {})
+    print(sessions.get('active_sessions', 0))
+except:
+    print(0)
+" 2>/dev/null)
+        
+        if [ "$active_sessions" -gt 0 ]; then
+            log_test "Redis Session Stats/Active Sessions" "PASS" "$active_sessions active sessions detected"
+        else
+            log_test "Redis Session Stats/Active Sessions" "INFO" "No active sessions (normal if no recent activity)"
+        fi
+        
+    else
+        log_test "Redis Session Stats" "FAIL" "Could not retrieve session stats (HTTP $health_http_code)"
+    fi
+}
+
 # Test individual certificate with APPLICATION
 test_single_certificate() {
     local cert_file="$1"
@@ -1019,6 +1185,86 @@ generate_summary() {
     echo -e "   Test Date: ${BLUE}$(date)${NC}"
     echo -e "   Hostname: ${BLUE}$(hostname)${NC}"
     echo -e "   Curl Version: ${BLUE}$(curl --version 2>/dev/null | head -n1 | cut -d' ' -f1-2 || echo 'Not Available')${NC}"
+    
+    # NEW: Add Redis information
+    local redis_health_file="$TEST_OUTPUT_DIR/redis_health_response.json"
+    if [ -f "$redis_health_file" ]; then
+        local redis_status=$(cat "$redis_health_file" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    redis_info = data.get('redis', {})
+    print(redis_info.get('status', 'unknown'))
+except:
+    print('unknown')
+" 2>/dev/null)
+        
+        local active_sessions=$(cat "$redis_health_file" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    sessions_info = data.get('sessions', {})
+    print(sessions_info.get('active_sessions', 'unknown'))
+except:
+    print('unknown')
+" 2>/dev/null)
+        
+        local session_memory=$(cat "$redis_health_file" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    sessions_info = data.get('sessions', {})
+    memory = sessions_info.get('total_memory_mb', 'unknown')
+    print(f'{memory}MB' if memory != 'unknown' else 'unknown')
+except:
+    print('unknown')
+" 2>/dev/null)
+        
+        echo -e "   Redis Status: ${BLUE}$redis_status${NC}"
+        if [ "$redis_status" = "healthy" ]; then
+            echo -e "   Active Sessions: ${BLUE}$active_sessions${NC}"
+            echo -e "   Session Memory: ${BLUE}$session_memory${NC}"
+        fi
+    else
+        echo -e "   Redis Status: ${YELLOW}not tested${NC}"
+    fi
+    echo ""
+    
+    # Storage Architecture Info
+    echo -e "${YELLOW}🗄️  STORAGE ARCHITECTURE${NC}"
+    if [ -f "$redis_health_file" ]; then
+        local redis_status=$(cat "$redis_health_file" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    redis_info = data.get('redis', {})
+    print(redis_info.get('status', 'unknown'))
+except:
+    print('unknown')
+" 2>/dev/null)
+        
+        case "$redis_status" in
+            "healthy")
+                echo -e "   Session Storage: ${GREEN}Redis (Distributed)${NC}"
+                echo -e "   Multi-Instance Support: ${GREEN}✓ Enabled${NC}"
+                echo -e "   Docker Swarm Compatible: ${GREEN}✓ Yes${NC}"
+                ;;
+            "not_configured")
+                echo -e "   Session Storage: ${YELLOW}In-Memory (Single Instance)${NC}"
+                echo -e "   Multi-Instance Support: ${RED}✗ Disabled${NC}"
+                echo -e "   Docker Swarm Compatible: ${RED}✗ No${NC}"
+                ;;
+            *)
+                echo -e "   Session Storage: ${RED}Redis (Error)${NC}"
+                echo -e "   Multi-Instance Support: ${RED}✗ Unavailable${NC}"
+                echo -e "   Docker Swarm Compatible: ${RED}✗ No${NC}"
+                ;;
+        esac
+    else
+        echo -e "   Session Storage: ${YELLOW}Unknown${NC}"
+        echo -e "   Multi-Instance Support: ${YELLOW}Not Tested${NC}"
+        echo -e "   Docker Swarm Compatible: ${YELLOW}Not Tested${NC}"
+    fi
     echo ""
     
     # Recommendations
@@ -1027,12 +1273,49 @@ generate_summary() {
     if [ $FAILED_TESTS -eq 0 ]; then
         echo -e "   ${GREEN}✓ All tests passed! Your Certificate Analysis Tool is working perfectly.${NC}"
         echo -e "   ${GREEN}✓ Session isolation is secure and multiuser functionality is reliable.${NC}"
+        
+        # Add Redis-specific recommendations
+        if [ -f "$redis_health_file" ]; then
+            local redis_status=$(cat "$redis_health_file" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    redis_info = data.get('redis', {})
+    print(redis_info.get('status', 'unknown'))
+except:
+    print('unknown')
+" 2>/dev/null)
+            
+            if [ "$redis_status" = "healthy" ]; then
+                echo -e "   ${GREEN}✓ Redis distributed storage is operational - ready for scaling!${NC}"
+            elif [ "$redis_status" = "not_configured" ]; then
+                echo -e "   ${YELLOW}⚠ Consider Redis migration for multi-instance support.${NC}"
+            fi
+        fi
+        
     elif [ $FAILED_TESTS -le 2 ]; then
         echo -e "   ${YELLOW}⚠ Minor issues detected. Review failed tests above.${NC}"
         echo -e "   ${YELLOW}⚠ Check error logs in $TEST_OUTPUT_DIR for details.${NC}"
     else
         echo -e "   ${RED}✗ Multiple issues detected. Immediate attention required.${NC}"
         echo -e "   ${RED}✗ Review all failed tests and check API functionality.${NC}"
+        
+        # Add Redis troubleshooting
+        if [ -f "$redis_health_file" ]; then
+            local redis_status=$(cat "$redis_health_file" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    redis_info = data.get('redis', {})
+    print(redis_info.get('status', 'unknown'))
+except:
+    print('unknown')
+" 2>/dev/null)
+            
+            if [ "$redis_status" = "unhealthy" ]; then
+                echo -e "   ${RED}✗ Redis connection issues detected - check Redis service.${NC}"
+            fi
+        fi
     fi
     
     echo ""
@@ -1072,6 +1355,8 @@ fi
 # Run tests
 test_api_health
 if test_authentication; then
+    test_redis_connectivity
+    test_redis_session_stats
     test_default_session_isolation
     test_session_isolation
     test_concurrent_access

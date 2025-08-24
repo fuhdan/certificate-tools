@@ -41,6 +41,8 @@ services:
     networks:
       - app-network
     restart: unless-stopped
+    deploy:
+      replicas: 2  # Default to 2, can scale with: docker-compose up --scale frontend=3
 
   backend-fastapi:
     build: ./backend-fastapi
@@ -60,7 +62,7 @@ services:
       - app-network
     restart: unless-stopped
     deploy:
-      replicas: 1  # Default to 1, can scale with: docker-compose up --scale backend-fastapi=3
+      replicas: 2  # Default to 2, can scale with: docker-compose up --scale backend-fastapi=3
 
 networks:
   app-network:

@@ -11,7 +11,7 @@ const LandingPage = () => {
         <div className={styles.container}>
           <div className={styles.navContent}>
             <div className={styles.navLogo}>
-              <img src="/assets/danielf-logo.png" alt="DanielF Security" style={{width: '40px', height: '40px', objectFit: 'contain'}} />
+              <img src="/assets/danielf-logo.color.png" alt="DanielF Security" style={{width: '40px', height: '40px', objectFit: 'contain'}} />
               <span className={styles.navBrand}>Certificate Tools</span>
             </div>
             <div className={styles.navLinks}>
@@ -35,7 +35,7 @@ const LandingPage = () => {
         <div className={styles.container}>
           <div className={styles.heroContent}>
             <div className={styles.heroIcon}>
-              <img src="/assets/danielf-logo.png" alt="DanielF Security" style={{width: '64px', height: '64px', objectFit: 'contain'}} />
+              <img src="/assets/danielf-logo.color.png" alt="DanielF Security" style={{width: '64px', height: '64px', objectFit: 'contain'}} />
             </div>
             <h1 className={styles.heroTitle}>
               Certificate Validation & Conversion
@@ -264,7 +264,7 @@ const LandingPage = () => {
           </div>
           <div className={styles.footerBottom}>
             <div className={styles.footerLogo}>
-              <img src="/assets/danielf-logo.png" alt="DanielF Security" style={{width: '24px', height: '24px', objectFit: 'contain'}} />
+              <img src="/assets/danielf-logo.color.png" alt="DanielF Security" style={{width: '24px', height: '24px', objectFit: 'contain'}} />
               <span>Daniel Fuhrer</span>
             </div>
             <p>&copy; 2025 Certificate Tools. MIT Licensed. Made with ❤️ for the developer community.</p>

@@ -269,7 +269,17 @@ class DownloadService:
         files[filename] = chain_content
         
         # Use original session components for manifest (same as IIS)
-        selected_components = list(session.components.values())
+        file_size = len(chain_content) if isinstance(chain_content, (str, bytes)) else 0
+        virtual_component = type('Component', (), {
+            'id': f'pkcs7_bundle',
+            'filename': filename,
+            'content': f"PKCS#7 certificate chain ({file_size} bytes)",
+            'type': PKIComponentType.CERTIFICATE,
+            'size': file_size,
+            'metadata': {'file_type': 'pkcs7_bundle'}
+        })()
+        
+        selected_components = [virtual_component]
         return files, selected_components
 
     def _prepare_pkcs12_bundle(self, primary_cert, session, config):
@@ -328,7 +338,26 @@ class DownloadService:
                 delattr(self, '_bundle_password')  # Clean up
             
             # For bundle requests, use all session components for manifest but don't convert them
-            selected_components = list(session.components.values())
+            selected_components = []
+            for filename, content in bundle_files.items():
+                # Calculate actual file size
+                if isinstance(content, bytes):
+                    file_size = len(content)
+                elif isinstance(content, str):
+                    file_size = len(content.encode('utf-8'))
+                else:
+                    file_size = 0
+                
+                # Create virtual component for the actual bundle file
+                virtual_component = type('Component', (), {
+                    'id': f'bundle_{filename}',
+                    'filename': filename,
+                    'content': f"Bundle file ({file_size} bytes)",
+                    'type': PKIComponentType.CERTIFICATE,
+                    'size': file_size,
+                    'metadata': {'file_type': 'bundle'}
+                })()
+                selected_components.append(virtual_component)
             
         else:
             # Regular custom download - process individual components

@@ -25,24 +25,25 @@
 - **📊 Visual Dashboard**: React-based UI with real-time validation results and PKI component relationships
 - **🧹 Session Management**: UUID-based sessions for secure, isolated analysis 🆕 **Now with HTTP-only cookie authentication!**
 - **📦 Bundle Downloads**: Generate secure ZIP bundles of your PKI components
+- **🆕 Redis Storage**: Persistent session storage with Redis for multi-instance deployments and better reliability
 
 ## 🏗️ Architecture Overview
 
 ```
-┌───────────────────┐    HTTPS    ┌──────────────────────┐
-│   React SPA       │◄───────────►│   FastAPI Backend    │
-│   (Frontend)      │             │   (Certificate API)  │
-├───────────────────┤             ├──────────────────────┤
+┌───────────────────┐    HTTPS    ┌──────────────────────┐    ┌─────────────┐
+│   React SPA       │◄───────────►│   FastAPI Backend    │◄──►│    Redis    │
+│   (Frontend)      │             │   (Certificate API)  │    │   Storage   │
+├───────────────────┤             ├──────────────────────┤    └─────────────┘
 │ • File Upload     │             │ • Certificate Parser │
 │ • PKI Dashboard   │             │ • OpenSSL Engine     │
 │ • Validation UI   |             │ • Session Storage    │
-│ • 🆕 Cookie Auth │             │ • 🆕 JWT Middleware  │
+│ • 🆕 Cookie Auth  │             │ • 🆕 JWT Middleware  │
 └───────────────────┘             └──────────────────────┘
         │                                 │
         │                                 │
    ┌────▼────┐                      ┌─────▼─────┐
-   │ Nginx   │                      │  Memory   │
-   │ (Prod)  │                      │  Storage  │
+   │ Nginx   │                      │  🆕 Redis │
+   │ (Prod)  │                      │  Session  │
    └─────────┘                      └───────────┘
 ```
 
@@ -53,7 +54,7 @@
 - **OpenSSL**: Certificate parsing and cryptographic operations
 - **Cryptography**: Python cryptographic library for advanced operations
 - **Session Management**: UUID-based sessions with automatic cleanup
-- **Memory Storage**: No persistent storage - everything in memory for security
+- **🆕 Redis Storage**: Persistent session storage with Redis for better reliability
 - **🆕 Cookie-Auth + JWT**: HTTP-only secure cookies with HMAC-SHA256 signed JWT tokens
 
 ### Frontend (React) 🎨
@@ -62,6 +63,13 @@
 - **CSS Modules**: Scoped styling without conflicts
 - **Lucide Icons**: Beautiful, consistent icon library
 - **Axios**: HTTP client with interceptors and error handling
+
+### 🆕 Redis Storage Backend
+- **Redis 7.2**: High-performance in-memory data store
+- **AOF Persistence**: Append-only file for data durability
+- **LRU Eviction**: 512MB memory limit with intelligent eviction
+- **Health Monitoring**: Built-in health checks and monitoring
+- **Connection Pooling**: Efficient connection management
 
 ## 🆕 Cookie-Based Authentication & JWT Sessions
 
@@ -91,13 +99,59 @@ async def upload_certificate(request: Request, file: UploadFile):
 - ✅ **Path=/**: Available for all application routes
 - ✅ **Max-Age=86400**: 24-hour automatic expiration
 
+### 🆕 Redis Storage Features
+
+#### Storage Architecture
+```yaml
+# Your Redis implementation
+redis:
+  image: redis:7.2-alpine
+  command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+  volumes:
+    - redis_data:/data
+  networks:
+    - app-network
+  restart: unless-stopped
+  healthcheck:
+    test: ["CMD", "redis-cli", "ping"]
+    interval: 10s
+    timeout: 5s
+    retries: 3
+```
+
+#### Redis Client Configuration
+```python
+# Your Redis client implementation
+import redis
+from config import settings
+
+redis_pool = redis.ConnectionPool(
+    host=settings.REDIS_HOST,
+    port=settings.REDIS_PORT,
+    db=settings.REDIS_DB,
+    password=settings.REDIS_PASSWORD,
+    max_connections=settings.REDIS_MAX_CONNECTIONS,
+    socket_timeout=settings.REDIS_SOCKET_TIMEOUT,
+    decode_responses=True
+)
+redis_client = redis.Redis(connection_pool=redis_pool)
+```
+
+#### Redis Storage Benefits
+- **✅ Persistent Sessions**: Sessions survive container restarts and deployments
+- **✅ Multi-instance Support**: Share sessions across multiple backend instances
+- **✅ Memory Management**: LRU eviction with 512MB memory limit
+- **✅ Data Durability**: AOF persistence ensures session data survives crashes
+- **✅ Health Monitoring**: Built-in health checks with redis-cli ping
+- **✅ Connection Pooling**: Efficient Redis connection management
+
 ### Real API Endpoints (What Actually Works)
 
 ```bash
-# Core Certificate Analysis (now use cookie-based sessions automatically)
+# Core Certificate Analysis (now use cookie-based sessions with Redis storage)
 POST /analyze-certificate          # Upload & analyze certificate files
 GET  /certificates                 # Get all PKI components for session
-GET  /health                      # API health check
+GET  /health                      # API health check (includes Redis status)
 GET  /stats                       # Session statistics
 
 # Download & Export
@@ -120,12 +174,12 @@ GET  /downloads/full-chain        # Download complete certificate chain
 git clone https://github.com/fuhdan/certificate-tools.git
 cd certificate-tools
 
-# Start everything with Docker Compose
+# Start everything with Docker Compose (includes Redis automatically)
 docker-compose up -d
 
 # Check if it's working
 curl http://localhost:8000/health
-# Should return: {"status": "online", "timestamp": "..."}
+# Should return: {"status": "online", "timestamp": "...", "redis_status": "connected"}
 
 # Frontend should be available at: http://localhost:3000
 ```
@@ -140,8 +194,13 @@ cd backend-fastapi
 python -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 
-# Install dependencies
+# Install dependencies (Redis client included)
 pip install -r requirements.txt
+
+# Set up Redis connection (your implementation)
+export REDIS_HOST=localhost
+export REDIS_PORT=6379
+export REDIS_DB=0
 
 # Run the FastAPI server
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
@@ -197,7 +256,7 @@ curl -X POST "http://localhost:8000/analyze-certificate" \
 ### Upload PKCS#12 Bundle with Password
 
 ```bash
-# Upload encrypted P12 file (cookie session automatic)
+# Upload encrypted P12 file (cookie session automatic, stored in Redis)
 curl -X POST "http://localhost:8000/analyze-certificate" \
      -b cookies.txt \
      -F "file=@certificate.p12" \
@@ -209,7 +268,7 @@ curl -X POST "http://localhost:8000/analyze-certificate" \
 ### Get All PKI Components with Validation
 
 ```bash
-# Retrieve all components for session (cookie automatic)
+# Retrieve all components for session (from Redis storage)
 curl -X GET "http://localhost:8000/certificates" \
      -b cookies.txt
 
@@ -246,7 +305,7 @@ curl -X GET "http://localhost:8000/certificates" \
 ### Download PKI Bundle
 
 ```bash
-# Create secure ZIP bundle (cookie session automatic)
+# Create secure ZIP bundle (session data from Redis)
 curl -X POST "http://localhost:8000/downloads/zip-bundle" \
      -b cookies.txt \
      -H "Content-Type: application/json" \
@@ -269,6 +328,14 @@ LOG_LEVEL="INFO"
 SECRET_KEY="your-secret-key-here"               # 256-bit secret for JWT signing
 SESSION_EXPIRE_HOURS=24                         # Session lifetime in hours
 SESSION_COOKIE_NAME="session_token"             # Cookie name for session
+
+# 🆕 Redis Configuration (your implementation)
+REDIS_HOST=redis                               # Redis container hostname
+REDIS_PORT=6379                               # Redis port
+REDIS_DB=0                                    # Redis database number
+REDIS_PASSWORD=                               # Redis password (optional)
+REDIS_MAX_CONNECTIONS=20                      # Connection pool size
+REDIS_SOCKET_TIMEOUT=5                        # Socket timeout in seconds
 
 # File handling
 MAX_FILE_SIZE=10485760                          # 10MB
@@ -302,12 +369,13 @@ cd backend-fastapi
 # Install test dependencies
 pip install pytest pytest-cov requests
 
-# Run tests with coverage
+# Run tests with coverage (includes Redis tests)
 pytest -v --cov=. --cov-report=html tests/
 
 # 🆕 Test cookie-auth and JWT system
 pytest tests/test_auth.py -v
 pytest tests/test_sessions.py -v
+pytest tests/test_redis_storage.py -v
 
 # Run specific test file
 pytest tests/test_live_server.py -v
@@ -338,15 +406,16 @@ npm run test:coverage
 
 ## 🔒 Security Features
 
-### 🆕 Cookie-Based Session Management
+### 🆕 Cookie-Based Session Management with Redis
 - **HTTP-only JWT cookies**: Sessions stored in secure, XSS-proof cookies
 - **CSRF protection**: SameSite=Strict prevents cross-site attacks  
 - **Automatic session creation**: No manual session management needed
 - **24-hour expiration**: Sessions automatically expire for security
+- **🆕 Redis persistence**: Session data persists across container restarts
 
 ### Session Isolation (Still UUID-based!)
 - **UUID-based sessions**: Each user gets isolated storage (same as before!)
-- **Memory-only storage**: No persistent data on disk
+- **🆕 Redis storage**: Session data stored in Redis with proper isolation
 - **Automatic cleanup**: Sessions expire after 24 hours
 - **No cross-session leakage**: Components cannot access other sessions
 
@@ -369,7 +438,7 @@ async def analyze_certificate(
     # session_id automatically available from cookie JWT
     session_id = request.state.session_id  # Injected by decorator
     
-    # Each session has isolated storage (same concept, secure delivery!)
+    # Each session has isolated storage (now in Redis!)
     result = analyze_uploaded_certificate(file_content, session_id)
     return result
 ```
@@ -384,6 +453,19 @@ async def analyze_certificate(
 # For manual curl usage, save cookies on first request:
 curl -X GET "http://localhost:8000/certificates" \
      -c cookies.txt -b cookies.txt
+```
+
+#### "Redis Connection Failed" Error
+```bash
+# Check Redis container status
+docker-compose ps redis
+
+# Check Redis logs
+docker-compose logs redis
+
+# Test Redis connectivity
+docker-compose exec redis redis-cli ping
+# Expected response: PONG
 ```
 
 #### "Password Required" for PKCS#12
@@ -408,14 +490,14 @@ VITE_API_URL=http://localhost:8000
 ### Debug Mode
 
 ```bash
-# Enable debug logging
+# Enable debug logging (includes Redis operations)
 export DEBUG=true
 export LOG_LEVEL=DEBUG
 
 # Start backend
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
-# Watch logs for detailed information
+# Watch logs for detailed information including Redis operations
 ```
 
 ## 📊 API Documentation
@@ -498,7 +580,7 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
 1. **Fork the repo** (it's actually useful)
 2. **Create feature branch** (`git checkout -b feature/awesome-pki-feature`)
-3. **Write tests** (we actually run them)
+3. **Write tests** (we actually run them, including Redis tests)
 4. **Test with real certificates** (use `scripts/test_tool.sh`)
 5. **Update documentation** (README and API docs)
 6. **Submit PR** (be ready for code review)
@@ -526,7 +608,7 @@ mkdir -p test-certificates/
 # Add your test certificates (various formats)
 cp your-certificates/* test-certificates/
 
-# Run comprehensive test suite
+# Run comprehensive test suite (includes Redis storage tests)
 ./scripts/test_tool.sh
 ```
 
@@ -542,6 +624,7 @@ MIT License - see [LICENSE](LICENSE) file for details.
 - **FastAPI**: For making Python APIs not suck
 - **React Team**: For making UIs bearable to build
 - **Cryptography Library**: For handling the crypto so we don't have to
+- **Redis Team**: For making session storage fast and reliable
 - **Coffee**: For making late-night PKI debugging sessions possible
 - **Stack Overflow**: For explaining why certificate validation failed... again
 
@@ -554,6 +637,7 @@ MIT License - see [LICENSE](LICENSE) file for details.
 - ☕ Consumed 284 cups of coffee during development
 - 🤯 Resulted in 3 existential crises about certificate authorities
 - 🆕 Added 37 more edge cases when implementing JWT session management
+- 🔴 Spent 18 hours figuring out Redis connection pooling for session storage
 
 ## 📞 Support & Feedback
 
@@ -570,7 +654,7 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ## 🌅 Final Words
 
-Remember: Life's too short for bad certificate management tools. Whether you're validating a single certificate or untangling a complex PKI hierarchy, this tool has your back. So grab your favorite beach drink, fire up those Docker containers, and let's make certificate analysis fun again!
+Remember: Life's too short for bad certificate management tools. Whether you're validating a single certificate or untangling a complex PKI hierarchy, this tool has your back. So grab your favorite beach drink, fire up those Docker containers (with Redis!), and let's make certificate analysis fun again!
 
 **Certificate Analysis Tool** - *Making PKI management as relaxing as a day at the beach.* 🏖️
 
@@ -593,6 +677,8 @@ Remember: Life's too short for bad certificate management tools. Whether you're 
 *P.S. - No actual certificates were harmed in the making of this tool. All certificates were treated with the utmost respect and given proper validation before being allowed to bask in the digital sunshine.* ☀️
 
 *P.P.S. - The certificate authority mentioned above is purely fictional and exists only in the realm of beach-themed humor. Please don't try to get your certificates signed by the sun.* 🌞
+
+*P.P.P.S. - Redis was added to make sessions as persistent as your love for properly validated certificates.* 🔴
 
 ---
 

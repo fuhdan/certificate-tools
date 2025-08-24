@@ -4,16 +4,17 @@
 
 1. [System Architecture](#system-architecture)
 2. [🆕 Cookie-Based Session Management](#cookie-based-session-management)
-3. [Certificate Processing Pipeline](#certificate-processing-pipeline)
-4. [Cryptographic Validation Engine](#cryptographic-validation-engine)
-5. [Security Implementation](#security-implementation)
-6. [API Design](#api-design)
-7. [Frontend Architecture](#frontend-architecture)
-8. [Data Flow](#data-flow)
-9. [Deployment Architecture](#deployment-architecture)
-10. [Performance Considerations](#performance-considerations)
-11. [Monitoring and Observability](#monitoring-and-observability)
-12. [Development Guidelines](#development-guidelines)
+3. [🆕 Redis Storage Implementation](#redis-storage-implementation)
+4. [Certificate Processing Pipeline](#certificate-processing-pipeline)
+5. [Cryptographic Validation Engine](#cryptographic-validation-engine)
+6. [Security Implementation](#security-implementation)
+7. [API Design](#api-design)
+8. [Frontend Architecture](#frontend-architecture)
+9. [Data Flow](#data-flow)
+10. [Deployment Architecture](#deployment-architecture)
+11. [Performance Considerations](#performance-considerations)
+12. [Monitoring and Observability](#monitoring-and-observability)
+13. [Development Guidelines](#development-guidelines)
 
 ---
 
@@ -38,6 +39,7 @@ graph TB
     end
     
     subgraph "Storage Layer"
+        Redis[🆕 Redis Storage<br/>Port 6379]
         Memory[In-Memory Session Store]
     end
     
@@ -51,6 +53,7 @@ graph TB
     Nginx --> Frontend
     Nginx --> Backend
     Frontend --> Backend
+    Backend --> Redis
     Backend --> Memory
     Backend --> VS
     Backend --> DS
@@ -66,6 +69,7 @@ sequenceDiagram
     participant B as Backend
     participant J as JWT Middleware
     participant S as Session Manager
+    participant R as Redis
     participant V as Validation Service
     participant C as Crypto Engine
     
@@ -83,7 +87,7 @@ sequenceDiagram
     C->>B: Return Analysis
     B->>V: Compute Validations
     V->>B: Return Validation Results
-    B->>S: Store Results
+    B->>R: Store Results in Redis
     B->>F: Return Analysis JSON + Set Cookie
     F->>U: Display Results
 ```
@@ -202,14 +206,161 @@ flowchart TD
     M -->|Yes| N[Process Certificate]
     M -->|No| O[Cookie Expired - Create New]
     O --> N
-    N --> P[Store in Session]
+    N --> P[🆕 Store in Redis Storage]
     P --> Q{User Action?}
     Q -->|Upload More| L
     Q -->|Download Bundle| R[Generate Encrypted ZIP]
     Q -->|Close Tab| S[Session Expires (24h)]
-    S --> T[Automatic Cleanup]
+    S --> T[Automatic Cleanup from Redis]
     R --> Q
 ```
+
+---
+
+## 🆕 Redis Storage Implementation
+
+### Redis Architecture Overview
+
+The application now uses Redis for persistent session storage, providing enhanced reliability and multi-instance support:
+
+```mermaid
+graph TB
+    subgraph "Application Layer"
+        A1[FastAPI Instance 1]
+        A2[FastAPI Instance 2]
+        A3[FastAPI Instance N]
+    end
+    
+    subgraph "Redis Layer"
+        R[Redis 7.2-alpine<br/>AOF Persistence<br/>512MB Memory Limit]
+        RD[Redis Data Volume]
+    end
+    
+    subgraph "Session Storage Structure"
+        S1[cert_session:uuid-1<br/>Session Data + Components]
+        S2[cert_session:uuid-2<br/>Session Data + Components]
+        S3[cert_session:uuid-N<br/>Session Data + Components]
+    end
+    
+    A1 --> R
+    A2 --> R
+    A3 --> R
+    R --> RD
+    R --> S1
+    R --> S2
+    R --> S3
+```
+
+### Redis Configuration
+
+```yaml
+# Your Redis implementation in docker-compose.yml
+redis:
+  image: redis:7.2-alpine
+  command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+  volumes:
+    - redis_data:/data
+  networks:
+    - app-network
+  restart: unless-stopped
+  healthcheck:
+    test: ["CMD", "redis-cli", "ping"]
+    interval: 10s
+    timeout: 5s
+    retries: 3
+```
+
+### Redis Client Integration
+
+```python
+# Your Redis client implementation in session_pki_storage.py
+import redis
+from config import settings
+
+logger = logging.getLogger(__name__)
+
+# Redis client configuration
+redis_pool = redis.ConnectionPool(
+    host=settings.REDIS_HOST,
+    port=settings.REDIS_PORT,
+    db=settings.REDIS_DB,
+    password=settings.REDIS_PASSWORD,
+    max_connections=settings.REDIS_MAX_CONNECTIONS,
+    socket_timeout=settings.REDIS_SOCKET_TIMEOUT,
+    decode_responses=True
+)
+redis_client = redis.Redis(connection_pool=redis_pool)
+```
+
+### Redis Session Storage Structure
+
+```python
+# PKI Session stored in Redis with JSON serialization
+{
+  "cert_session:{session_id}": {
+    "session_id": "uuid4-string",
+    "created_at": "2025-08-25T10:30:00Z",
+    "last_updated": "2025-08-25T10:35:00Z", 
+    "components": {
+      "component_id": {
+        "id": "component_id",
+        "type": "Certificate",
+        "content": "-----BEGIN CERTIFICATE-----...",
+        "metadata": {...},
+        "chain_id": "optional_chain_id"
+      }
+    },
+    "chains": {
+      "chain_id": ["comp_id_1", "comp_id_2"]  
+    },
+    "validation_results": {...}
+  }
+}
+```
+
+### Redis Environment Variables
+
+```bash
+# Backend environment variables for Redis storage
+REDIS_HOST=redis              # Redis container hostname
+REDIS_PORT=6379              # Redis port
+REDIS_DB=0                   # Redis database number
+REDIS_PASSWORD=              # Redis password (optional)
+REDIS_MAX_CONNECTIONS=20     # Connection pool size
+REDIS_SOCKET_TIMEOUT=5       # Socket timeout in seconds
+```
+
+### Redis Performance Features
+
+#### Memory Management
+- **Memory Limit**: 512MB maximum memory usage
+- **Eviction Policy**: `allkeys-lru` - evicts least recently used keys
+- **Persistence**: AOF enabled for data durability
+- **Connection Pooling**: Up to 20 concurrent connections
+
+#### Health Monitoring
+```bash
+# Redis health check command
+redis-cli ping
+# Expected response: PONG
+
+# Monitor Redis memory usage
+redis-cli info memory
+
+# Monitor active sessions
+redis-cli keys "cert_session:*" | wc -l
+```
+
+### Redis vs In-Memory Storage Comparison
+
+| Feature | Redis Storage | In-Memory Storage |
+|---------|---------------|-------------------|
+| **Persistence** | ✅ Survives restarts | ❌ Lost on restart |
+| **Multi-instance** | ✅ Shared across instances | ❌ Instance-local |
+| **Memory Usage** | ✅ Configurable limits | ⚠️ Limited by container |
+| **Performance** | ⚠️ Network overhead | ✅ Direct memory access |
+| **Complexity** | ⚠️ Additional service | ✅ No dependencies |
+| **Scalability** | ✅ Horizontal scaling | ❌ Vertical scaling only |
 
 ---
 
@@ -345,7 +496,7 @@ graph TD
     H --> I[Metadata Extraction]
     I --> J[PKI Type Assignment]
     J --> K[Hierarchical Ordering]
-    K --> L[Session Storage]
+    K --> L[🆕 Redis Storage]
     L --> M[Validation Computation]
     M --> N[Return Results]
 ```
@@ -446,7 +597,7 @@ flowchart TD
     S --> T[Check Validity Periods]
     T --> U[Generate Chain Report]
     
-    J --> V[Store Results]
+    J --> V[🆕 Store Results in Redis]
     K --> V
     O --> V
     P --> V
@@ -508,7 +659,7 @@ async def analyze_certificate(request: Request, file: UploadFile):
     # session_id automatically available from decorator
     session_id = request.state.session_id
     
-    # Each session has isolated storage (same concept, secure delivery!)
+    # Each session has isolated storage (now with Redis persistence!)
     result = analyze_uploaded_certificate(file_content, session_id)
     return result
 ```
@@ -684,6 +835,10 @@ def read_root():
             "certificates": "/certificates", 
             "downloads": "/downloads",
             "docs": "/docs"
+        }
+    }
+```
+
 ### API Response Format
 
 All API responses follow a consistent structure:
@@ -706,6 +861,7 @@ sequenceDiagram
     participant A as API Gateway
     participant J as JWT Middleware
     participant S as Session Manager
+    participant R as Redis Storage
     participant V as Validator
     participant D as Download Service
     
@@ -713,22 +869,26 @@ sequenceDiagram
     A->>J: @require_session decorator
     J->>J: Validate JWT from cookie
     J->>S: Get/Create Session
+    S->>R: Load Session from Redis
+    R->>S: Session Data
     S->>A: Session Data + Set Cookie
     A->>A: Parse Certificate
     A->>V: Run Validations
     V->>A: Validation Results
-    A->>S: Store Results
+    A->>R: Store Results in Redis
     A->>C: Analysis + Validations + Cookie
     
     C->>A: GET /certificates (with session cookie)
     A->>J: @require_session decorator
-    J->>S: Get Session Data from JWT
-    S->>A: PKI Components
+    J->>R: Get Session Data from Redis via JWT
+    R->>A: PKI Components
     A->>C: Complete PKI Bundle
     
     C->>A: POST /downloads/zip-bundle (with session cookie)
     A->>J: Validate JWT Cookie
-    J->>D: Generate Bundle
+    J->>R: Load Session from Redis
+    R->>D: Session Components
+    D->>D: Generate Bundle
     D->>D: Create Random Password
     D->>D: Create ZIP File
     D->>A: ZIP Data + Password
@@ -923,6 +1083,7 @@ graph TD
         MAIN[FastAPI Main]
         JWT[🆕 JWT Middleware]
         SVC[Service Layer]
+        REDIS[🆕 Redis Storage]
         STORE[Session Storage]
     end
     
@@ -938,7 +1099,9 @@ graph TD
     JWT --> SVC
     SVC --> VS
     SVC --> DS
+    SVC --> REDIS
     SVC --> STORE
+    REDIS --> SVC
     STORE --> SVC
     SVC --> JWT
     JWT --> MAIN
@@ -961,7 +1124,7 @@ stateDiagram-v2
     ValidationComputed --> SessionCleared: Clear all
     SessionCleared --> SessionCreated: Start fresh
     ValidationComputed --> SessionExpired: 24 hour timeout
-    SessionExpired --> [*]: Session destroyed
+    SessionExpired --> [*]: Session destroyed from Redis
 ```
 
 ### Complete System Data Flow (Extended)
@@ -985,31 +1148,33 @@ flowchart TD
         H -->|No| I[Create New JWT Session]
         H -->|Yes| J[Extract Session ID from JWT]
         I --> K[Certificate Analyzer]
-        J --> K
-        K --> L[Multi-Format Parser]
-        L --> M[Cryptographic Validator]
-        M --> N[Store Results in Session]
+        J --> L[🆕 Load Session from Redis]
+        L --> K
+        K --> M[Multi-Format Parser]
+        M --> N[Cryptographic Validator]
+        N --> O[🆕 Store Results in Redis]
     end
     
     subgraph "Response Flow"
-        N --> O[JSON Response<br/>🆕 + Set-Cookie Header]
-        O --> P[Nginx Proxy Response]
-        P --> Q[React State Update]
-        Q --> R[UI Components Re-render]
-        R --> S[Display Certificate Details]
-        S --> T[Show Validation Results]
+        O --> P[JSON Response<br/>🆕 + Set-Cookie Header]
+        P --> Q[Nginx Proxy Response]
+        Q --> R[React State Update]
+        R --> S[UI Components Re-render]
+        S --> T[Display Certificate Details]
+        T --> U[Show Validation Results]
     end
     
     subgraph "Download Flow"
-        T --> U{User Requests Download?}
-        U -->|Yes| V[🆕 JWT Cookie Validation]
-        V --> W[Generate Random Password]
-        W --> X[Create Encrypted ZIP]
-        X --> Y[Base64 Encode ZIP]
-        Y --> Z[Return ZIP + Password]
-        Z --> AA[Client Downloads ZIP]
-        AA --> BB[Password Displayed Once]
-        BB --> CC[System Forgets Password]
+        U --> V{User Requests Download?}
+        V -->|Yes| W[🆕 JWT Cookie Validation]
+        W --> X[🆕 Load Session from Redis]
+        X --> Y[Generate Random Password]
+        Y --> Z[Create Encrypted ZIP]
+        Z --> AA[Base64 Encode ZIP]
+        AA --> BB[Return ZIP + Password]
+        BB --> CC[Client Downloads ZIP]
+        CC --> DD[Password Displayed Once]
+        DD --> EE[System Forgets Password]
     end
 ```
 
@@ -1017,10 +1182,10 @@ flowchart TD
 
 ## Deployment Architecture
 
-### Docker Compose Infrastructure
+### Docker Compose Infrastructure with Redis
 
 ```yaml
-# docker-compose.yml
+# docker-compose.yml with Redis implementation
 version: '3.8'
 
 services:
@@ -1054,6 +1219,8 @@ services:
     container_name: certificate-backend
     expose:
       - "8000"
+    depends_on:
+      - redis
     environment:
       # 🆕 JWT and cookie authentication settings
       - SECRET_KEY=${SECRET_KEY:-your-secret-key-change-in-production}
@@ -1061,6 +1228,13 @@ services:
       - SESSION_COOKIE_NAME=session_token
       - DEBUG=OFF
       - MAX_FILE_SIZE=10485760  # 10MB
+      # 🆕 Redis configuration (your implementation)
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+      - REDIS_PASSWORD=
+      - REDIS_MAX_CONNECTIONS=20
+      - REDIS_SOCKET_TIMEOUT=5
     networks:
       - certificate-network
     restart: unless-stopped
@@ -1069,6 +1243,24 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+
+  # 🆕 Redis service (your implementation)
+  redis:
+    image: redis:7.2-alpine
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    networks:
+      - certificate-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  redis_data:
 
 networks:
   certificate-network:
@@ -1160,6 +1352,15 @@ async def health_check():
             "cookie_name": os.getenv("SESSION_COOKIE_NAME", "session_token")
         }
         
+        # 🆕 Redis health status
+        redis_status = "unknown"
+        try:
+            from certificates.storage.session_pki_storage import redis_client
+            redis_client.ping()
+            redis_status = "connected"
+        except Exception as e:
+            redis_status = f"error: {str(e)}"
+        
         health_status = {
             "status": "healthy",
             "timestamp": datetime.utcnow().isoformat(),
@@ -1174,12 +1375,13 @@ async def health_check():
                 "active_sessions": active_sessions,
                 "version": "1.0.0",
                 "environment": os.getenv("ENVIRONMENT", "development"),
-                "authentication": jwt_config
+                "authentication": jwt_config,
+                "redis_status": redis_status
             }
         }
         
         # Determine overall health
-        if cpu_percent > 90 or memory.percent > 90:
+        if cpu_percent > 90 or memory.percent > 90 or redis_status.startswith("error"):
             health_status["status"] = "warning"
         
         if cpu_percent > 95 or memory.percent > 95:
@@ -1222,7 +1424,11 @@ class PerformanceManager:
             # 🆕 JWT metrics
             'jwt_validations_per_minute': 0,
             'session_cookie_hits': 0,
-            'session_cookie_misses': 0
+            'session_cookie_misses': 0,
+            # 🆕 Redis metrics
+            'redis_operations_per_minute': 0,
+            'redis_connection_pool_usage': 0,
+            'redis_memory_usage': 0
         }
         
         # Start background cleanup thread
@@ -1235,8 +1441,8 @@ class PerformanceManager:
         """
         while True:
             try:
-                # Clean expired sessions
-                self._cleanup_expired_sessions()
+                # Clean expired sessions from Redis
+                self._cleanup_expired_redis_sessions()
                 
                 # Force garbage collection if memory usage is high
                 current_memory = psutil.Process().memory_info().rss
@@ -1252,23 +1458,61 @@ class PerformanceManager:
                 logger.error(f"Cleanup worker error: {str(e)}")
                 time.sleep(60)  # Wait before retrying
     
-    def _cleanup_expired_sessions(self):
+    def _cleanup_expired_redis_sessions(self):
         """
-        Remove sessions that haven't been accessed recently
-        🆕 Updated for 24-hour session expiration
+        Remove sessions from Redis that haven't been accessed recently
+        🆕 Updated for Redis storage with 24-hour session expiration
         """
-        current_time = datetime.utcnow()
-        expired_sessions = []
-        
-        for session_id, session_data in session_manager.sessions.items():
-            last_accessed = session_data.get('last_accessed', current_time)
-            # 🆕 Updated to 24 hours instead of 30 minutes
-            if current_time - last_accessed > timedelta(hours=24):
-                expired_sessions.append(session_id)
-        
-        for session_id in expired_sessions:
-            session_manager.delete_session(session_id)
-            logger.info(f"Cleaned up expired session: {session_id}")
+        try:
+            from certificates.storage.session_pki_storage import redis_client
+            
+            # Get all session keys
+            session_keys = redis_client.keys("cert_session:*")
+            
+            current_time = datetime.utcnow()
+            expired_sessions = []
+            
+            for key in session_keys:
+                try:
+                    session_data = redis_client.get(key)
+                    if session_data:
+                        import json
+                        session_obj = json.loads(session_data)
+                        last_updated = datetime.fromisoformat(session_obj.get('last_updated', current_time.isoformat()))
+                        
+                        # 🆕 Redis sessions expire after 24 hours
+                        if current_time - last_updated > timedelta(hours=24):
+                            expired_sessions.append(key)
+                
+                except Exception as e:
+                    logger.warning(f"Error checking session expiry for {key}: {e}")
+                    expired_sessions.append(key)  # Remove invalid sessions
+            
+            # Remove expired sessions
+            if expired_sessions:
+                redis_client.delete(*expired_sessions)
+                logger.info(f"Cleaned up {len(expired_sessions)} expired Redis sessions")
+                
+        except Exception as e:
+            logger.error(f"Redis cleanup error: {e}")
+    
+    def _update_performance_metrics(self):
+        """
+        Update performance metrics including Redis statistics
+        """
+        try:
+            from certificates.storage.session_pki_storage import redis_client
+            
+            # Get Redis info
+            redis_info = redis_client.info('memory')
+            self.performance_metrics['redis_memory_usage'] = redis_info.get('used_memory', 0)
+            
+            # Get connection pool stats
+            pool_stats = redis_client.connection_pool.connection_pool_class_kwargs
+            self.performance_metrics['redis_connection_pool_usage'] = pool_stats.get('max_connections', 0)
+            
+        except Exception as e:
+            logger.warning(f"Could not update Redis performance metrics: {e}")
 ```
 
 ### Caching Strategy Implementation
@@ -1357,6 +1601,9 @@ def validate_certificate_chain(certificates: list) -> dict:
     Expensive validation operation that benefits from caching
     """
     # Perform complex validation logic
+    pass
+```
+
 ### Performance Monitoring
 
 ```mermaid
@@ -1390,17 +1637,30 @@ graph TD
         R -->|Yes| T[Continue Monitoring]
     end
     
-    subgraph "Auto-Scaling Triggers"
-        U[CPU > 70%] --> V[Scale Up Decision]
-        W[Memory > 80%] --> V
-        X[Response Time > 2s] --> V
-        Y[Error Rate > 5%] --> V
-        Z[🆕 JWT Validation Failures > 10%] --> V
+    subgraph "🆕 Redis Performance Monitoring"
+        U[Redis Memory Usage] --> V[Redis Operations/sec]
+        W[Connection Pool Usage] --> V
+        X[Key Expiry Rate] --> V
+        Y[Redis Response Time] --> V
         
-        V --> AA[Deploy New Instance]
-        AA --> BB[Update Load Balancer]
-        BB --> CC[Health Check New Instance]
-        CC --> DD[Route Traffic]
+        V --> Z[Redis Health Score]
+        Z --> AA{Redis Performance OK?}
+        AA -->|No| BB[Scale Redis/Alert]
+        AA -->|Yes| CC[Continue Monitoring]
+    end
+    
+    subgraph "Auto-Scaling Triggers"
+        DD[CPU > 70%] --> EE[Scale Up Decision]
+        FF[Memory > 80%] --> EE
+        GG[Response Time > 2s] --> EE
+        HH[Error Rate > 5%] --> EE
+        II[🆕 JWT Validation Failures > 10%] --> EE
+        JJ[🆕 Redis Connection Failures > 5%] --> EE
+        
+        EE --> KK[Deploy New Instance]
+        KK --> LL[Update Load Balancer]
+        LL --> MM[Health Check New Instance]
+        MM --> NN[Route Traffic]
     end
 ```
 
@@ -1482,6 +1742,21 @@ class StructuredLogger:
         
         self.logger.info(json.dumps(log_data))
     
+    # 🆕 Redis logging
+    def log_redis_operation(self, operation: str, session_id: str, details: Dict[str, Any]):
+        """
+        Log Redis operations for monitoring
+        """
+        log_data = {
+            "event": "redis_operation",
+            "operation": operation,  # "session_stored", "session_loaded", "session_deleted"
+            "session_id": session_id,
+            "timestamp": datetime.utcnow().isoformat(),
+            "details": details
+        }
+        
+        self.logger.info(json.dumps(log_data))
+    
     def log_security_event(self, event_type: str, session_id: str, details: Dict[str, Any]):
         """
         Log security-related events
@@ -1526,6 +1801,14 @@ SESSION_COOKIES = Counter('session_cookies_total',
 AUTH_ERRORS = Counter('authentication_errors_total',
                      'Authentication errors', ['error_type'])
 
+# 🆕 Redis metrics
+REDIS_OPERATIONS = Counter('redis_operations_total',
+                          'Total Redis operations', ['operation', 'result'])
+REDIS_CONNECTION_POOL = Gauge('redis_connection_pool_usage',
+                             'Redis connection pool usage')
+REDIS_MEMORY_USAGE = Gauge('redis_memory_bytes',
+                          'Redis memory usage in bytes')
+
 def track_performance(func):
     """
     Decorator to track API performance metrics
@@ -1564,6 +1847,24 @@ def track_jwt_validation(func):
     
     return wrapper
 
+# 🆕 Redis tracking decorator
+def track_redis_operation(operation: str):
+    """
+    Decorator to track Redis operations
+    """
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            try:
+                result = func(*args, **kwargs)
+                REDIS_OPERATIONS.labels(operation=operation, result='success').inc()
+                return result
+            except Exception as e:
+                REDIS_OPERATIONS.labels(operation=operation, result='failure').inc()
+                raise
+        return wrapper
+    return decorator
+
 # Start metrics server
 def start_metrics_server(port: int = 8001):
     start_http_server(port)
@@ -1582,6 +1883,7 @@ def start_metrics_server(port: int = 8001):
 - Add docstrings to all public methods and classes
 - Use structured logging for all important events
 - 🆕 Always use @require_session decorator for protected endpoints
+- 🆕 Use @track_redis_operation decorator for Redis operations
 
 **Frontend (JavaScript/React):**
 - Use ESLint and Prettier for code formatting
@@ -1653,6 +1955,58 @@ class TestJWTAuthentication:
         cookie = response.headers["Set-Cookie"]
         response = client.get("/certificates", headers={"Cookie": cookie})
         assert response.status_code == 200
+
+# 🆕 Redis Storage Testing
+class TestRedisStorage:
+    
+    def test_redis_session_persistence(self):
+        """Test Redis session persistence across backend restarts"""
+        from certificates.storage.session_pki_storage import SessionPKIStorage, redis_client
+        
+        storage = SessionPKIStorage()
+        session_id = "test-session-123"
+        
+        # Store session data in Redis
+        session = storage.get_or_create_session(session_id)
+        storage.add_component(session_id, PKIComponentType.CERTIFICATE, 
+                            "cert content", "test.crt", {"subject": "CN=test"})
+        
+        # Verify data persists in Redis
+        redis_key = f"cert_session:{session_id}"
+        stored_data = redis_client.get(redis_key)
+        assert stored_data is not None
+        
+        import json
+        session_data = json.loads(stored_data)
+        assert session_data["session_id"] == session_id
+        assert len(session_data["components"]) == 1
+    
+    def test_redis_connection_pool(self):
+        """Test Redis connection pool configuration"""
+        from certificates.storage.session_pki_storage import redis_pool
+        
+        # Verify pool configuration
+        assert redis_pool.max_connections == 20
+        assert redis_pool.connection_kwargs['socket_timeout'] == 5
+        
+        # Test connection acquisition
+        connection = redis_pool.get_connection('GET')
+        assert connection is not None
+        redis_pool.release(connection)
+    
+    def test_redis_session_expiry(self):
+        """Test Redis session TTL and cleanup"""
+        from certificates.storage.session_pki_storage import redis_client
+        
+        # Set test session with TTL
+        session_key = "cert_session:test-expiry-123"
+        session_data = {"session_id": "test-expiry-123", "created_at": "2025-08-25T10:00:00Z"}
+        
+        redis_client.setex(session_key, 86400, json.dumps(session_data))  # 24 hours
+        
+        # Verify TTL is set
+        ttl = redis_client.ttl(session_key)
+        assert ttl > 0 and ttl <= 86400
 ```
 
 **Frontend Testing:**
@@ -1703,6 +2057,13 @@ describe('CertificateUpload', () => {
 - SameSite=Strict prevents CSRF attacks
 - Sessions expire automatically after 24 hours
 
+**🆕 Redis Security:**
+- Redis isolated within Docker network (no external ports exposed)
+- Connection pooling with configurable limits prevents connection exhaustion
+- Memory limits prevent resource exhaustion attacks
+- AOF persistence provides data durability without compromising security
+- Optional password authentication for production environments
+
 **Input Validation:**
 - File size limits enforced (10MB default)
 - File type validation based on content, not just extension
@@ -1710,8 +2071,9 @@ describe('CertificateUpload', () => {
 - XSS protection with Content Security Policy headers
 
 **Data Protection:**
-- Sessions expire automatically after 24 hours
-- Certificate data stored only in memory (no persistent storage)
+- Sessions expire automatically after 24 hours (Redis TTL)
+- Certificate data encrypted in transit via HTTPS
+- 🆕 Session data persists in Redis but expires automatically
 - Secure random password generation for downloads
 - HTTPS recommended for production (HTTP-only cookies become Secure)
 
@@ -1748,7 +2110,41 @@ describe('CertificateUpload', () => {
    from middleware.jwt_session import jwt_session_manager
    ```
 
-3. **Upload Failures**
+3. **🆕 Redis Connection Issues**
+   ```
+   Problem: Redis connection failures or timeouts
+   Solution: Check Redis service health and network connectivity
+   
+   # Check Redis container status
+   docker-compose ps redis
+   
+   # Test Redis connectivity
+   docker-compose exec redis redis-cli ping
+   # Expected response: PONG
+   
+   # Check Redis logs
+   docker-compose logs redis
+   
+   # Verify Redis configuration
+   echo $REDIS_HOST $REDIS_PORT $REDIS_DB
+   ```
+
+4. **🆕 Redis Memory Issues**
+   ```
+   Problem: Redis running out of memory or slow performance
+   Solution: Monitor memory usage and adjust limits
+   
+   # Check Redis memory usage
+   docker-compose exec redis redis-cli info memory
+   
+   # Monitor active sessions
+   docker-compose exec redis redis-cli keys "cert_session:*" | wc -l
+   
+   # Adjust memory limit in docker-compose.yml
+   command: redis-server --maxmemory 1024mb --maxmemory-policy allkeys-lru
+   ```
+
+5. **Upload Failures**
    ```
    Problem: Certificate upload fails with "unsupported format"
    Solution: Check file format and password requirements
@@ -1758,7 +2154,7 @@ describe('CertificateUpload', () => {
    console.log('File size:', file.size)
    ```
 
-4. **Frontend API Errors**
+6. **Frontend API Errors**
    ```
    Problem: API calls failing after frontend refactoring
    Solution: Update to use new certificateAPI service with cookies
@@ -1780,6 +2176,8 @@ describe('CertificateUpload', () => {
 - Use async/await for I/O operations
 - Monitor memory usage with health checks
 - 🆕 Cache JWT validation results for repeated requests
+- 🆕 Use Redis connection pooling for efficient Redis operations
+- 🆕 Monitor Redis memory usage and implement LRU eviction
 
 **Frontend Optimization:**
 - Implement lazy loading for certificate details
@@ -1788,11 +2186,13 @@ describe('CertificateUpload', () => {
 - Optimize bundle size with code splitting
 - 🆕 Minimize cookie size by using session references
 
-**Database/Storage Optimization:**
-- Use Redis for distributed session storage in multi-instance deployments
-- Implement LRU cache for frequently accessed data
-- Use connection pooling for database connections
-- Monitor query performance with logging
+**🆕 Redis Optimization:**
+- Use connection pooling to reduce connection overhead
+- Implement efficient key naming conventions (cert_session:uuid)
+- Monitor memory usage with Redis INFO commands
+- Use LRU eviction policy for automatic cleanup
+- Configure AOF persistence for optimal performance/durability balance
+- Set appropriate TTL values for session keys (24 hours)
 
 ---
 
@@ -1803,6 +2203,9 @@ describe('CertificateUpload', () => {
 - [ ] Update environment variables in `.env` file
 - [ ] 🆕 Generate secure SECRET_KEY for JWT signing (256-bit minimum)
 - [ ] 🆕 Configure SESSION_EXPIRE_HOURS and SESSION_COOKIE_NAME
+- [ ] 🆕 Configure Redis connection parameters (REDIS_HOST, REDIS_PORT, etc.)
+- [ ] 🆕 Set Redis memory limits and eviction policies
+- [ ] 🆕 Configure Redis persistence (AOF vs RDB)
 - [ ] Configure SSL certificates for HTTPS (optional)
 - [ ] Set up monitoring and logging
 - [ ] Run security audit on dependencies
@@ -1810,14 +2213,17 @@ describe('CertificateUpload', () => {
 
 ### Production Deployment
 
-- [ ] Deploy with Docker Compose
+- [ ] Deploy with Docker Compose including Redis service
 - [ ] Configure Nginx reverse proxy with cookie forwarding
-- [ ] Set up health check endpoints
+- [ ] Set up health check endpoints (including Redis health)
 - [ ] Configure log aggregation
 - [ ] Set up monitoring dashboards
 - [ ] Test SSL/TLS configuration (if enabled)
 - [ ] 🆕 Verify JWT cookie authentication is working
 - [ ] 🆕 Test session persistence across browser restarts
+- [ ] 🆕 Verify Redis connectivity and persistence
+- [ ] 🆕 Test Redis failover scenarios
+- [ ] 🆕 Monitor Redis memory usage and connection pool
 - [ ] Test download functionality
 
 ### Post-Deployment
@@ -1831,40 +2237,64 @@ describe('CertificateUpload', () => {
 - [ ] 🆕 Monitor JWT authentication metrics
 - [ ] 🆕 Verify cookie security settings (HttpOnly, Secure, SameSite)
 - [ ] 🆕 Test session expiration behavior (24-hour timeout)
+- [ ] 🆕 Monitor Redis performance metrics
+- [ ] 🆕 Verify Redis data persistence across restarts
+- [ ] 🆕 Test Redis backup and recovery procedures
+- [ ] 🆕 Monitor Redis connection pool usage
+- [ ] 🆕 Verify Redis memory eviction is working properly
 - [ ] Test backup and recovery procedures
 
 ---
 
 ## Important Notes
 
-### 🆕 Cookie-Based Authentication System
+### 🆕 Cookie-Based Authentication System with Redis
 - **The application uses HTTP-only JWT cookies for session management**
 - **No manual session ID headers required - cookies handled automatically**
 - **JWT tokens are cryptographically signed with HMAC-SHA256**
+- **Session data now persists in Redis for better reliability**
 - Security is based on session isolation using UUID session IDs (same concept!)
 - All endpoints use `@require_session` decorator for automatic authentication
 - Downloads are protected by JWT cookie validation
 
-### Session-Based Architecture (Updated)
+### 🆕 Redis Storage Architecture
+- **Session data persists across container restarts and deployments**
+- **Multiple backend instances can share session data via Redis**
+- **Redis provides memory management with configurable LRU eviction**
+- **AOF persistence ensures session data survives Redis crashes**
+- **Health checks monitor Redis availability and performance**
+- **Connection pooling optimizes Redis operations**
+
+### Session-Based Architecture (Enhanced)
 - Each browser session gets a unique UUID (same as before!)
-- 🆕 Sessions automatically expire after 24 hours (updated from 1 hour)
-- All certificate data is stored in memory only
-- No persistent storage or database required
+- 🆕 Sessions automatically expire after 24 hours (stored in Redis TTL)
+- 🆕 Certificate data stored in Redis with JSON serialization
+- No additional persistent storage or database required
 - 🆕 Sessions transmitted via secure HTTP-only cookies instead of headers
+- 🆕 Redis provides distributed session storage for multi-instance deployments
 
 ### Download Security (Enhanced)
 - ZIP files are password-protected with random passwords
 - Passwords are generated per download and forgotten by system
 - 🆕 Downloads are protected by JWT cookie validation instead of session ownership
 - 🆕 Cross-site request forgery (CSRF) protection via SameSite=Strict cookies
+- 🆕 Session data retrieved from Redis for download operations
 
 ### 🆕 Cookie Security Features
 - **HttpOnly**: Prevents XSS attacks - JavaScript cannot access cookies
 - **Secure**: HTTPS-only transmission in production
 - **SameSite=Strict**: Prevents CSRF attacks
-- **24-hour expiration**: Automatic session timeout
+- **24-hour expiration**: Automatic session timeout (Redis TTL)
 - **HMAC-SHA256 signatures**: Cryptographically secure JWT tokens
+
+### 🆕 Redis Security and Performance Features
+- **Network Isolation**: Redis only accessible within Docker network
+- **Memory Limits**: Configurable memory limits with LRU eviction
+- **Connection Pooling**: Efficient connection management with limits
+- **Data Persistence**: AOF provides durability without sacrificing security
+- **Health Monitoring**: Built-in health checks and performance metrics
+- **Session TTL**: Automatic session expiration after 24 hours
 
 ---
 
-This comprehensive technical documentation covers all major aspects of the Certificate Analysis Tool with the updated cookie-based authentication system. The core session isolation concept remains the same - each user gets isolated UUID-based storage - but now with enterprise-grade security via HTTP-only JWT cookies instead of plain-text headers.
+This comprehensive technical documentation covers all major aspects of the Certificate Analysis Tool with the updated cookie-based authentication system and Redis storage implementation. The core session isolation concept remains the same - each user gets isolated UUID-based storage - but now with enterprise-grade security via HTTP-only JWT cookies and persistent Redis storage for improved reliability and multi-instance support.

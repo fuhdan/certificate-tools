@@ -9,7 +9,8 @@ A comprehensive logging system for frontend applications with configurable globa
 - **Persistent configuration**: Settings saved to localStorage
 - **Runtime control**: Browser console interface for debugging
 - **Performance optimized**: Logs are filtered before execution
-- **Extensive section coverage**: Pre-defined sections for common application areas
+- **Extensive section coverage**: 17 pre-defined sections for common application areas
+- **Docker/Production ready**: Environment variable support for containerized deployments
 
 ## 📋 Table of Contents
 
@@ -18,9 +19,12 @@ A comprehensive logging system for frontend applications with configurable globa
 - [Usage Examples](#usage-examples)
 - [Section Management](#section-management)
 - [Console Interface](#console-interface)
+- [Available Sections](#available-sections)
 - [Adding New Sections](#adding-new-sections)
 - [Configuration Options](#configuration-options)
+- [Docker & Production](#docker--production)
 - [Best Practices](#best-practices)
+- [Debugging Workflows](#debugging-workflows)
 
 ## 🚀 Quick Start
 
@@ -42,16 +46,16 @@ apiError('API request failed', { endpoint: '/users', error })
 ### Enable Debug Mode
 
 ```javascript
-// Via environment variable
+// Via environment variable (Docker/Production)
 VITE_DEBUG=true
 
-// Via localStorage
+// Via localStorage (Runtime)
 localStorage.setItem('certificate_debug', 'true')
 
-// Via URL parameter
+// Via URL parameter (Testing)
 https://yourapp.com?debug=true
 
-// Via console
+// Via console (Development)
 window.logger.enable()
 ```
 
@@ -79,9 +83,11 @@ class FrontendLogger {
 
 The logger uses a hierarchical decision system:
 
-1. **Section Override**: If a section has a specific log level, use it
-2. **Global Fallback**: Otherwise, use the global log level
-3. **Performance**: Logs are filtered before console output
+1. **Console Override**: localStorage settings (highest priority)
+2. **Debug Mode Default**: When VITE_DEBUG=true, defaults to DEBUG level
+3. **Environment Variables**: VITE_LOG_LEVEL when debug mode is off
+4. **Section Overrides**: Per-section level configuration
+5. **Global Fallback**: Default INFO level
 
 ```javascript
 shouldLog(level, section = null) {
@@ -94,6 +100,32 @@ shouldLog(level, section = null) {
   
   // Global fallback
   return this.levels[lvl] <= this.levels[this.logLevel]
+}
+```
+
+### Priority Order for Log Levels
+
+```javascript
+getLogLevel() {
+  // 1. Console override always takes priority
+  const localStorageLevel = localStorage.getItem('certificate_log_level')
+  if (localStorageLevel) {
+    return this.normalizeLevel(localStorageLevel)
+  }
+  
+  // 2. Debug mode defaults to DEBUG level
+  if (this.isDebugMode) {
+    return 'DEBUG'
+  }
+  
+  // 3. Environment variable when debug is off
+  const envLevel = import.meta.env?.VITE_LOG_LEVEL
+  if (envLevel && envLevel !== 'undefined') {
+    return this.normalizeLevel(envLevel)
+  }
+  
+  // 4. Final fallback
+  return 'INFO'
 }
 ```
 
@@ -165,27 +197,24 @@ certificateValidity('Validation completed', { isValid: true })
 certificateSecurity('Security check', { algorithm: 'RSA-2048' })
 ```
 
-## 🎛️ Section Management
-
-### Available Sections
+### Performance Monitoring
 
 ```javascript
-const sections = [
-  'session',              // User session management
-  'api',                  // API communications
-  'context',              // Application context
-  'cookie',               // Cookie operations
-  'download',             // File downloads
-  'certificate',          // Certificate operations
-  'upload',               // File uploads
-  'notification',         // User notifications
-  'downloadModal',        // Download modal interactions
-  'connection',           // Network connections
-  'fileManager',          // File management operations
-  'floatingPanel',        // UI floating panels
-  'securePasswordModal'   // Password modal operations
-]
+import { time, timeEnd } from '@/utils/logger'
+
+// Built-in timing support
+time('certificate-analysis')
+// ... operations ...
+timeEnd('certificate-analysis')
+
+// Section-specific performance logging
+import { certificateContextPerformance } from '@/utils/logger'
+certificateContextPerformance('REFRESH_FILES_COMPLETED', 150, {
+  operation_type: 'refresh_files'
+})
 ```
+
+## 🎛️ Section Management
 
 ### Section Control
 
@@ -243,28 +272,48 @@ logger.sectionLevel('api', 'INFO')                    // Set section level
 logger.config()          // View complete configuration
 logger.sections()        // View section overrides
 logger.clearSections()   // Clear all section overrides
+
+// New helper commands
+logger.help()            // Complete usage guide
+logger.availableSections() // Show all sections with current status
+```
+
+### Enhanced Help System
+
+```javascript
+// Display complete usage guide
+logger.help()
+
+// Example output:
+// 🚀 Logger Help
+// 📊 Global Controls:
+//    logger.enable()           - Enable debug mode
+//    logger.disable()          - Disable debug mode
+//    logger.level("INFO")      - Set global log level
+//
+// 🎛️ Section Controls:
+//    logger.enableSection(section, level)  - Enable section logging
+//    logger.disableSection(section)        - Disable section override
+//    logger.sectionLevel(section, level)   - Set section level
+//
+// 🔍 Information:
+//    logger.availableSections() - Show all available sections
+//    logger.sections()          - Show current section overrides
+//    logger.config()            - Show complete configuration
 ```
 
 ### View Available Sections
 
 ```javascript
-// Display all available sections
-logger.config().sections
-
-// Or use this helper command
-logger.availableSections = () => {
-  const config = logger.config()
-  console.group('📋 Available Logger Sections')
-  config.sections.forEach(section => {
-    const current = config.sectionLogLevels[section] || 'Global'
-    console.log(`${section.padEnd(20)} → ${current}`)
-  })
-  console.groupEnd()
-  return config.sections
-}
-
-// Usage
+// Display all available sections with current status
 logger.availableSections()
+
+// Example output:
+// 📋 Available Logger Sections
+// 🔧 fileManager        → DEBUG
+// 🌐 notification       → Global (WARN)
+// 🔧 api                → INFO
+// 🌐 session            → Global (INFO)
 ```
 
 ### Debug Session Example
@@ -284,6 +333,104 @@ logger.config()
 // When done, cleanup
 logger.clearSections()
 logger.disable()
+```
+
+## 📋 Available Sections
+
+The current implementation includes **17 sections**:
+
+| Section | Emoji | Description | Key Methods |
+|---------|-------|-------------|-------------|
+| `session` | 👤 | User session management | `sessionTransition`, `sessionExpired`, `sessionCreated` |
+| `api` | 📡 | API communications | `apiInfo`, `apiError`, `apiDebug` |
+| `context` | 🎯 | Application context | `contextLifecycle`, `contextState`, `contextAPI` |
+| `cookie` | 🍪 | Cookie operations | `cookieStateChange`, `cookieInfo`, `cookieDebug` |
+| `download` | 🔽 | File downloads | `downloadInfo`, `downloadError`, `downloadDebug` |
+| `certificate` | 📜 | Certificate operations | `certificateLifecycle`, `certificateValidity`, `certificateSecurity` |
+| `upload` | 📤 | File uploads | `uploadLifecycle`, `uploadValidation`, `uploadResult` |
+| `notification` | 🔔 | User notifications | `notificationLifecycle`, `notificationDisplay`, `notificationTiming` |
+| `downloadModal` | 💾 | Download modal interactions | `downloadModalLifecycle`, `downloadModalSelection`, `downloadModalOperation` |
+| `connection` | 📡 | Network connections | `connectionLifecycle`, `connectionStatus`, `connectionHealthCheck` |
+| `fileManager` | 📁 | File management operations | `fileManagerLifecycle`, `fileManagerGrouping`, `fileManagerDeletion` |
+| `floatingPanel` | 🏗️ | UI floating panels | `floatingPanelLifecycle`, `floatingPanelInteraction`, `floatingPanelState` |
+| `securePasswordModal` | 🔐 | Password modal operations | `securePasswordModalLifecycle`, `securePasswordModalSecurity`, `securePasswordModalClipboard` |
+| `systemMessages` | 📢 | System message handling | `systemMessagesLifecycle`, `systemMessagesEvent`, `systemMessagesMessage` |
+| `layout` | 🏗️ | Main layout operations | `layoutLifecycle`, `layoutAuth`, `layoutCertificates` |
+| `validationPanel` | 🔬 | Certificate validation panel | `validationPanelValidation`, `validationPanelPKI`, `validationPanelCryptography` |
+| `certificateContext` | 📋 | Certificate context provider | `certificateContextLifecycle`, `certificateContextOperation`, `certificateContextSession` |
+
+### Section-Specific Usage Examples
+
+#### Certificate Context
+```javascript
+import { 
+  certificateContextLifecycle,
+  certificateContextOperation,
+  certificateContextSession,
+  certificateContextStats 
+} from '@/utils/logger'
+
+certificateContextLifecycle('PROVIDER_MOUNT', { 
+  has_children: true,
+  initial_component_count: 0 
+})
+
+certificateContextOperation('REFRESH_FILES_START', {
+  operation_type: 'refresh',
+  loading_state_will_change: true
+})
+
+certificateContextStats('PKI_STATS_CALCULATED', {
+  total: 5,
+  byType: { Certificate: 1, PrivateKey: 1, IssuingCA: 1 },
+  hasPrivateKey: true
+})
+```
+
+#### Layout Section
+```javascript
+import { 
+  layoutLifecycle,
+  layoutAuth,
+  layoutCertificates,
+  layoutValidation,
+  layoutPerformance 
+} from '@/utils/logger'
+
+layoutLifecycle('LAYOUT_MOUNT', { has_user: true })
+layoutAuth('AUTH_CHECK_COMPLETE', { isAuthenticated: true })
+layoutCertificates('CERTIFICATES_LOADED', certificates, { count: 5 })
+layoutPerformance('RENDER_COMPLETE', 45, { component: 'MainLayout' })
+```
+
+#### Validation Panel
+```javascript
+import { 
+  validationPanelValidation,
+  validationPanelPKI,
+  validationPanelCryptography,
+  validationPanelSecurity 
+} from '@/utils/logger'
+
+validationPanelValidation('VALIDATION_START', validationData)
+validationPanelPKI('PKI_ANALYSIS_COMPLETE', { is_valid: true })
+validationPanelCryptography('FINGERPRINT_MATCH', { matches: 3 })
+validationPanelSecurity('SECURITY_CHECK', { level: 'high', confidence: 95 })
+```
+
+#### System Messages
+```javascript
+import { 
+  systemMessagesLifecycle,
+  systemMessagesEvent,
+  systemMessagesMessage,
+  systemMessagesInteraction 
+} from '@/utils/logger'
+
+systemMessagesLifecycle('COMPONENT_MOUNT', { initial_message_count: 0 })
+systemMessagesEvent('USER_NOTIFICATION', { type: 'success' })
+systemMessagesMessage('MESSAGE_DISPLAYED', { id: 'msg-123', type: 'warning' })
+systemMessagesInteraction('MESSAGE_DISMISSED', { id: 'msg-123' })
 ```
 
 ## ➕ Adding New Sections
@@ -403,20 +550,20 @@ export const sectionNamePerformance = (...args) => logger.sectionNamePerformance
 ### Environment Variables
 
 ```bash
-# Enable debug mode
+# Enable debug mode (highest priority in Docker/production)
 VITE_DEBUG=true
 
-# Set global log level
+# Set global log level (when debug mode is off)
 VITE_LOG_LEVEL=DEBUG
 ```
 
 ### LocalStorage Configuration
 
 ```javascript
-// Debug mode
+// Debug mode (overrides environment when set)
 localStorage.setItem('certificate_debug', 'true')
 
-// Global log level
+// Global log level (overrides everything when set)
 localStorage.setItem('certificate_log_level', 'INFO')
 
 // Section overrides (JSON string)
@@ -449,6 +596,68 @@ disableDebug()
 import { getConfig } from '@/utils/logger'
 const config = getConfig()
 console.log(config)
+```
+
+## 🐳 Docker & Production
+
+### Docker Compose Configuration
+
+```yaml
+# docker-compose.yml
+frontend:
+  build: 
+    context: ./frontend
+    args:
+      VITE_DEBUG: "true"      # Enable debug mode by default
+      VITE_LOG_LEVEL: DEBUG   # Set debug level
+  networks:
+    - app-network
+  restart: unless-stopped
+```
+
+### Dockerfile with Build Arguments
+
+```dockerfile
+FROM node:24-alpine AS builder
+
+WORKDIR /app
+
+# Accept build arguments for Vite environment variables
+ARG VITE_API_URL=/api
+ARG VITE_DEBUG=false
+ARG VITE_LOG_LEVEL=INFO
+
+# Set environment variables from build args
+ENV VITE_API_URL=$VITE_API_URL
+ENV VITE_DEBUG=$VITE_DEBUG
+ENV VITE_LOG_LEVEL=$VITE_LOG_LEVEL
+
+COPY package.json ./
+RUN npm install
+
+COPY . .
+RUN npm run build
+
+FROM nginx:alpine
+COPY --from=builder /app/dist /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]
+```
+
+### Production Debugging
+
+```javascript
+// Enable specific debugging in production containers
+logger.enableSection('certificateContext', 'DEBUG')
+logger.enableSection('api', 'INFO')
+
+// Monitor auto-refresh process
+logger.enableSection('context', 'DEBUG')
+
+// Focus on authentication issues
+logger.enableSection('session', 'DEBUG')
+logger.enableSection('cookie', 'DEBUG')
 ```
 
 ## 🎯 Best Practices
@@ -526,6 +735,26 @@ if (import.meta.env.PROD) {
 }
 ```
 
+### 6. Certificate Context Integration
+
+```javascript
+// Complete certificate lifecycle logging
+certificateContextLifecycle('PROVIDER_MOUNT', { 
+  has_children: true,
+  initial_component_count: 0 
+})
+
+certificateContextOperation('REFRESH_FILES_START', {
+  operation_type: 'refresh',
+  loading_state_will_change: true
+})
+
+certificateContextSession('SESSION_MONITORING_START', {
+  is_monitoring: true,
+  debug_mode: true
+})
+```
+
 ## 🔍 Debugging Workflows
 
 ### Issue Investigation
@@ -549,15 +778,76 @@ logger.clearSections()
 logger.disable()
 ```
 
+### Certificate Loading Issues
+
+```javascript
+// Debug certificate loading problems
+logger.enableSection('certificateContext', 'DEBUG')
+logger.enableSection('api', 'DEBUG')
+logger.enableSection('session', 'DEBUG')
+
+// Watch for these key log patterns:
+// 📋 [CERTIFICATE CONTEXT] Lifecycle [PROVIDER_MOUNT]
+// 🎯 [CONTEXT] CertificateProvider - triggering initial certificate refresh
+// 📡 [API] GET /certificates
+// 🎯 [CONTEXT] Initial refresh successful: X components loaded
+```
+
+### Session Management Debugging
+
+```javascript
+// Debug session/authentication issues
+logger.enableSection('session', 'DEBUG')
+logger.enableSection('cookie', 'DEBUG')
+logger.enableSection('api', 'INFO')
+
+// Key indicators to look for:
+// 👤 [SESSION] Initial session detected: none/token
+// 🍪 [COOKIE] Session token found/missing
+// 📡 [API] Session change detected
+```
+
 ### Performance Analysis
 
 ```javascript
 // Enable performance logging for specific sections
 logger.enableSection('api', 'DEBUG')
 logger.enableSection('certificate', 'DEBUG')
+logger.enableSection('certificateContext', 'DEBUG')
 
-// Look for performance-related log entries
-// Performance logs include timing information
+// Look for performance-related log entries:
+// 📋 [CERTIFICATE CONTEXT] Performance [REFRESH_FILES_COMPLETED] 150ms
+// 📡 [API DEBUG] 200 GET /certificates (70ms)
+```
+
+### Production Troubleshooting
+
+```javascript
+// Safe production debugging - minimal impact
+logger.enableSection('connection', 'WARN')
+logger.enableSection('session', 'INFO')
+logger.enableSection('api', 'INFO')
+
+// If more detail needed, temporarily enable:
+logger.enableSection('certificateContext', 'DEBUG')
+// Remember to disable after investigation:
+logger.disableSection('certificateContext')
+```
+
+## 🎨 Emoji Reference
+
+Each section uses distinctive emojis for easy identification in logs:
+
+```
+📋 [CERTIFICATE CONTEXT]     🎯 [CONTEXT]
+📡 [API]                     👤 [SESSION]
+🍪 [COOKIE]                  📤 [UPLOAD]
+📁 [FILE MANAGER]            🏗️ [LAYOUT]
+🔬 [VALIDATION PANEL]        📢 [SYSTEM MESSAGES]
+🏗️ [FLOATING PANEL]         🔐 [SECURE PASSWORD MODAL]
+🔽 [DOWNLOAD]                📜 [CERTIFICATE]
+🔔 [NOTIFICATION]            📡 [CONNECTION]
+💾 [DOWNLOAD MODAL]
 ```
 
 ---
